@@ -16,7 +16,7 @@
     "dev:electron": "wait-on tcp:127.0.0.1:3000 && DOPPEL_DEV_SERVER_URL=http://localhost:3000 electron .",
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "next build renderer",
-    "build:electron": "tsc -p electron/tsconfig.json && node scripts/write-build-config.mjs",
+    "build:electron": "rm -rf dist-electron && tsc -p electron/tsconfig.json && node scripts/write-build-config.mjs",
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder --mac --arm64",
     "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p renderer/tsconfig.json --noEmit"
