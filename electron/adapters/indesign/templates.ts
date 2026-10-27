@@ -2,7 +2,7 @@ import type { RoutineTemplate } from "../types";
 
 // Real, working InDesign routines (ExtendScript). Each script is the body of
 // `function (doc, params, ctx) { … }`: `doc` is the document to work on, `params` the values the user
-// picked on the Run screen, `ctx` Doppel's helpers (see jsx/lib.ts → makeContext).
+// picked on the Run screen, `ctx` Doppl's helpers (see jsx/lib.ts → makeContext).
 // No absolute paths: every file and folder is a param chosen at run time.
 // They're shown to the model as examples of how InDesign routines are written.
 
@@ -112,7 +112,7 @@ for (var i = 0; i < layers.length; i++) {
 }
 if (!params.dryRun) {
   // Two passes, so a new name never clashes with a name that is still in use.
-  for (var j = 0; j < renames.length; j++) { renames[j].layer.name = "__doppel_tmp_" + j; }
+  for (var j = 0; j < renames.length; j++) { renames[j].layer.name = "__doppl_tmp_" + j; }
   for (var k = 0; k < renames.length; k++) { renames[k].layer.name = renames[k].to; }
 }
 var details = [];

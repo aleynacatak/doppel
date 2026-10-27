@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FigmaApiError } from "../../adapters/figma/figmaRest";
 import { PluginNotConnectedError } from "../../adapters/figma/pluginBridge";
-import { BridgeError } from "../../adapters/indesign/bridge";
+import { BridgeError } from "../../adapters/adobe/bridge";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { AdapterOutput, ScriptResult } from "../../adapters/types";
 import { AiError } from "./aiTransport";
@@ -22,6 +22,8 @@ import type {
   RunSummary,
 } from "../types";
 import { CancelledError, errorMessage, newId, nowIso } from "../util";
+import { checkReadiness, stagesOf } from "../stages/readiness";
+import { RunInputError, type StageRunner } from "../stages/stageRunner";
 import type { AppStatusService } from "./appStatusService";
 import type { QcService } from "./qcService";
 import type { Storage } from "./storage";
@@ -35,7 +37,7 @@ export class ExecutionError extends Error {
   constructor(
     message: string,
     readonly detail?: string,
-    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "generic" = "generic",
+    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "validation" | "generic" = "generic",
     /** The routine script itself failed (the error can be sent back to the model for a fix). */
     readonly scriptFailure = false,
   ) {
@@ -78,9 +80,10 @@ export interface ExecutionResult {
 }
 
 function notConnectedMessage(appName: string, status: string) {
-  if (status === "permission-denied") return `Doppel isn't allowed to control ${appName} yet.`;
-  if (status === "needs-setup") return `${appName} isn't set up in Doppel yet. Open Connect apps.`;
-  if (status === "not-installed") return `${appName} isn't set up for Doppel on this Mac.`;
+  if (status === "permission-denied") return `Doppl isn't allowed to control ${appName} yet.`;
+  if (status === "needs-setup") return `${appName} isn't set up in Doppl yet. Open Connect apps.`;
+  if (appName === "Figma") return "Open your file in Figma and start the Doppl plugin (Plugins → Development → Doppl).";
+  if (status === "not-installed") return `${appName} isn't set up for Doppl on this Mac.`;
   return `${appName} isn't running. Open it with your document, then try again.`;
 }
 
@@ -105,7 +108,7 @@ export function toExecutionError(err: unknown, appName: string): Error {
           true,
         );
       default:
-        return new ExecutionError(`Doppel couldn't talk to ${appName}.`, err.detail);
+        return new ExecutionError(`Doppl couldn't talk to ${appName}.`, err.detail);
     }
   }
   // Errors raised by the routine's own code inside the app (e.g. the Figma plugin) can be fixed by the model.
@@ -312,14 +315,19 @@ export class RunService {
     private readonly deps: {
       storage: Storage;
       executor: RoutineExecutor;
+      stageRunner: StageRunner;
       registry: AdapterRegistry;
+      apps: AppStatusService;
       qc: QcService;
       access: AiAccessService;
       emit: (run: Run) => void;
+      /** userData/runs: multi-app runs keep their stage folders in runs/<runId>/. */
+      runsDir: string;
+      copiesDir: string;
     },
   ) {}
 
-  async start(routineId: string, params: ParamValues, qcMode: QcMode, options: RunOptions): Promise<Run> {
+  async start(routineId: string, params: ParamValues, qcMode: QcMode, options: RunOptions, onlyItems?: Set<string>): Promise<Run> {
     const { storage } = this.deps;
     const routine = await storage.getRoutine(routineId);
     if (!routine) throw new Error("This routine doesn't exist anymore.");
@@ -327,6 +335,13 @@ export class RunService {
     if (missing.length) throw new Error(`Fill in ${missing.map((p) => p.label).join(", ")} first.`);
     if (qcMode === "auto_ai" && this.deps.access.provider() !== "meta-api") {
       throw new Error("AI review isn't included in demo access. Choose Automatic check, or use your own Meta API key in Settings.");
+    }
+    if (routine.stages?.length) {
+      // Every stage's app must be connected with the right document before anything runs.
+      const readiness = await checkReadiness(this.deps.registry, this.deps.apps, routine.stages, options.documents ?? {});
+      const blocked = readiness.filter((r) => !r.ok);
+      if (blocked.length) throw new Error(blocked.map((r) => `${r.appName}: ${r.message}`).join(" "));
+      options = { ...options, documents: Object.fromEntries(readiness.filter((r) => r.documentId).map((r) => [r.appId, r.documentId!])) };
     }
 
     const run: Run = {
@@ -349,8 +364,91 @@ export class RunService {
     await storage.saveRoutine(routine);
     await storage.saveRun(run);
     this.active.set(run.id, { run, cancelled: false });
-    void this.execute(run, routine);
+    if (routine.stages?.length) {
+      run.stages = stagesOf(routine).map((s) => ({ stageId: s.id, name: s.name, appId: s.appId, status: "pending", total: 0, done: 0, failed: 0, items: [] }));
+      void this.executeStages(run, routine, onlyItems);
+    } else {
+      void this.execute(run, routine);
+    }
     return run;
+  }
+
+  /** Multi-app routines: stages in order, with file handoff, per-item results and partial failure. */
+  private async executeStages(run: Run, routine: Routine, onlyItems?: Set<string>) {
+    const entry = this.active.get(run.id)!;
+    const emit = () => this.deps.emit(run);
+    try {
+      const res = await this.deps.stageRunner.run(
+        {
+          runId: run.id,
+          routineName: routine.name,
+          stages: routine.stages!,
+          params: routine.params,
+          values: run.params,
+          target: run.options.target,
+          documents: run.options.documents ?? {},
+          runDir: path.join(this.deps.runsDir, run.id),
+          copiesDir: this.deps.copiesDir,
+          isCancelled: () => entry.cancelled,
+          onlyItems,
+        },
+        {
+          onProgress: (stages, phase) => {
+            run.stages = stages;
+            if (!entry.cancelled) run.phase = phase;
+            emit();
+          },
+          onOutputs: (outputs) => {
+            run.outputs = outputs;
+            emit();
+          },
+        },
+      );
+      run.stages = res.stages;
+      run.outputs = res.outputs;
+      run.log = res.log;
+      run.findings = res.findings;
+      if (res.status !== "cancelled" && !entry.cancelled) {
+        run.phase = run.qcMode === "manual" ? "Finishing" : "Checking quality";
+        emit();
+        await this.checkStageOutputs(run, routine, res.findings, { onAiCall: () => (run.aiCalls += 1), isCancelled: () => entry.cancelled });
+      }
+      run.status = entry.cancelled ? "cancelled" : res.status;
+      if (res.status === "failed") {
+        run.error = "This routine couldn't finish.";
+        run.errorDetail = res.error;
+      }
+    } catch (err) {
+      if (err instanceof CancelledError || entry.cancelled) {
+        run.status = "cancelled";
+      } else {
+        run.status = "failed";
+        run.error = err instanceof RunInputError ? err.message : "This routine couldn't finish.";
+        run.errorDetail = err instanceof RunInputError ? undefined : errorMessage(err);
+      }
+    } finally {
+      run.phase = undefined;
+      run.finishedAt = nowIso();
+      this.active.delete(run.id);
+      await this.persist(run);
+      emit();
+    }
+  }
+
+  /** Quality checks per stage, with that stage's app checks; object checks with SAM on "auto_ai". */
+  private async checkStageOutputs(run: Run, routine: Routine, findings: RuleFinding[], ctx: { onAiCall: () => void; isCancelled: () => boolean }) {
+    const subject = { qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, qcProfile: routine.qcProfile };
+    for (const stage of routine.stages ?? []) {
+      const mine = run.outputs.filter((o) => o.stageId === stage.id);
+      if (mine.length === 0) continue;
+      const adapter = this.deps.registry.get(stage.appId);
+      const ids = new Set(mine.map((o) => o.id));
+      await this.deps.qc.evaluate(adapter, subject, mine, run.qcMode === "manual" ? null : findings.filter((f) => f.outputKey && ids.has(f.outputKey)), ctx);
+      if (run.qcMode === "auto_ai" && routine.objectChecks?.length) {
+        await this.deps.qc.objectChecks(mine, routine.objectChecks, ctx);
+      }
+      this.deps.emit(run);
+    }
   }
 
   private async execute(run: Run, routine: Routine) {
@@ -444,6 +542,11 @@ export class RunService {
     if (run.status === "running") return run;
     const routine = await this.deps.storage.getRoutine(run.routineId);
     if (!routine) throw new Error("This routine doesn't exist anymore.");
+    if (run.stages?.length) {
+      // Multi-app runs: a new run with only the items that failed.
+      const failed = new Set(run.outputs.filter((o) => o.status === "failed" && o.itemKey && o.itemKey !== "all").map((o) => o.itemKey!));
+      return this.start(routine.id, run.params, run.qcMode, run.options, failed.size ? failed : undefined);
+    }
     const failed = run.outputs.filter((o) => o.status === "failed");
     if (failed.length === 0) return run;
 
@@ -491,6 +594,16 @@ export class RunService {
   async openOutput(runId: string, outputId: string) {
     const run = await this.requireRun(runId);
     const output = run.outputs.find((o) => o.id === outputId);
+    if (output?.stageId && run.stages?.length) {
+      const appId = run.stages.find((s) => s.stageId === output.stageId)?.appId ?? run.appId;
+      if (output.filePath && !output.nodeId) {
+        await shell.openPath(output.filePath);
+        return;
+      }
+      const docId = run.options.documents?.[appId];
+      if (docId) await this.deps.registry.get(appId).openInApp(docId, { pageIndex: output.pageIndex, nodeId: output.nodeId });
+      return;
+    }
     const docId = run.targetDocument?.id ?? run.options.documentId;
     if (!docId) return;
     await this.deps.registry.get(run.appId).openInApp(docId, { pageIndex: output?.pageIndex, nodeId: output?.nodeId });

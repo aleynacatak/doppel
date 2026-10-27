@@ -12,11 +12,12 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Loading, Spinner } from "@/components/ui/Progress";
+import { Section } from "@/components/ui/Section";
 import { Segmented } from "@/components/ui/Segmented";
 import { Tag } from "@/components/ui/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { formatDateTime } from "@/lib/format";
+import { appLabel, formatDateTime } from "@/lib/format";
 import { useRun } from "@/lib/hooks";
 
 type Filter = "all" | "flagged" | "passed";
@@ -45,6 +46,23 @@ function ResultsScreen() {
     const creation = await api.repairRoutine(run.routineId, run.id);
     router.push(`/create?task=${creation.id}`);
   };
+  const retry = async () => {
+    const next = await api.retryFailed(run.id);
+    // Multi-app runs retry as a new run with only the failed items.
+    if (next.id !== run.id) router.push(`/run?routine=${run.routineId}&run=${next.id}`);
+    else setData(next);
+  };
+  const card = (o: RunOutput) => (
+    <OutputCard
+      key={o.id}
+      output={o}
+      actions={{
+        onOpen: () => open(o),
+        onReveal: () => api.revealOutput(run.id, o.id),
+        onMarkOk: async () => setData(await api.markOutputOk(run.id, o.id)),
+      }}
+    />
+  );
   const open = async (o: RunOutput) => {
     setNote(null);
     try {
@@ -69,7 +87,7 @@ function ResultsScreen() {
       {run.status !== "failed" && (
         <>
           <ResultsSummary run={run} />
-          {run.targetDocument && (
+          {run.targetDocument && !run.stages?.length && (
             <div className="ui-small ui-muted flex flex-col">
               <span>
                 {run.appId === "figma" && run.options.target === "copy"
@@ -89,8 +107,8 @@ function ResultsScreen() {
               tone="warning"
               title={copy.results.partialTitle(failedCount)}
               actions={
-                <Button variant="primary" onClick={async () => setData(await api.retryFailed(run.id))}>
-                  {copy.results.retryFailed}
+                <Button variant="primary" onClick={retry}>
+                  {run.stages?.length ? copy.results.retryFailedItems : copy.results.retryFailed}
                 </Button>
               }
             />
@@ -110,20 +128,23 @@ function ResultsScreen() {
           </div>
           {shown.length === 0 ? (
             <p className="ui-muted">{copy.results.noneMatch}</p>
+          ) : run.stages?.length ? (
+            run.stages.map((stage, i) => {
+              const mine = shown.filter((o) => o.stageId === stage.stageId);
+              return (
+                <Section
+                  key={stage.stageId}
+                  title={copy.results.stageSection(i + 1, stage.name, appLabel(stage.appId))}
+                  aside={<Tag>{copy.run.stageStatus[stage.status]}</Tag>}
+                >
+                  {stage.documentName && <p className="ui-small ui-muted">{copy.results.stageOn(stage.documentName)}</p>}
+                  {stage.error && <Notice tone="warning">{stage.error}</Notice>}
+                  {mine.length === 0 ? <p className="ui-small ui-muted">{copy.results.noneMatch}</p> : <OutputGrid>{mine.map(card)}</OutputGrid>}
+                </Section>
+              );
+            })
           ) : (
-            <OutputGrid>
-              {shown.map((o) => (
-                <OutputCard
-                  key={o.id}
-                  output={o}
-                  actions={{
-                    onOpen: () => open(o),
-                    onReveal: () => api.revealOutput(run.id, o.id),
-                    onMarkOk: async () => setData(await api.markOutputOk(run.id, o.id)),
-                  }}
-                />
-              ))}
-            </OutputGrid>
+            <OutputGrid>{shown.map(card)}</OutputGrid>
           )}
         </>
       )}

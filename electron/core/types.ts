@@ -1,7 +1,7 @@
 // Domain types shared by the main process and the renderer.
 // The renderer imports this file with `import type` only, so it must stay free of runtime code.
 
-export type AppId = "indesign" | "figma" | (string & {});
+export type AppId = "indesign" | "figma" | "photoshop" | (string & {});
 
 export type AppStatus = "connected" | "not-running" | "not-installed" | "permission-denied" | "needs-setup";
 
@@ -9,7 +9,7 @@ export interface App {
   id: AppId;
   name: string;
   scriptLanguage: string;
-  /** InDesign: AppleScript bridge on this Mac. Figma: file links (REST API) plus the Doppel plugin. */
+  /** InDesign, Photoshop: AppleScript bridge on this Mac. Figma: the Doppl plugin (plus optional file links). */
   connection: "script-bridge" | "links-and-plugin";
   status: AppStatus;
   /** Display version, e.g. "21.6". Only known while connected. */
@@ -20,7 +20,7 @@ export interface App {
 
 // ---------- Figma ----------
 
-/** A Figma file connected to Doppel by its link. */
+/** A Figma file connected to Doppl by its link. */
 export interface FigmaFile {
   key: string;
   url: string;
@@ -30,12 +30,29 @@ export interface FigmaFile {
   addedAt: string;
 }
 
+/** One Figma file with the Doppl plugin running in it (a WebSocket session). */
+export interface FigmaSession {
+  id: string;
+  /** Document id used across Doppl: "figma:<fileKey>" or "figma-name:<file name>". */
+  documentId: string;
+  fileName: string;
+  fileKey?: string;
+  pageName?: string;
+  pluginVersion: string;
+  connectedAt: string;
+  /** What the plugin is doing right now, e.g. "setText · item 3 of 6". */
+  activity?: string;
+}
+
 export interface FigmaSetup {
   token: { saved: boolean; hint: string | null };
   files: FigmaFile[];
-  plugin: { connected: boolean; fileName?: string; pageName?: string; matchedKey?: string };
-  /** Typed once into the Doppel plugin in Figma, so only this Mac's Doppel can talk to it. */
+  /** Files with the plugin open right now. */
+  sessions: FigmaSession[];
+  /** Typed once into the Doppl plugin in Figma, so only this Mac's Doppl can talk to it. */
   pairingCode: string;
+  /** Local port the plugin connects to (ws://localhost:<port>). */
+  port: number;
   /** Folder that holds the plugin's manifest.json (for Plugins → Development → Import plugin from manifest). */
   pluginFolder: string;
 }
@@ -80,9 +97,19 @@ export interface Task {
   id: string;
   request: string;
   references: string[];
+  /** Folders the designer pointed at (only file names are shared with the model). */
+  folders?: string[];
+  /** The first (or only) app and its document. */
   appId: AppId;
   documentId?: string;
+  /** Every app the routine may use, with the document picked in each. */
+  apps?: TaskApp[];
   createdAt: string;
+}
+
+export interface TaskApp {
+  appId: AppId;
+  documentId?: string;
 }
 
 export interface RoutineStep {
@@ -90,7 +117,8 @@ export interface RoutineStep {
   plainLanguage: string;
 }
 
-export type ParamType = "text" | "file" | "folder" | "number" | "select" | "formatList" | "boolean";
+/** "dataFile": a CSV, JSON or Excel file whose rows a stage can repeat over ({{params.<key>.rows}}). */
+export type ParamType = "text" | "file" | "folder" | "dataFile" | "number" | "select" | "formatList" | "boolean";
 
 export interface ParamOption {
   value: string;
@@ -108,14 +136,65 @@ export interface ParamDef {
   options?: ParamOption[];
   /** Options the adapter lists at run time, e.g. "pdfExportPresets". */
   optionsSource?: string;
-  /** File type filter for type "file", e.g. ["txt", "docx"]. */
+  /** File type filter for type "file" or "folder" contents, e.g. ["txt", "docx"]. */
   extensions?: string[];
+  /** dataFile: columns every row must have. */
+  columns?: string[];
+  /** folder: files are read from it ("input") or results are saved into it ("output"). */
+  role?: "input" | "output";
   min?: number;
   max?: number;
 }
 
 export type ParamValue = string | number | boolean | string[] | null;
 export type ParamValues = Record<string, ParamValue>;
+
+// ---------- Stages (multi-app routines) ----------
+
+/** One Figma action (validated against the action catalog in electron/shared/figmaActions.ts). */
+export interface FigmaActionStep {
+  action: string;
+  /** Names the action's result so later actions can use it as "$id". */
+  id?: string;
+  [key: string]: unknown;
+}
+
+export interface FigmaActionList {
+  actions: FigmaActionStep[];
+}
+
+export type StageKind = "actions" | "script";
+export type StageOutputType = "fileList" | "file" | "nodeList" | "data";
+
+export interface StageOutputDef {
+  key: string;
+  type: StageOutputType;
+  label?: string;
+}
+
+/**
+ * One part of a routine that runs in one app. Stages run in order and hand results to each other through
+ * placeholders: {{params.<key>}}, {{item.<field>}} (repeated stages) and {{stage.<id>.outputs.<key>}}.
+ */
+export interface Stage {
+  id: string;
+  name: string;
+  appId: AppId;
+  /** Figma: "actions" (a declarative action list). InDesign, Photoshop: "script" (ExtendScript). */
+  kind: StageKind;
+  body: FigmaActionList | string;
+  /** Run once per item of a list, e.g. "{{params.data.rows}}" or "{{stage.s1.outputs.files}}". */
+  repeat?: { over: string };
+  /** Placeholders the stage reads (params and earlier stages' outputs). */
+  inputs: string[];
+  outputs: StageOutputDef[];
+  /** Plain-language steps for the routine page. */
+  steps?: string[];
+  /** "open": runs on a document the designer picks among those open in the app. "none": opens its own files. */
+  document?: "open" | "none";
+  /** The stage changes the document it runs on (vs. only reading or exporting). */
+  modifiesDocument?: boolean;
+}
 
 export interface RoutineVersion {
   version: number;
@@ -154,6 +233,16 @@ export interface Routine {
   lastParams?: ParamValues;
   /** Objects that must stay fully visible in outputs (checked with SAM while creating). */
   keyObjects?: string[];
+  /** Multi-app routines. Older single-app routines have none and run as one script stage. */
+  stages?: Stage[];
+  /** Object checks with SAM that the routine defines ("Automatic check + AI review" only). */
+  objectChecks?: ObjectCheckDef[];
+}
+
+/** "Check that <object> is inside <region> in this output image" (SAM, counted as AI calls). */
+export interface ObjectCheckDef {
+  object: string;
+  region: string;
 }
 
 export type RunStatus = "running" | "succeeded" | "partial" | "failed" | "cancelled";
@@ -200,6 +289,10 @@ export interface RunOutput {
   pageIndex?: number;
   /** Figma node the output is (a frame the routine made). */
   nodeId?: string;
+  /** Multi-app routines: the stage and item that made this output. */
+  stageId?: string;
+  itemKey?: string;
+  itemLabel?: string;
   details?: OutputDetail[];
   profile?: "print" | "web";
   markedOk?: boolean;
@@ -233,7 +326,17 @@ export type RuleFindingType =
   /** Figma: text is clipped by its frame. */
   | "cut-off"
   /** Figma: an image is shown larger than its pixels (blurry). */
-  | "upscaled-image";
+  | "upscaled-image"
+  /** Text doesn't fit its own box or container. */
+  | "text-overflow"
+  /** An element sticks out of a boundary node. */
+  | "outside-boundary"
+  /** An image or data file a routine refers to doesn't exist. */
+  | "file-missing"
+  /** A font style (e.g. Bold) isn't available for the font. */
+  | "font-style-missing"
+  /** A barcode value has the wrong check digit or format. */
+  | "barcode-invalid";
 
 /** A rule-level problem found in a document. */
 export interface RuleFinding {
@@ -253,10 +356,51 @@ export interface QcOptions {
 }
 
 export interface RunOptions {
-  /** InDesign: run on a copy saved next to the original (default) or on the original. */
+  /** InDesign: run on a copy saved next to the original (default) or on the original. Figma: on a copy of the page. */
   target: "copy" | "original";
   documentId?: string;
+  /** Multi-app routines: the document picked per app. */
+  documents?: Partial<Record<AppId, string>>;
   qcOptions?: QcOptions;
+}
+
+export type StageRunStatus = "pending" | "running" | "done" | "partial" | "failed" | "skipped" | "cancelled";
+
+export interface StageItemProgress {
+  key: string;
+  label: string;
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  error?: string;
+}
+
+/** Progress and result of one stage in a run. */
+export interface StageProgress {
+  stageId: string;
+  name: string;
+  appId: AppId;
+  status: StageRunStatus;
+  total: number;
+  done: number;
+  failed: number;
+  items: StageItemProgress[];
+  error?: string;
+  /** The document the stage ran on, e.g. "Campaign · Page 1 (Doppl copy)". */
+  documentName?: string;
+}
+
+/** Whether a routine can run: per app, connected and with the right document. */
+export interface ReadinessItem {
+  appId: AppId;
+  appName: string;
+  status: AppStatus;
+  ok: boolean;
+  /** What to do, in plain language, when not ok. */
+  message?: string;
+  needsDocument: boolean;
+  documents: DocumentRef[];
+  documentId?: string;
+  /** Names of the stages that use this app. */
+  stages: string[];
 }
 
 export interface Run {
@@ -280,11 +424,13 @@ export interface Run {
   errorDetail?: string;
   /** Document the routine actually ran on (the copy when running on a copy). */
   targetDocument?: { id: string; name: string };
-  /** The routine edits the document, so InDesign has one "Doppel: …" undo step. */
+  /** The routine edits the document, so InDesign has one "Doppl: …" undo step. */
   modifiesDocument?: boolean;
   log?: string[];
   /** Rule findings for the document, kept so retried outputs can be checked again. */
   findings?: RuleFinding[];
+  /** Multi-app routines: progress per stage. */
+  stages?: StageProgress[];
 }
 
 export interface StyleSource {
@@ -336,6 +482,29 @@ export interface RoutineDraft {
   qcProfile: "print" | "web";
   builtInQc?: boolean;
   keyObjects?: string[];
+  stages?: Stage[];
+  objectChecks?: ObjectCheckDef[];
+}
+
+/** A problem that keeps a routine from being saved (sent back to the model to fix). */
+export interface ValidationError {
+  /** Where, e.g. "stages[1].body.actions[3].node". */
+  path: string;
+  code:
+    | "schema"
+    | "lint"
+    | "absolute-path"
+    | "sample-data"
+    | "unresolved-placeholder"
+    | "unknown-app"
+    | "stage-order"
+    | "duplicate-id";
+  message: string;
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  errors: ValidationError[];
 }
 
 export interface PortabilityIssue {
@@ -358,10 +527,14 @@ export interface Creation {
   draft?: RoutineDraft;
   /** Result of the trial run, with QC. */
   outputs: RunOutput[];
+  /** What the AI looked at and tried, in plain language ("Previewed Labels on item 1"). */
+  activity?: string[];
+  /** Trial run of a multi-app routine: progress per stage. */
+  trialStages?: StageProgress[];
   error?: {
     message: string;
     detail?: string;
-    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "generic";
+    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "validation" | "generic";
     /** AI error code (from the demo Worker or Meta), e.g. "quota_exhausted". */
     code?: string;
     action?: AiErrorAction;
@@ -375,8 +548,11 @@ export interface Creation {
 export interface NewTaskInput {
   request: string;
   references: string[];
+  folders?: string[];
   appId: AppId;
   documentId?: string;
+  /** Multi-app tasks: every app to use, with its document. */
+  apps?: TaskApp[];
 }
 
 export interface SaveRoutineInput {
@@ -414,8 +590,10 @@ export interface Settings {
   scriptTimeoutSec: number;
   /** Figma files connected by link. */
   figmaFiles: FigmaFile[];
-  /** Pairing code the Doppel Figma plugin must send (see FigmaSetup). */
+  /** Pairing code the Doppl Figma plugin must send (see FigmaSetup). */
   figmaPairingCode: string;
+  /** Local port the Doppl Figma plugin connects to. */
+  figmaPort: number;
 }
 
 // ---------- AI access ----------
@@ -498,6 +676,8 @@ export interface DoppelApi {
   listRoutines(): Promise<Routine[]>;
   getRoutine(id: string): Promise<Routine | null>;
   checkEnvironment(routineId: string): Promise<EnvironmentCheck>;
+  /** Multi-app routines: whether every stage's app is connected with the right document. */
+  checkReadiness(routineId: string, documents?: Partial<Record<AppId, string>>): Promise<ReadinessItem[]>;
   getParamOptions(routineId: string, paramKey: string, documentId?: string): Promise<ParamOption[]>;
 
   // Runs
@@ -535,8 +715,46 @@ export interface DoppelApi {
   saveApiKey(key: string): Promise<CheckResult<AiAccess>>;
   clearApiKey(): Promise<AiAccess>;
 
+  // Dev panel (hidden; Cmd+Shift+D)
+  devRunFigmaActions(documentId: string, actionsJson: string, itemJson?: string): Promise<DevRunResult>;
+  devRunPhotoshopScript(documentId: string | null, script: string): Promise<DevRunResult>;
+  devBarcode(type: string, value: string): Promise<{ ok: boolean; value?: string; svg?: string; error?: string }>;
+  devValidateRoutine(json: string): Promise<{ validation: ValidationResult; parseError?: string }>;
+  devSaveRoutine(json: string): Promise<SaveRoutineResult>;
+  getConnectionLog(): Promise<ConnectionLogEntry[]>;
+  clearConnectionLog(): Promise<void>;
+
   // Events (main → renderer)
   onCreationProgress(cb: (creation: Creation) => void): Unsubscribe;
   onRunProgress(cb: (run: Run) => void): Unsubscribe;
   onAppStatusChange(cb: (apps: App[]) => void): Unsubscribe;
+  onConnectionLog(cb: (entry: ConnectionLogEntry) => void): Unsubscribe;
+}
+
+/** Dev panel: result of running an action list or script once. */
+export interface DevRunResult {
+  ok: boolean;
+  error?: string;
+  /** Action results / script data, as JSON. */
+  data?: unknown;
+  log: string[];
+  findings: RuleFinding[];
+  previews: PreviewImage[];
+  files: string[];
+  ms: number;
+}
+
+/** Metadata about one exchange with a design app (dev panel). Never contains file contents. */
+export interface ConnectionLogEntry {
+  id: number;
+  at: string;
+  channel: "applescript" | "websocket";
+  app: AppId;
+  direction: "out" | "in" | "event";
+  /** e.g. "probe", "run-script", "hello", "request:run-actions", "closed". */
+  kind: string;
+  bytes?: number;
+  ms?: number;
+  ok?: boolean;
+  note?: string;
 }

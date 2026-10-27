@@ -1,5 +1,5 @@
 import type { DesignAppAdapter } from "../../adapters/types";
-import type { QcCheck, QcMode, QcOptions, RuleFinding, RunOutput } from "../types";
+import type { ObjectCheckDef, QcCheck, QcMode, QcOptions, RuleFinding, RunOutput } from "../types";
 import type { AiCallContext, AiService } from "./aiService";
 
 export interface QcSubject {
@@ -62,6 +62,23 @@ export class QcService {
       }
       if (subject.qcMode === "auto_ai") checks.push(await this.ai.reviewOutput(output, ctx));
       output.qc = checks.length ? { status: checks.every((c) => c.passed) ? "pass" : "flagged", checks } : undefined;
+    }
+  }
+
+  /** Object checks the routine defines ("<object> is inside <region>"), with SAM. Each segment call counts. */
+  async objectChecks(outputs: RunOutput[], defs: ObjectCheckDef[], ctx: AiCallContext): Promise<void> {
+    for (const output of outputs) {
+      if (output.status !== "done" || output.preview?.kind !== "image") continue;
+      const checks = [...(output.qc?.checks ?? [])];
+      for (const def of defs) {
+        if (ctx.isCancelled()) return;
+        try {
+          checks.push(await this.ai.checkObjectInRegion(output, def, ctx));
+        } catch (err) {
+          checks.push({ level: "object", label: `${def.object} is inside ${def.region}`, passed: false, reason: `Not checked: ${(err as Error).message}` });
+        }
+      }
+      output.qc = { status: checks.every((c) => c.passed) ? "pass" : "flagged", checks };
     }
   }
 

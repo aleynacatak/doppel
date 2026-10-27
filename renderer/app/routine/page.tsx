@@ -6,6 +6,7 @@ import { CostLine } from "@/components/routine/CostLine";
 import { ParamsList } from "@/components/routine/ParamsList";
 import { RunHistory } from "@/components/routine/RunHistory";
 import { ScriptViewer } from "@/components/routine/ScriptViewer";
+import { StagesList } from "@/components/routine/StagesList";
 import { StepsList } from "@/components/routine/StepsList";
 import { VersionHistory } from "@/components/routine/VersionHistory";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -36,6 +37,8 @@ function RoutineScreen() {
 
   const app = apps.find((a) => a.id === routine.appId);
   const repaired = params.get("repaired");
+  const stages = routine.stages ?? [];
+  const appIds = stages.length ? [...new Set(stages.map((s) => s.appId))] : [routine.appId];
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
@@ -44,7 +47,11 @@ function RoutineScreen() {
           title={routine.name}
           tags={
             <>
-              <Tag tone="strong">{appLabel(routine.appId)}</Tag>
+              {appIds.map((id) => (
+                <Tag key={id} tone="strong">
+                  {appLabel(id)}
+                </Tag>
+              ))}
               <Tag>{copy.common.version(routine.version)}</Tag>
               {routine.experimental && <Tag tone="quiet">{copy.common.experimental}</Tag>}
             </>
@@ -53,7 +60,7 @@ function RoutineScreen() {
           actions={
             <>
               <Button onClick={() => setShowScript((s) => !s)} aria-expanded={showScript}>
-                {showScript ? copy.routine.hideScript : copy.routine.viewScript}
+                {stages.length ? (showScript ? copy.routine.hideStages : copy.routine.viewStages) : showScript ? copy.routine.hideScript : copy.routine.viewScript}
               </Button>
               <ButtonLink href={`/run?routine=${routine.id}`} variant="primary">
                 {copy.routine.run}
@@ -65,18 +72,20 @@ function RoutineScreen() {
         {repaired && <Notice>{copy.routine.repairedNotice(Number(repaired))}</Notice>}
         {routine.portabilityIssues?.length ? <Notice tone="warning">{copy.routine.portabilityWarning}</Notice> : null}
         <CostLine aiCalls={routine.createdWithAiCalls} />
-        <p className="ui-small ui-muted">{copy.routine.environment(app?.name ?? appLabel(routine.appId), routine.appVersion, routine.requiredFonts)}</p>
+        {!stages.length && (
+          <p className="ui-small ui-muted">{copy.routine.environment(app?.name ?? appLabel(routine.appId), routine.appVersion, routine.requiredFonts)}</p>
+        )}
       </div>
 
-      {showScript && (
+      {showScript && !stages.length && (
         <Section title={copy.routine.scriptTitle}>
           <ScriptViewer script={routine.script} language={app?.scriptLanguage ?? ""} />
         </Section>
       )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <Section title={copy.routine.stepsTitle}>
-          <StepsList steps={routine.steps} />
+        <Section title={stages.length ? copy.routine.stagesTitle : copy.routine.stepsTitle}>
+          {stages.length ? <StagesList stages={stages} showBodies={showScript} /> : <StepsList steps={routine.steps} />}
         </Section>
         <Section title={copy.routine.paramsTitle}>
           <ParamsList params={routine.params} />

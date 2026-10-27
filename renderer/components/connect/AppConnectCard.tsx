@@ -13,8 +13,8 @@ function ScriptBridgeBody({ app }: { app: App }) {
   if (app.status === "connected") {
     return (
       <div className="flex flex-col gap-1">
-        <div>{copy.connect.indesign.detected(app.version)}</div>
-        <div className="ui-muted">{copy.connect.indesign.documents(docs?.length ?? 0)}</div>
+        <div>{copy.connect.adobe.detected(app.name.replace(/^Adobe /, ""), app.version)}</div>
+        <div className="ui-muted">{copy.connect.adobe.documents(docs?.length ?? 0)}</div>
         {docs && docs.length > 0 && (
           <ul className="ui-small ui-muted list-disc pl-5">
             {docs.map((d) => (
@@ -25,14 +25,15 @@ function ScriptBridgeBody({ app }: { app: App }) {
       </div>
     );
   }
-  if (app.status === "permission-denied") return <PermissionHelp />;
-  if (app.status === "not-installed") return <p className="ui-muted">{copy.connect.indesign.notInstalled}</p>;
+  const short = app.name.replace(/^Adobe /, "");
+  if (app.status === "permission-denied") return <PermissionHelp appName={app.name} />;
+  if (app.status === "not-installed") return <p className="ui-muted">{copy.connect.adobe.notInstalled(short)}</p>;
   return (
     <div className="flex flex-col gap-1">
       <p className="ui-muted flex items-center gap-2">
-        <Spinner label={copy.connect.indesign.notRunning} /> {copy.connect.indesign.notRunning}
+        <Spinner label={copy.connect.adobe.notRunning(short)} /> {copy.connect.adobe.notRunning(short)}
       </p>
-      <p className="ui-small ui-muted">{copy.connect.indesign.promptHint}</p>
+      <p className="ui-small ui-muted">{copy.connect.adobe.promptHint(short)}</p>
     </div>
   );
 }

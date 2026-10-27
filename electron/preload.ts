@@ -29,6 +29,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   listRoutines: true,
   getRoutine: true,
   checkEnvironment: true,
+  checkReadiness: true,
   getParamOptions: true,
   runRoutine: true,
   cancelRun: true,
@@ -52,6 +53,13 @@ const METHODS: Record<keyof ApiMethods, true> = {
   clearAccessCode: true,
   saveApiKey: true,
   clearApiKey: true,
+  devRunFigmaActions: true,
+  devRunPhotoshopScript: true,
+  devBarcode: true,
+  devValidateRoutine: true,
+  devSaveRoutine: true,
+  getConnectionLog: true,
+  clearConnectionLog: true,
 };
 
 const api: Record<string, unknown> = {};
@@ -74,5 +82,6 @@ function subscribe<T>(channel: string, cb: (payload: T) => void) {
 api.onCreationProgress = (cb: Parameters<DoppelApi["onCreationProgress"]>[0]) => subscribe("doppel:event:creation", cb);
 api.onRunProgress = (cb: Parameters<DoppelApi["onRunProgress"]>[0]) => subscribe("doppel:event:run", cb);
 api.onAppStatusChange = (cb: Parameters<DoppelApi["onAppStatusChange"]>[0]) => subscribe("doppel:event:apps", cb);
+api.onConnectionLog = (cb: Parameters<DoppelApi["onConnectionLog"]>[0]) => subscribe("doppel:event:connection-log", cb);
 
 contextBridge.exposeInMainWorld("doppel", api as unknown as DoppelApi);

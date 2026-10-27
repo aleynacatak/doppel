@@ -4,8 +4,22 @@ import path from "node:path";
 import type { AppStatus, DocumentRef, DocumentSummary, ParamOption, PreviewImage } from "../../core/types";
 import { shortVersion } from "../../core/util";
 import { filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult, StyleFacts } from "../types";
-import { BridgeError, activate, isBusy, isInstalled, isRunning, runJsx } from "./bridge";
+import type {
+  AdapterOutput,
+  DesignAppAdapter,
+  Progress,
+  RuleCheckOptions,
+  RuleFinding,
+  ScriptContext,
+  ScriptResult,
+  StageItemInput,
+  StageItemResult,
+  StageRunContext,
+  StageSession,
+  StyleFacts,
+} from "../types";
+import { AdobeConnection } from "../adobe/connection";
+import { BridgeError, indesignBridge } from "./bridge";
 import { lintExtendScript } from "./lint";
 import { INDESIGN_MODEL_GUIDE } from "./modelGuide";
 import {
@@ -25,7 +39,6 @@ import {
 } from "./jsx/scripts";
 
 
-
 interface Options {
   /** Seconds before a script is abandoned (Settings → script timeout). */
   getTimeoutSec: () => number;
@@ -38,6 +51,7 @@ export class InDesignAdapter implements DesignAppAdapter {
   readonly scriptLanguage = "ExtendScript";
   readonly connection = "script-bridge" as const;
   readonly modelGuide = INDESIGN_MODEL_GUIDE;
+  readonly stageKind = "script" as const;
   readonly qcChecks = [
     { level: "rule" as const, types: ["overset" as const], label: () => "Text fits its frames" },
     { level: "rule" as const, types: ["link-missing" as const, "link-modified" as const], label: () => "Links are present and up to date" },
@@ -47,61 +61,19 @@ export class InDesignAdapter implements DesignAppAdapter {
     { level: "object" as const, types: ["short-of-bleed" as const], label: () => "Images reach the bleed" },
   ];
 
-  private installed: boolean | null = null;
-  private installedCheckedAt = 0;
-  /** Set once a script round-trip succeeded since InDesign started. */
-  private probed = false;
-  private permissionDenied = false;
-  private version: string | null = null;
-  private lastProbeAt = 0;
+  private readonly adobe: AdobeConnection;
 
-  constructor(private readonly options: Options) {}
-
-  private timeout() {
-    return this.options.getTimeoutSec();
+  constructor(private readonly options: Options) {
+    this.adobe = new AdobeConnection(indesignBridge, PROBE, () => this.options.getTimeoutSec());
   }
 
   /** Runs a script and keeps the permission state up to date. */
-  private async call<T>(main: string, input: unknown, timeoutSec = this.timeout()): Promise<T> {
-    try {
-      const data = await runJsx<T>(main, input, timeoutSec);
-      this.permissionDenied = false;
-      this.probed = true;
-      return data;
-    } catch (err) {
-      if (err instanceof BridgeError && err.kind === "permission-denied") this.permissionDenied = true;
-      throw err;
-    }
+  private call<T>(main: string, input: unknown, timeoutSec?: number): Promise<T> {
+    return this.adobe.call<T>(main, input, timeoutSec);
   }
 
-  async getStatus(): Promise<AppStatus> {
-    const now = Date.now();
-    if (this.installed === null || (!this.installed && now - this.installedCheckedAt > 30_000)) {
-      this.installed = await isInstalled();
-      this.installedCheckedAt = now;
-    }
-    if (!this.installed) return "not-installed";
-    if (!(await isRunning())) {
-      this.probed = false;
-      this.version = null;
-      return "not-running";
-    }
-    if (this.probed && !this.permissionDenied) return "connected";
-    // Probe with a tiny script. The first probe triggers macOS's "Doppel wants to control Adobe InDesign" prompt.
-    if (isBusy() || now - this.lastProbeAt < (this.permissionDenied ? 10_000 : 2_000)) {
-      return this.permissionDenied ? "permission-denied" : "not-running";
-    }
-    this.lastProbeAt = now;
-    try {
-      // Long timeout: the first probe waits while macOS shows its permission prompt.
-      const info = await this.call<{ version: string }>(PROBE, {}, 90);
-      this.version = info.version;
-      return "connected";
-    } catch (err) {
-      if (err instanceof BridgeError && err.kind === "permission-denied") return "permission-denied";
-      // Still launching, or busy with a modal dialog.
-      return "not-running";
-    }
+  getStatus(): Promise<AppStatus> {
+    return this.adobe.getStatus();
   }
 
   async getDetail() {
@@ -109,18 +81,12 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 
   async getAppVersion(): Promise<string | null> {
-    if (!this.version && (await isRunning())) {
-      try {
-        this.version = (await this.call<{ version: string }>(PROBE, {}, 20)).version;
-      } catch {
-        return null;
-      }
-    }
-    return this.version ? shortVersion(this.version) : null;
+    const version = await this.adobe.getVersion();
+    return version ? shortVersion(version) : null;
   }
 
   async listOpenDocuments(): Promise<DocumentRef[]> {
-    if (!(await isRunning())) return [];
+    if (!(await indesignBridge.isRunning())) return [];
     const docs = await this.call<{ id: string; name: string; path: string; pageCount: number; active: boolean }[]>(LIST_DOCUMENTS, {});
     return docs.map((d) => ({ id: d.id, appId: this.id, name: d.name, path: d.path || undefined, pageCount: d.pageCount, active: d.active }));
   }
@@ -140,7 +106,7 @@ export class InDesignAdapter implements DesignAppAdapter {
       links: DocumentSummary["links"];
       fonts: DocumentSummary["fonts"];
     }>(INSPECT, { docId });
-    this.version = d.appVersion;
+    this.adobe.version = d.appVersion;
     return {
       ref: { id: d.id, appId: this.id, name: d.name, path: d.path || undefined, pageCount: d.pageCount },
       appVersion: shortVersion(d.appVersion),
@@ -161,7 +127,7 @@ export class InDesignAdapter implements DesignAppAdapter {
     onProgress: (p: Progress) => void,
     ctx: ScriptContext,
   ): Promise<ScriptResult> {
-    if (!(await isRunning())) throw new BridgeError("not-running", "InDesign isn't running.");
+    if (!(await indesignBridge.isRunning())) throw new BridgeError("not-running", "InDesign isn't running.");
     const log: string[] = [];
     const docs = await this.listOpenDocuments();
     const source = ctx.documentId ? docs.find((d) => d.id === ctx.documentId) : docs.find((d) => d.active) ?? docs[0];
@@ -215,7 +181,7 @@ export class InDesignAdapter implements DesignAppAdapter {
     }
     const m = target.match(/^page:(.*)#(\d+)$/);
     if (!m) throw new Error(`Unknown preview target: ${target}`);
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppel-preview-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-preview-"));
     try {
       const previews = await this.renderPagePreviews(m[1], [Number(m[2])], dir);
       const p = previews[Number(m[2])];
@@ -249,19 +215,19 @@ export class InDesignAdapter implements DesignAppAdapter {
 
   async getParamOptions(source: string): Promise<ParamOption[]> {
     if (source !== "pdfExportPresets") return [];
-    if (!(await isRunning())) return [];
+    if (!(await indesignBridge.isRunning())) return [];
     const names = await this.call<string[]>(PDF_PRESETS, {});
     return names.map((n) => ({ value: n, label: n }));
   }
 
   async missingFonts(families: string[]): Promise<string[]> {
-    if (families.length === 0 || !(await isRunning())) return [];
+    if (families.length === 0 || !(await indesignBridge.isRunning())) return [];
     return this.call<string[]>(MISSING_FONTS, { families });
   }
 
   async openInApp(docId: string, target?: { pageIndex?: number }): Promise<void> {
     await this.call(OPEN_PAGE, { docId, pageIndex: target?.pageIndex });
-    await activate();
+    await indesignBridge.activate();
   }
 
   async closeDocument(docId: string): Promise<void> {
@@ -274,13 +240,103 @@ export class InDesignAdapter implements DesignAppAdapter {
 
   /** Page size, margins, columns, bleed and paragraph styles of an .indd file (InDesign must be running). */
   async readStyleFacts(filePath: string): Promise<StyleFacts> {
-    if (!(await isRunning())) throw new BridgeError("not-running", "Open InDesign to read this file's styles.");
+    if (!(await indesignBridge.isRunning())) throw new BridgeError("not-running", "Open InDesign to read this file's styles.");
     return this.call<StyleFacts>(STYLE_FACTS, { path: filePath });
   }
 
   async connect(): Promise<AppStatus> {
-    this.installed = null;
-    this.lastProbeAt = 0;
+    this.adobe.reset();
     return this.getStatus();
   }
+
+  // ---------- Stages of multi-app routines ----------
+
+  capabilityManifest() {
+    return `${INDESIGN_MODEL_GUIDE}\n\n${STAGE_NOTES}`;
+  }
+
+  async inspectForModel(docId: string) {
+    return this.inspectDocument(docId);
+  }
+
+  /** Makes the copy once per stage (like a single-script run); every item then runs on it. */
+  async beginStage(ctx: StageRunContext): Promise<StageSession> {
+    if (!(await indesignBridge.isRunning())) throw new BridgeError("not-running", "InDesign isn't running.");
+    if ((ctx.stage.document ?? "open") === "none") return { state: { docId: null } };
+    const docs = await this.listOpenDocuments();
+    const source = ctx.documentId ? docs.find((d) => d.id === ctx.documentId) : (docs.find((d) => d.active) ?? docs[0]);
+    if (!source) {
+      throw new BridgeError("script", ctx.documentId ? "The document isn't open in InDesign anymore." : "No document is open in InDesign.");
+    }
+    let target = { id: source.id, name: source.name };
+    if (ctx.target !== "original") {
+      target = await this.call<{ id: string; name: string }>(PREPARE_COPY, {
+        docId: source.id,
+        placement: ctx.target === "trial" ? "temp" : "beside",
+        fallbackDir: ctx.target === "trial" ? path.join(ctx.workDir, "copies") : ctx.copiesDir,
+        showWindow: ctx.target !== "trial",
+      });
+    }
+    return { state: { docId: target.id, sourceId: source.id, sourceName: source.name }, documentName: target.name };
+  }
+
+  async runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult> {
+    const st = session.state as { docId: string | null; sourceName?: string };
+    onProgress(`Running in InDesign · ${input.label}`);
+    let res: { result: unknown; outputs: AdapterOutput[]; log: string[]; values?: Record<string, unknown[]> };
+    try {
+      res = await this.call(wrapRoutine(String(input.body)), {
+        docId: st.docId,
+        noDocument: !st.docId,
+        originalName: st.sourceName,
+        routineName: ctx.routineName,
+        params: input.params,
+        item: input.item,
+        itemIndex: input.index,
+        stages: input.stages,
+        workDir: ctx.workDir,
+      });
+    } catch (err) {
+      if (err instanceof BridgeError && err.kind === "script") {
+        return { ok: false, error: `${err.message}${err.line ? ` (script line ${err.line})` : ""}`, scriptFailure: true, outputs: [], values: {}, findings: [], log: [] };
+      }
+      throw err;
+    }
+    const outputs = (res.outputs ?? []).map((o, i) => ({ ...o, key: `${input.key}-${o.key || i + 1}` }));
+    for (const o of outputs.filter((x) => x.filePath && !x.preview)) o.preview = await filePreview(o.filePath!).catch(() => undefined);
+    const pages = outputs.filter((x) => !x.filePath && x.pageIndex);
+    if (pages.length && st.docId) {
+      const previews = await this.renderPagePreviews(st.docId, [...new Set(pages.map((p) => p.pageIndex!))].slice(0, 24), ctx.workDir).catch(
+        () => ({}) as Record<number, never>,
+      );
+      for (const o of pages) o.preview = previews[o.pageIndex!];
+    }
+    const values: Record<string, unknown[]> = { ...(res.values ?? {}) };
+    const fileList = ctx.stage.outputs.find((o) => o.type === "fileList" || o.type === "file");
+    const files = outputs.filter((o) => o.filePath).map((o) => o.filePath!);
+    if (fileList && !values[fileList.key] && files.length) values[fileList.key] = files;
+    let findings: RuleFinding[] = [];
+    if (st.docId && ctx.stage.modifiesDocument) {
+      findings = await this.ruleChecks(st.docId, { minPpi: 300, outputs }).catch(() => []);
+    }
+    return { ok: true, outputs, values, findings, log: res.log ?? [], data: res.result };
+  }
+
+  async endStage(session: StageSession, ctx: StageRunContext): Promise<void> {
+    const st = session.state as { docId: string | null; sourceId?: string };
+    if (!st.docId || st.docId === st.sourceId) return;
+    if (ctx.target === "copy" && ctx.stage.modifiesDocument) {
+      await this.call(SAVE_DOCUMENT, { docId: st.docId }).catch(() => undefined);
+    } else {
+      await this.closeDocument(st.docId).catch(() => undefined);
+    }
+  }
 }
+
+const STAGE_NOTES = `In a multi-app routine, an InDesign stage's script also gets:
+  ctx.item (the current item when the stage repeats: a data row object, or for files { path, name, stem, ext }),
+  ctx.itemIndex (0-based), ctx.stages.<stageId>.outputs.<key> (arrays from earlier stages),
+  ctx.workDir (this stage's working folder; put files that later stages need here),
+  ctx.stageOutput(key, value) (adds a value to one of the stage's declared outputs; exported files listed with
+  ctx.output({ filePath }) go to the stage's first fileList output automatically).
+doc is null for stages with document "none" (open files with app.open(File(params.someFile)) yourself then).`;

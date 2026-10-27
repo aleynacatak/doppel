@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scriptTimeoutSec: 120,
   figmaFiles: [],
   figmaPairingCode: "",
+  figmaPort: 47810,
 };
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -47,6 +48,8 @@ export class SettingsService {
     if (next.aiProvider === "local") next.aiProvider = this.settings.aiProvider;
     next.scriptTimeoutSec = Math.min(Math.max(Math.round(next.scriptTimeoutSec) || 120, 10), 3600);
     next.monthlySpendLimit = Math.max(0, Number(next.monthlySpendLimit) || 0);
+    const port = Math.round(Number(next.figmaPort));
+    next.figmaPort = port >= 1024 && port <= 65535 ? port : DEFAULT_SETTINGS.figmaPort;
     this.settings = next;
     await this.storage.saveSettings(next);
     return this.settings;

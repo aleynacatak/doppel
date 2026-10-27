@@ -36,7 +36,10 @@ export function OutputCard({ output, actions }: { output: RunOutput; actions?: O
       />
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="ui-h3 min-w-0 break-words">{output.label}</div>
+          <div className="min-w-0">
+            <div className="ui-h3 break-words">{output.label}</div>
+            {output.itemLabel && output.itemLabel !== output.label && <div className="ui-small ui-muted truncate">{output.itemLabel}</div>}
+          </div>
           <StatusTag output={output} />
         </div>
 

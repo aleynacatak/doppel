@@ -9,7 +9,7 @@ import { useShell } from "@/lib/store";
 import { Button } from "../ui/Button";
 import { Spinner } from "../ui/Progress";
 
-/** Connect apps → Figma: access token, files by link, and the Doppel plugin. */
+/** Connect apps → Figma: the Doppl plugin (open files, pairing code), and optionally files by link. */
 export function FigmaSetup() {
   const apps = useShell((s) => s.apps);
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -48,11 +48,46 @@ export function FigmaSetup() {
   };
 
   const f = copy.connect.figma;
-  const plugin = setup.plugin;
+  const linked = new Set(setup.sessions.map((x) => x.documentId));
   return (
     <div className="flex flex-col gap-5">
       <section className="flex flex-col gap-2">
-        <div className="ui-h3">{f.tokenTitle}</div>
+        <div className="ui-h3">{f.pluginTitle}</div>
+        <p className="ui-small">{f.pluginHelp}</p>
+        <ol className="ui-small list-decimal pl-5">
+          {f.pluginSteps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="small" onClick={() => doppel().showFigmaPlugin()}>
+            {f.showPluginFiles}
+          </Button>
+          <span className="ui-small">
+            {f.pairingCode}: <strong className="select-all">{setup.pairingCode}</strong>
+          </span>
+          <span className="ui-small ui-muted">{f.port(setup.port)}</span>
+        </div>
+        <p className="ui-small ui-muted">{f.pluginKeepOpen}</p>
+        <div className="ui-label mt-1">{f.sessionsTitle}</div>
+        {setup.sessions.length === 0 ? (
+          <p className="ui-small ui-muted">{f.noSessions}</p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {setup.sessions.map((x) => (
+              <li key={x.id} className="flex items-center gap-2">
+                <span className="ui-dot" data-on aria-hidden />
+                <span className="min-w-0 truncate">{f.session(x.fileName, x.pageName, x.pluginVersion)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <div className="ui-h3">{f.linksTitle}</div>
+        <p className="ui-small ui-muted">{f.linksHelp}</p>
+        <div className="ui-label">{f.tokenTitle}</div>
         {setup.token.saved ? (
           <div className="flex flex-wrap items-center gap-3">
             <span>{f.tokenSaved(setup.token.hint ?? "")}</span>
@@ -85,10 +120,8 @@ export function FigmaSetup() {
             {error.message}
           </p>
         )}
-      </section>
 
-      <section className="flex flex-col gap-2">
-        <div className="ui-h3">{f.filesTitle}</div>
+        <div className="ui-label mt-2">{f.filesTitle}</div>
         <p className="ui-small ui-muted">{f.filesHelp}</p>
         {setup.files.length === 0 ? (
           <p className="ui-small ui-muted">{f.noFiles}</p>
@@ -96,9 +129,10 @@ export function FigmaSetup() {
           <ul className="flex flex-col gap-1">
             {setup.files.map((file) => (
               <li key={file.key} className="flex flex-wrap items-center gap-2">
-                <span className="ui-dot" data-on={plugin.matchedKey === file.key} aria-hidden />
+                <span className="ui-dot" data-on={linked.has(`figma:${file.key}`)} aria-hidden />
                 <span className="min-w-0 flex-1 truncate" title={file.url}>
                   {file.name}
+                  {linked.has(`figma:${file.key}`) && <span className="ui-small ui-muted"> · {f.pluginOpen}</span>}
                   {file.lastModified && <span className="ui-small ui-muted"> · edited {formatRelative(file.lastModified)}</span>}
                 </span>
                 <Button size="small" variant="ghost" onClick={() => doppel().openDocument("figma", `figma:${file.key}`)}>
@@ -130,31 +164,6 @@ export function FigmaSetup() {
             {error.message}
           </p>
         )}
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <div className="ui-h3">{f.pluginTitle}</div>
-        {plugin.connected ? (
-          <p>{plugin.matchedKey ? f.pluginConnected(plugin.fileName ?? "", plugin.pageName ?? "") : f.pluginUnknownFile}</p>
-        ) : (
-          <>
-            <p className="ui-small ui-muted">{f.pluginNotConnected}</p>
-            <p className="ui-small">{f.pluginHelp}</p>
-            <ol className="ui-small list-decimal pl-5">
-              {f.pluginSteps.map((s) => (
-                <li key={s}>{s}</li>
-              ))}
-            </ol>
-          </>
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button size="small" onClick={() => doppel().showFigmaPlugin()}>
-            {f.showPluginFiles}
-          </Button>
-          <span className="ui-small">
-            {f.pairingCode}: <strong className="select-all">{setup.pairingCode}</strong>
-          </span>
-        </div>
       </section>
     </div>
   );

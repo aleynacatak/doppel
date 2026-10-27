@@ -9,7 +9,7 @@ const PARAM_SCHEMA = {
   properties: {
     key: { type: "string", description: "camelCase identifier used in the script as params.<key>" },
     label: { type: "string" },
-    type: { type: "string", enum: ["text", "number", "boolean", "select", "formatList", "file", "folder"] },
+    type: { type: "string", enum: ["text", "number", "boolean", "select", "formatList", "file", "folder", "dataFile"] },
     required: { type: "boolean" },
     default: { anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "array", items: { type: "string" } }] },
     help: { type: "string" },
@@ -19,6 +19,8 @@ const PARAM_SCHEMA = {
     },
     optionsSource: { type: "string" },
     extensions: { type: "array", items: { type: "string" } },
+    columns: { type: "array", items: { type: "string" }, description: "dataFile: columns every row must have" },
+    role: { type: "string", enum: ["input", "output"], description: "folder: read files from it, or save results into it" },
     min: { type: "number" },
     max: { type: "number" },
   },
@@ -174,3 +176,159 @@ Answer with JSON only, matching the schema. Use the output ids you were given.`;
 
 export const EXPLAIN_SYSTEM = `You explain to a designer, in one or two plain sentences without code terms, why an
 automation routine stopped working. Answer with JSON only, matching the schema.`;
+
+// ---------- Multi-app creation (stages) ----------
+
+const STAGE_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: 'Short id used in placeholders, e.g. "s1"' },
+    name: { type: "string" },
+    app: { type: "string" },
+    kind: { type: "string", enum: ["actions", "script"] },
+    document: { type: "string", enum: ["open", "none"] },
+    repeat: { type: "object", properties: { over: { type: "string" } }, required: ["over"] },
+    inputs: { type: "array", items: { type: "string" } },
+    outputs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { key: { type: "string" }, type: { type: "string", enum: ["fileList", "file", "nodeList", "data"] }, label: { type: "string" } },
+        required: ["key", "type"],
+      },
+    },
+    steps: { type: "array", items: { type: "string" } },
+    actions: { type: "array", items: { type: "object" }, description: "Figma stages: the action list" },
+    script: { type: "string", description: "InDesign/Photoshop stages: the ExtendScript body" },
+    modifiesDocument: { type: "boolean" },
+  },
+  required: ["id", "name", "app", "kind", "outputs", "steps"],
+};
+
+export const STAGED_ROUTINE_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    description: { type: "string" },
+    params: { type: "array", items: PARAM_SCHEMA },
+    stages: { type: "array", items: STAGE_SCHEMA },
+    qcProfile: { type: "string", enum: ["print", "web"] },
+    requiredFonts: { type: "array", items: { type: "string" } },
+    keyObjects: { type: "array", items: { type: "string" } },
+    objectChecks: {
+      type: "array",
+      items: { type: "object", properties: { object: { type: "string" }, region: { type: "string" } }, required: ["object", "region"] },
+    },
+  },
+  required: ["name", "description", "params", "stages"],
+};
+
+export const STAGE_TURN_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["inspect", "preview_stage", "propose_routine", "ask_question"] },
+    reason: { type: "string", description: "One short sentence for the designer: what you are doing" },
+    app: { type: "string" },
+    document: { type: "string" },
+    node: { type: "string" },
+    depth: { type: "number" },
+    stageId: { type: "string" },
+    sampleItemIndex: { type: "number" },
+    routine: STAGED_ROUTINE_SCHEMA,
+    question: {
+      type: "object",
+      properties: {
+        text: { type: "string" },
+        options: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" }, label: { type: "string" } }, required: ["id", "label"] },
+        },
+      },
+      required: ["text", "options"],
+    },
+  },
+  required: ["action"],
+};
+
+export interface StageAppContext {
+  adapter: DesignAppAdapter;
+  manifest: string;
+}
+
+export function stageSystemPrompt(apps: StageAppContext[], maxTurns: number) {
+  return `You are the routine author inside Doppl, a desktop app for designers. Doppl turns a designer's request into a
+reusable routine that runs across their design apps. The routine is reused many times WITHOUT AI, so it must be
+complete, deterministic and parameterized.
+
+A routine has params (picked by the designer at each run) and one or more stages. Each stage runs in ONE app;
+stages run in order and pass results to each other through placeholders:
+  {{params.<key>}}, {{params.<dataFile>.rows}}, {{params.<folder>.files}}, {{item.<field>}}, {{itemIndex}},
+  {{stage.<stageId>.outputs.<key>}}
+A stage with repeat.over (a list placeholder) runs once per item: per data row, per file, or per output of an
+earlier stage. Files a stage hands to later stages go to its working folder and into a declared output
+(type "fileList"); final deliverables go into a folder param with role "output".
+
+Answer with ONE JSON object per turn, matching the schema. "action" is one of:
+- "inspect": a deeper look at a document: app, document (id from the list below), optional node and depth.
+- "preview_stage": runs stageId of your draft "routine" on one sample item (sampleItemIndex, 0-based) in a
+  scratch copy (Figma: a temporary page that is deleted after; Photoshop: never saved; InDesign: a hidden copy).
+  Earlier stages run first on the same item. You get results, errors and a preview image.
+- "propose_routine": the complete routine. Doppl validates it (action schemas, script checks, every placeholder
+  resolves, no absolute paths, no literal values copied from the sample data) and runs a trial on the first
+  sample item. Problems come back to you as structured errors; fix them and propose again.
+- "ask_question": one clarifying question with 2–4 short options, only when a wrong guess would make the routine
+  useless. At most once, and only as your first answer.
+You have at most ${maxTurns} answers in total. Propose a complete routine early (by your 3rd or 4th answer) and
+improve it from the feedback; previews are optional.
+
+Writing the routine:
+- name: max 6 words; description: one sentence; each stage has 2–5 plain-language steps (no code terms).
+- params: every file, folder, data file or option the designer may change is a param. Types: text, number,
+  boolean, select (with options), formatList, file (with extensions), folder (role "input" or "output"),
+  dataFile (a CSV, JSON or Excel file; give the columns the stages use). Never put absolute paths in a routine.
+- Never copy values from the sample rows or sample file names into actions or scripts; use {{item.<column>}}.
+- Stage ids: short identifiers (s1, s2, …). Each stage declares outputs it hands on (key + type) and inputs
+  (the placeholders it reads).
+- document: "open" when the stage works on a document the designer has open in that app (picked at run time),
+  "none" when it only opens files from params.
+- Figma stages: kind "actions" with "actions" (an action list from the catalog). InDesign and Photoshop stages:
+  kind "script" with "script" (an ExtendScript body as described in that app's guide).
+- qcProfile "print" or "web"; keyObjects: up to 2 things that must stay fully visible in outputs ([] otherwise);
+  objectChecks: optional { object, region } pairs checked with an image model on reruns with AI review.
+
+Apps in this task:
+${apps.map((a) => `\n=== ${a.adapter.name} (app id "${a.adapter.id}", stage kind "${a.adapter.stageKind}") ===\n${a.manifest}`).join("\n")}`;
+}
+
+export interface StageTaskFacts {
+  request: string;
+  references: string[];
+  folders: { path: string; files: string[] }[];
+  samples: { file: string; columns: string[]; rows: Record<string, unknown>[]; totalRows: number; errors: string[] }[];
+  documents: { appId: string; id: string; name: string; inspection: unknown }[];
+  style: StyleProfile | null;
+  /** Repair: the routine as it is and what went wrong. */
+  current?: { routine: unknown; problems: string[] };
+}
+
+const clip = (value: unknown, max: number) => {
+  const text = JSON.stringify(value);
+  return text.length > max ? `${text.slice(0, max)}… (truncated)` : text;
+};
+
+export function stageTaskMessage(f: StageTaskFacts) {
+  const rules = f.style?.rules.length ? f.style.rules.map((r) => `${r.label}: ${r.value}`).join("; ") : "none";
+  return [
+    `Request: "${f.request}"`,
+    `Reference files (names only): ${f.references.length ? f.references.map((r) => r.split("/").pop()).join(", ") : "none"}`,
+    ...f.samples.map(
+      (s) =>
+        `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")}). First rows: ${clip(s.rows, 3000)}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`,
+    ),
+    ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
+    `House style: ${rules}`,
+    "Open documents:",
+    ...f.documents.map((d) => `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, 7000)}`),
+    ...(f.current ? [`Current routine: ${clip(f.current.routine, 12000)}`, `What went wrong: ${f.current.problems.join(" | ")}`, "Fix it and propose the complete corrected routine."] : []),
+  ].join("\n");
+}

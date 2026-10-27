@@ -3,7 +3,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Doppel",
+  title: "Doppl",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

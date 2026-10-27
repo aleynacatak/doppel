@@ -1,29 +1,31 @@
 {
-  "name": "doppel",
-  "productName": "Doppel",
+  "name": "doppl",
+  "productName": "Doppl",
   "version": "0.1.0",
   "private": true,
-  "description": "Doppel turns a plain-language request into a reusable routine that runs inside your desktop design apps.",
+  "description": "Doppl turns a plain-language request into a reusable routine that runs inside your desktop design apps.",
   "author": "Aleyna Catak",
   "main": "dist-electron/main.js",
   "engines": {
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "npm run build:electron && concurrently -k -n next,tsc,electron -c gray,gray,gray \"npm:dev:next\" \"npm:dev:tsc\" \"npm:dev:electron\"",
+    "dev": "npm run build:plugin && npm run build:electron && concurrently -k -n next,tsc,electron -c gray,gray,gray \"npm:dev:next\" \"npm:dev:tsc\" \"npm:dev:electron\"",
     "dev:next": "next dev renderer -p 3000",
     "dev:tsc": "tsc -p electron/tsconfig.json --watch --preserveWatchOutput",
-    "dev:electron": "wait-on tcp:127.0.0.1:3000 && DOPPEL_DEV_SERVER_URL=http://localhost:3000 electron .",
-    "build": "npm run build:renderer && npm run build:electron",
+    "dev:electron": "wait-on tcp:127.0.0.1:3000 && DOPPL_DEV_SERVER_URL=http://localhost:3000 electron .",
+    "build": "npm run build:plugin && npm run build:renderer && npm run build:electron",
+    "build:plugin": "node scripts/build-figma-plugin.mjs",
     "build:renderer": "next build renderer",
     "build:electron": "rm -rf dist-electron && tsc -p electron/tsconfig.json && node scripts/write-build-config.mjs",
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder --mac --arm64",
-    "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p renderer/tsconfig.json --noEmit"
+    "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p renderer/tsconfig.json --noEmit && tsc -p figma-plugin/tsconfig.json",
+    "test": "vitest run"
   },
   "build": {
-    "appId": "com.doppel.desktop",
-    "productName": "Doppel",
+    "appId": "com.doppl.desktop",
+    "productName": "Doppl",
     "directories": {
       "output": "release"
     },
@@ -45,38 +47,50 @@
       "identity": "-",
       "hardenedRuntime": false,
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "Doppel controls your design apps (such as Adobe InDesign) to read your documents and run your routines."
+        "NSAppleEventsUsageDescription": "Doppl controls Adobe InDesign and Adobe Photoshop on this Mac to read your open documents and run your routines."
       }
     },
     "dmg": {
-      "title": "Doppel"
+      "title": "Doppl"
     },
     "extraResources": [
       {
-        "from": "figma-plugin",
-        "to": "figma-plugin"
+        "from": "figma-plugin/dist",
+        "to": "figma-plugin/dist"
+      },
+      {
+        "from": "figma-plugin/manifest.json",
+        "to": "figma-plugin/manifest.json"
       }
     ]
   },
   "devDependencies": {
+    "@figma/plugin-typings": "^1.142.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.20.5",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
     "concurrently": "^9.2.5",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
     "next": "^15.5.28",
     "postcss": "^8.5.31",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
+    "vitest": "^5.0.5",
     "wait-on": "^9.5.1",
+    "write-excel-file": "^4.1.1",
     "zustand": "^5.0.16"
   },
   "dependencies": {
-    "ws": "^8.22.0"
+    "papaparse": "^5.7.0",
+    "read-excel-file": "^9.3.13",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
   }
 }

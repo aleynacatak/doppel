@@ -1,30 +1,37 @@
-// What the model needs to know to write a Figma routine the Doppel plugin can run.
-export const FIGMA_MODEL_GUIDE = `Figma routines are JavaScript (ES2020) that the Doppel plugin runs inside Figma's plugin sandbox.
-The script you write is the BODY of async (figma, params, doppel) => { ... } — you can use await.
+import { figmaCatalogJsonSchema } from "../../shared/figmaActions";
 
-The routine works on the page that is open in Figma. By default Doppel first duplicates that page and runs
-on the copy, so always work through doppel.page (never figma.currentPage, never switch pages).
+/** How Figma stages work, for the model. The action catalog follows as JSON Schema (see capabilityManifest). */
+export const FIGMA_MODEL_GUIDE = `Figma stages are ACTION LISTS, not code: { "actions": [ { "action": "...", ... }, ... ] }.
+Doppl's plugin runs them in order with a fixed interpreter. Only the actions in the catalog exist.
 
-In scope:
-- figma: the Figma Plugin API. The file uses dynamic page loading: use figma.getNodeByIdAsync, never getNodeById.
-- params: the values the designer picked, keyed by your param keys (folder params are absolute paths, strings).
-- doppel helpers:
-  doppel.page                         the page to work on (already loaded)
-  doppel.frames() -> nodes            top-level frames/components/sections on doppel.page
-  doppel.findFrame(name) -> node      a frame on doppel.page by exact name, or undefined
-  await doppel.loadFonts(node)        load every font in node's text BEFORE changing text, resizing text or rescaling
-  doppel.format(pattern, vars)        replaces {name} tokens, e.g. doppel.format("{format}_v1", { format: "story" })
-  await doppel.exportNode(node, { folder: params.outputFolder, fileName, format: "PNG"|"JPG"|"SVG"|"PDF", scale })
-                                      saves an export into a folder param the designer picked (no other folders)
-  doppel.output({ key, label, nodeId, details? })
-                                      call once per frame the routine made or changed (nodeId = frame.id); Doppel
-                                      previews and checks each one (text cut off by its frame, missing fonts, blurry images)
-  doppel.log(message)
-- Return a small summary object, e.g. { made: 6 }.
+Node references (fields named node, nodes, container, targetParent, within, boundary, templateChild):
+- a layer name ("Card") or a path of names ("Card/Header/Title"), searched on the stage's page;
+- "page:<page name>" or "page:<page name>/<path>";
+- a node id ("12:34") from the inspection results;
+- "$<id>" = the result of an earlier action that has "id": "<id>" (a list result counts as all its nodes);
+- "$<id>.#<name>" = the descendant named <name> inside that result, chainable ("$card.#header.#title"), or
+  "$<id>/<path>" for a path of child names. This is how one action list works on every copy it makes.
 
-Useful API: node.clone(), frame.rescale(scale), frame.resize(w, h), frame.resizeWithoutConstraints(w, h),
-node.x / node.y, frame.children, node.findAll(fn), node.findAllWithCriteria({ types: ["TEXT"] }),
-text.characters, text.fontSize (load fonts first), node.name.
+Placeholders (Doppl replaces them before the plugin sees the actions):
+- {{params.<key>}}; a dataFile param also has {{params.<key>.rows}} and {{params.<key>.columns}}; a folder param
+  has {{params.<key>.files}} (its files as items).
+- {{item.<field>}} inside a repeated stage (one run per data row, or per file: fields path, name, stem, ext),
+  {{itemIndex}} (1-based).
+- {{stage.<stageId>.outputs.<key>}} = an earlier stage's output list.
+A value that is exactly one placeholder keeps its type (numbers, lists); inside longer text it becomes text.
 
-Never: figma.closePlugin, figma.showUI, figma.ui, eval, new Function, figma.setCurrentPageAsync, network access,
-absolute paths in the script (every location is a param), deleting anything outside the frames you made.`;
+Rules:
+- Never copy literal data from the sample rows or file names into the actions; always use placeholders.
+- Never use absolute paths; image files come from {{item.path}}, {{params.<folder>}} + a name, or earlier stages.
+- setText loads fonts itself. Images: setImageFill with { "folder": "{{params.images}}", "name": "{{item.image}}" }
+  or { "file": "..." }. Barcodes: placeSvg with { "barcode": { "type": "ean13", "value": "{{item.ean}}" } }
+  (EAN-13, EAN-8, UPC-A, Code 128; Doppl checks the check digit).
+- exportNode writes a file into the stage's working folder (default) or a folder param; give "output": "<key>"
+  (a fileList output of the stage) so later stages (e.g. Photoshop) get the files.
+- Use measure on what you build so text that doesn't fit and elements outside their frame are flagged.
+- Prefer duplicating a template frame the designer made (duplicateNode with "id", then edit "$id.#…"), or
+  repeatChild for lists and tables in auto-layout containers.`;
+
+export function figmaCapabilityManifest(): string {
+  return `${FIGMA_MODEL_GUIDE}\n\nAction catalog (JSON Schema of { actions: [...] }):\n${JSON.stringify(figmaCatalogJsonSchema())}`;
+}

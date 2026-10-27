@@ -1,4 +1,4 @@
-import type { ClarifyingQuestion, DocumentSummary, EnvironmentCheck, QcCheck, Routine, RoutineDraft, Run, RunOutput, Task } from "../types";
+import type { ClarifyingQuestion, DocumentSummary, EnvironmentCheck, ObjectCheckDef, QcCheck, Routine, RoutineDraft, Run, RunOutput, Task } from "../types";
 import type { QuotaUpdate } from "./aiTransport";
 
 /** Everything that calls Meta's models (implemented by ModelAiService: demo Worker or own key). */
@@ -28,6 +28,8 @@ export interface ScriptFailure {
 }
 
 export interface AiService {
+  /** Multi-app creation: one model turn (inspect, preview_stage, propose_routine or ask_question), as raw JSON. */
+  stageTurn(messages: import("./aiTransport").ChatMessage[], ctx: AiCallContext): Promise<Record<string, any>>;
   /** Understand the request against the document (stage "Reading document"). */
   readDocument(task: Task, summary: DocumentSummary, ctx: AiCallContext): Promise<void>;
   /** Write the routine (stage "Writing routine"). May ask a clarifying question first. */
@@ -43,4 +45,6 @@ export interface AiService {
   repairRoutine(routine: Routine, failedRun: Run | null, env: EnvironmentCheck | null, ctx: AiCallContext): Promise<RoutineDraft>;
   /** Visual judgement on one output ("Automatic check + AI review" on reruns). */
   reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck>;
+  /** SAM: is <object> inside <region> in this output's preview? Two segment calls, each counted. */
+  checkObjectInRegion(output: RunOutput, check: ObjectCheckDef, ctx: AiCallContext): Promise<QcCheck>;
 }

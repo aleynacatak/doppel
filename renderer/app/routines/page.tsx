@@ -9,6 +9,7 @@ import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Loading } from "@/components/ui/Progress";
 import { copy } from "@/copy";
+import { routineApps } from "@/lib/format";
 import { doppel } from "@/lib/doppel";
 import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
@@ -22,7 +23,7 @@ export default function LibraryPage() {
 
   const q = query.trim().toLowerCase();
   const shown = (routines ?? []).filter(
-    (r) => (appFilter === "all" || r.appId === appFilter) && (!q || `${r.name} ${r.description}`.toLowerCase().includes(q)),
+    (r) => (appFilter === "all" || routineApps(r).includes(appFilter)) && (!q || `${r.name} ${r.description}`.toLowerCase().includes(q)),
   );
 
   return (

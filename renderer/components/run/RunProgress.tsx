@@ -3,6 +3,7 @@ import { copy } from "@/copy";
 import { AiCallCounter } from "../ui/AiCallCounter";
 import { Button } from "../ui/Button";
 import { ProgressBar, Spinner } from "../ui/Progress";
+import { StageProgressList } from "./StageProgressList";
 
 /** Live progress of a run: phase, per-output status, cancel, AI-call counter. */
 export function RunProgress({ run, onCancel }: { run: Run; onCancel: () => void }) {
@@ -23,10 +24,11 @@ export function RunProgress({ run, onCancel }: { run: Run; onCancel: () => void 
           </div>
           <Button onClick={onCancel}>{copy.run.cancelRun}</Button>
         </div>
-        <ProgressBar value={total ? done / total : undefined} label={copy.run.progressTitle} />
-        {total > 0 && <div className="ui-small ui-muted">{copy.run.outputsDone(done, total)}</div>}
+        {!run.stages?.length && <ProgressBar value={total ? done / total : undefined} label={copy.run.progressTitle} />}
+        {total > 0 && !run.stages?.length && <div className="ui-small ui-muted">{copy.run.outputsDone(done, total)}</div>}
       </div>
-      {total > 0 && (
+      {run.stages?.length ? <StageProgressList stages={run.stages} /> : null}
+      {total > 0 && !run.stages?.length && (
         <ul className="ui-card flex flex-col">
           {run.outputs.map((o) => (
             <li key={o.id} className="ui-divider flex items-center justify-between gap-4 px-3 py-2 first:border-t-0">

@@ -15,16 +15,19 @@ import { useShell } from "@/lib/store";
 export default function SettingsPage() {
   const { settings, setSettings, apps } = useShell();
   const [timeout, setTimeoutSec] = useState("");
+  const [port, setPort] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (settings) setTimeoutSec(String(settings.scriptTimeoutSec));
+    if (!settings) return;
+    setTimeoutSec(String(settings.scriptTimeoutSec));
+    setPort(String(settings.figmaPort));
   }, [settings]);
 
   if (!settings) return null;
 
   const save = async () => {
-    setSettings(await doppel().saveSettings({ scriptTimeoutSec: Number(timeout) }));
+    setSettings(await doppel().saveSettings({ scriptTimeoutSec: Number(timeout), figmaPort: Number(port) }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 2000);
   };
@@ -43,6 +46,9 @@ export default function SettingsPage() {
             <input id="timeout" type="number" min={10} max={3600} className="ui-input max-w-32" value={timeout} onChange={(e) => setTimeoutSec(e.target.value)} />
             <span className="ui-muted">{copy.settings.seconds}</span>
           </div>
+        </Field>
+        <Field label={copy.settings.figmaPortTitle} htmlFor="figma-port" hint={copy.settings.figmaPortHint}>
+          <input id="figma-port" type="number" min={1024} max={65535} className="ui-input max-w-32" value={port} onChange={(e) => setPort(e.target.value)} />
         </Field>
         <div className="flex items-center gap-3">
           <Button variant="primary" onClick={save}>

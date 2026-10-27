@@ -28,6 +28,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, [setBoot, setBridgeMissing, setApps]);
 
+  // Hidden dev panel: Cmd+Shift+D.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        router.push("/dev");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
+
   // First launch: Connect apps.
   useEffect(() => {
     if (settings && !settings.onboarded && pathname !== "/connect") router.replace("/connect");

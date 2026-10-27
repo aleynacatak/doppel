@@ -1,7 +1,7 @@
 import type { AppId } from "../core/types";
 import type { DesignAppAdapter } from "./types";
 
-/** The adapters Doppel knows about, in display order. Built in core/config.ts. */
+/** The adapters Doppl knows about, in display order. Built in core/config.ts. */
 export class AdapterRegistry {
   constructor(private readonly adapters: DesignAppAdapter[]) {}
 

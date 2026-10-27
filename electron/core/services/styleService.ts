@@ -8,7 +8,7 @@ import type { Storage } from "./storage";
 /**
  * Style profile: house-style facts read from past projects (InDesign files through InDesign,
  * Figma files through their links). The rules are the facts, grouped and de-duplicated; they go
- * into the prompt whenever Doppel writes a routine.
+ * into the prompt whenever Doppl writes a routine.
  */
 export class StyleService {
   constructor(

@@ -1,4 +1,5 @@
 import { app, shell } from "electron";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { getFile, getMe, parseFigmaLink } from "../../adapters/figma/figmaRest";
 import type { FigmaPluginBridge } from "../../adapters/figma/pluginBridge";
@@ -8,34 +9,57 @@ import type { SecretStore } from "./secretStore";
 import { secretHint } from "./secretStore";
 import type { SettingsService } from "./settingsService";
 
-/** Connect apps → Figma: the access token, the files connected by link, and the plugin's status. */
+/**
+ * Connect apps → Figma: the Doppl plugin (open sessions, pairing code, port), and optionally an access token
+ * and files connected by link (read without the plugin, opened in Figma with one click).
+ */
 export class FigmaService {
   constructor(
     private readonly deps: {
       settings: SettingsService;
       secrets: SecretStore;
       bridge: FigmaPluginBridge;
+      userData: string;
       onChange: () => void;
     },
   ) {}
 
-  /** figma-plugin/ next to the app (packaged: Resources/figma-plugin; dev: the repo folder). */
-  pluginFolder() {
+  /** The built plugin shipped with the app (packaged: Resources/figma-plugin; dev: the repo folder). */
+  private bundledPlugin() {
     return app.isPackaged ? path.join(process.resourcesPath, "figma-plugin") : path.join(app.getAppPath(), "figma-plugin");
+  }
+
+  /** Where the designer imports the plugin from: a copy in Doppl's data folder, with this Mac's port written in. */
+  pluginFolder() {
+    return path.join(this.deps.userData, "Figma plugin");
+  }
+
+  /**
+   * Copies the plugin into pluginFolder() with the configured port in the manifest's devAllowedDomains and the
+   * window's connection address. Called at startup and when the port changes; the folder stays stable across
+   * app updates, so the designer imports it once.
+   */
+  async preparePlugin() {
+    const port = this.deps.settings.current.figmaPort;
+    const from = this.bundledPlugin();
+    const to = this.pluginFolder();
+    await fs.mkdir(path.join(to, "dist"), { recursive: true });
+    const manifest = JSON.parse(await fs.readFile(path.join(from, "manifest.json"), "utf8"));
+    manifest.networkAccess.devAllowedDomains = [`ws://localhost:${port}`];
+    await fs.writeFile(path.join(to, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    await fs.copyFile(path.join(from, "dist", "code.js"), path.join(to, "dist", "code.js"));
+    const ui = await fs.readFile(path.join(from, "dist", "ui.html"), "utf8");
+    await fs.writeFile(path.join(to, "dist", "ui.html"), ui.replace(/<meta name="doppl-port" content="\d+"/, `<meta name="doppl-port" content="${port}"`));
   }
 
   async describe(): Promise<FigmaSetup> {
     const token = await this.deps.secrets.get("figmaToken");
-    const { connected, info } = this.deps.bridge.status();
-    const files = this.deps.settings.current.figmaFiles;
-    const matched = info
-      ? (files.find((f) => info.fileKey && f.key === info.fileKey) ?? files.find((f) => f.name.toLowerCase() === info.fileName.toLowerCase()))
-      : undefined;
     return {
       token: { saved: !!token, hint: secretHint(token) },
-      files,
-      plugin: { connected, fileName: info?.fileName, pageName: info?.pageName, matchedKey: matched?.key },
+      files: this.deps.settings.current.figmaFiles,
+      sessions: this.deps.bridge.list(),
       pairingCode: this.deps.settings.current.figmaPairingCode,
+      port: this.deps.settings.current.figmaPort,
       pluginFolder: this.pluginFolder(),
     };
   }
@@ -93,7 +117,15 @@ export class FigmaService {
     return this.describe();
   }
 
-  showPlugin() {
+  async showPlugin() {
+    await this.preparePlugin();
     shell.showItemInFolder(path.join(this.pluginFolder(), "manifest.json"));
+  }
+
+  /** Settings → Figma port changed: rewrite the plugin copy and listen on the new port. */
+  async portChanged() {
+    await this.preparePlugin().catch((err) => console.error("[figma plugin] couldn't prepare the plugin folder:", err));
+    this.deps.bridge.restart();
+    this.deps.onChange();
   }
 }

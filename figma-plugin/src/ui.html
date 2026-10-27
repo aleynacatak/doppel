@@ -1,0 +1,23 @@
+<!-- Doppl plugin window: connects to the Doppl app on this Mac and passes its requests to the plugin. -->
+<meta name="doppl-port" content="47810" />
+<style>
+  body { font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; margin: 12px; color: var(--figma-color-text, #1a1a1a); background: var(--figma-color-bg, #fff); }
+  h1 { font-size: 13px; margin: 0 0 6px; }
+  p { margin: 6px 0; color: var(--figma-color-text-secondary, #666); }
+  input { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #999; border-radius: 4px; font: inherit; text-transform: uppercase; }
+  button { margin-top: 8px; padding: 6px 12px; border: 1px solid #2b2b2b; border-radius: 4px; background: #2b2b2b; color: #fff; font: inherit; }
+  button.secondary { background: transparent; color: var(--figma-color-text, #1a1a1a); }
+  #status { font-weight: 600; color: var(--figma-color-text, #1a1a1a); }
+  #activity { min-height: 18px; }
+</style>
+<h1>Doppl</h1>
+<div id="status">Connecting to Doppl…</div>
+<p id="activity"></p>
+<button id="cancel" class="secondary" hidden>Cancel</button>
+<div id="pair" hidden>
+  <p>Enter the pairing code from Doppl → Connect apps → Figma.</p>
+  <input id="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false" />
+  <button id="save">Connect</button>
+</div>
+<p id="hint">Keep this window open while Doppl runs routines in this file.</p>
+<!--SCRIPT-->

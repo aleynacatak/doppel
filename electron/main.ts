@@ -2,12 +2,14 @@ import { BrowserWindow, app, protocol, shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createServices, type Services } from "./core/config";
+import { connectionLog } from "./core/services/connectionLog";
+import { migrateDoppelData } from "./core/services/migration";
 import { EVENT_CHANNELS } from "./ipc/api";
 import { registerIpc } from "./ipc/handlers";
 
 // Dev: load the Next dev server (hot reload). Production: serve renderer/out through app://.
-const DEV_SERVER_URL = process.env.DOPPEL_DEV_SERVER_URL;
-const APP_ORIGIN = "app://doppel";
+const DEV_SERVER_URL = process.env.DOPPL_DEV_SERVER_URL;
+const APP_ORIGIN = "app://doppl";
 const RENDERER_DIR = path.join(__dirname, "..", "renderer", "out");
 
 if (DEV_SERVER_URL) {
@@ -15,9 +17,9 @@ if (DEV_SERVER_URL) {
   process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 }
 
-app.setName("Doppel");
+app.setName("Doppl");
 // Optional: keep data somewhere else (e.g. a throwaway folder for testing).
-if (process.env.DOPPEL_USER_DATA) app.setPath("userData", process.env.DOPPEL_USER_DATA);
+if (process.env.DOPPL_USER_DATA) app.setPath("userData", process.env.DOPPL_USER_DATA);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -94,7 +96,7 @@ function createWindow() {
     height: 840,
     minWidth: 960,
     minHeight: 640,
-    title: "Doppel",
+    title: "Doppl",
     backgroundColor: "#ffffff",
     show: false,
     webPreferences: {
@@ -127,9 +129,9 @@ function createWindow() {
 
 let services: Services | null = null;
 
-/** Doppl demo Worker URL: set at build time (scripts/write-build-config.mjs); DOPPEL_API_BASE_URL overrides it for local testing. */
+/** Doppl demo Worker URL: set at build time (scripts/write-build-config.mjs); DOPPL_API_BASE_URL overrides it for local testing. */
 async function workerUrl(): Promise<string> {
-  if (process.env.DOPPEL_API_BASE_URL) return process.env.DOPPEL_API_BASE_URL.replace(/\/$/, "");
+  if (process.env.DOPPL_API_BASE_URL) return process.env.DOPPL_API_BASE_URL.replace(/\/$/, "");
   try {
     const config = JSON.parse(await fs.readFile(path.join(__dirname, "build-config.json"), "utf8")) as { apiBaseUrl?: string };
     if (config.apiBaseUrl) return config.apiBaseUrl.replace(/\/$/, "");
@@ -147,6 +149,9 @@ app.whenReady().then(async () => {
     run: (run: unknown) => broadcast(EVENT_CHANNELS.run, run),
     creation: (creation: unknown) => broadcast(EVENT_CHANNELS.creation, creation),
   };
+  if (!process.env.DOPPL_USER_DATA) {
+    await migrateDoppelData(app.getPath("appData"), app.getPath("userData")).catch((err) => console.error("[migration]", err));
+  }
   services = await createServices(
     { userData: app.getPath("userData"), temp: app.getPath("temp"), documents: app.getPath("documents") },
     emitters,
@@ -154,6 +159,7 @@ app.whenReady().then(async () => {
   );
 
   registerIpc(services);
+  connectionLog.onEntry((entry) => broadcast(EVENT_CHANNELS.connectionLog, entry));
   services.bridge.start();
   services.apps.start();
   createWindow();

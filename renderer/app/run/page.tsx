@@ -8,6 +8,7 @@ import { EnvironmentWarning } from "@/components/run/EnvironmentWarning";
 import { ParamForm, initialValues } from "@/components/run/ParamForm";
 import { QcModePicker } from "@/components/run/QcModePicker";
 import { RunProgress } from "@/components/run/RunProgress";
+import { StagedRunForm } from "@/components/run/StagedRunForm";
 import { TargetOptions } from "@/components/run/TargetOptions";
 import { AiCallCounter } from "@/components/ui/AiCallCounter";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -64,7 +65,7 @@ function RunForm({ routine }: { routine: Routine }) {
 
   const figma = app?.connection === "links-and-plugin";
   const doc = docs.find((d) => d.id === documentId);
-  // Figma routines run in the Doppel plugin, which has to be open on the chosen file.
+  // Figma routines run in the Doppl plugin, which has to be open on the chosen file.
   const pluginOnDoc = !figma || !!doc?.active;
   const blocked = !connected || docs.length === 0 || !pluginOnDoc || (envProblem && !envAccepted);
 
@@ -169,7 +170,13 @@ function RunScreen() {
   return (
     <div className="flex flex-col gap-2">
       <PageHeader back={{ href: `/routine?id=${routine.id}`, label: routine.name }} title={copy.run.title(routine.name)} />
-      {runId ? <RunInProgress routineId={routine.id} runId={runId} /> : <RunForm key={routine.id} routine={routine} />}
+      {runId ? (
+        <RunInProgress routineId={routine.id} runId={runId} />
+      ) : routine.stages?.length ? (
+        <StagedRunForm key={routine.id} routine={routine} />
+      ) : (
+        <RunForm key={routine.id} routine={routine} />
+      )}
     </div>
   );
 }

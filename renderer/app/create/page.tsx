@@ -6,6 +6,7 @@ import { ClarifyingQuestion } from "@/components/create/ClarifyingQuestion";
 import { CreationFailure } from "@/components/create/CreationFailure";
 import { CreationResult } from "@/components/create/CreationResult";
 import { StageList } from "@/components/create/StageList";
+import { StageProgressList } from "@/components/run/StageProgressList";
 import { AiCallCounter } from "@/components/ui/AiCallCounter";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -43,7 +44,7 @@ function CreateScreen() {
     const next =
       creation.mode === "repair" && creation.routineId
         ? await api.repairRoutine(creation.routineId, creation.failedRunId)
-        : await api.createRoutine({ request: t.request, references: t.references, appId: t.appId, documentId: t.documentId });
+        : await api.createRoutine({ request: t.request, references: t.references, folders: t.folders, appId: t.appId, documentId: t.documentId, apps: t.apps });
     await api.discardCreation(creation.id);
     router.replace(`/create?task=${next.id}`);
   };
@@ -65,9 +66,28 @@ function CreateScreen() {
         <StageList creation={creation} />
         <div className="flex flex-col gap-2 md:w-72">
           <AiCallCounter count={creation.aiCalls} label={copy.create.aiCallsLabel} hint={copy.create.aiCallsHint} />
+          {creation.activity !== undefined && <p className="ui-small ui-muted">{copy.create.aiCallsLimit(15)}</p>}
           {creation.quota && <p className="ui-small">{copy.create.quota(creation.quota.used, creation.quota.max)}</p>}
         </div>
       </div>
+
+      {creation.activity && creation.activity.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <div className="ui-h3">{copy.create.activityTitle}</div>
+          <ol className="ui-small flex list-decimal flex-col gap-0.5 pl-5">
+            {creation.activity.map((a, i) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {creation.trialStages && running && (
+        <section className="flex flex-col gap-2">
+          <div className="ui-h3">{copy.create.trialTitle}</div>
+          <StageProgressList stages={creation.trialStages} />
+        </section>
+      )}
 
       {creation.status === "waiting" && creation.question && (
         <ClarifyingQuestion

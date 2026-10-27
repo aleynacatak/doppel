@@ -24,7 +24,8 @@ function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "docum
       const folder = await doppel().pickFolder();
       if (folder) onChange(folder);
     } else {
-      const [file] = await doppel().pickFiles({ extensions: param.extensions });
+      const extensions = param.type === "dataFile" ? ["csv", "tsv", "txt", "json", "xlsx"] : param.extensions;
+      const [file] = await doppel().pickFiles({ extensions });
       if (file) onChange(file);
     }
   };
@@ -110,6 +111,7 @@ export function ParamField(props: Props) {
   switch (param.type) {
     case "file":
     case "folder":
+    case "dataFile":
       input = <PathPicker param={param} value={value} onChange={onChange} />;
       break;
     case "select":

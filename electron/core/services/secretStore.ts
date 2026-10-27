@@ -52,7 +52,7 @@ export class SecretStore {
     if (value === null) {
       delete all[name];
     } else {
-      if (!(await this.available())) throw new Error("Encryption isn't available on this Mac, so Doppel can't store secrets.");
+      if (!(await this.available())) throw new Error("Encryption isn't available on this Mac, so Doppl can't store secrets.");
       all[name] = (await safeStorage.encryptStringAsync(value)).toString("base64");
     }
     await fs.mkdir(path.dirname(this.file), { recursive: true });

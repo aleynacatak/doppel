@@ -1,43 +1,80 @@
 import { shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AppStatus, DocumentRef, DocumentSummary, FigmaFile, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
+import { CancelledError } from "../../core/util";
+import type { AppStatus, DocumentRef, DocumentSummary, FigmaActionList, FigmaFile, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
 import { bufferPreview, filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, Progress, ScriptContext, ScriptResult, StyleFacts } from "../types";
+import type { AdapterOutput, DesignAppAdapter, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
 import { FigmaApiError, fileLink, getFile, parseFigmaLink, renderNodes, topFrames } from "./figmaRest";
-import { lintFigmaScript } from "./lint";
-import { FIGMA_MODEL_GUIDE } from "./modelGuide";
-import { type FigmaPluginBridge, PluginNotConnectedError } from "./pluginBridge";
+import { figmaCapabilityManifest, FIGMA_MODEL_GUIDE } from "./modelGuide";
+import { type FigmaPluginBridge, PluginCancelledError, PluginNotConnectedError } from "./pluginBridge";
+import { ItemDataError, prepareActions } from "./prepareActions";
 
-interface RunResponse {
-  outputs: { key: string; label: string; nodeId?: string; details?: { label: string; value?: string }[]; preview?: string }[];
-  findings: RuleFinding[];
+interface ItemResponse {
+  ok: boolean;
+  error?: { index: number; action: string; message: string };
+  results: Record<string, unknown>;
+  outputs: Record<string, unknown[]>;
+  exports: { fileName: string; format: string; folder?: string; nodeId: string; data: string; output?: string }[];
+  findings: { type: RuleFinding["type"]; message: string; nodeId?: string }[];
   log: string[];
-  exports: { folder?: string; fileName: string; format: string; nodeId?: string; data: string }[];
-  result: unknown;
+  steps: { action: string; id?: string; result: unknown }[];
+  shown: { nodeId: string; name: string; preview?: string }[];
   page: { id: string; name: string };
 }
 
+interface FigmaStageState extends Record<string, unknown> {
+  sessionId: string;
+  stageSessionId: string;
+  pageId: string;
+  documentId: string;
+}
+
 const EXT: Record<string, string> = { PNG: ".png", JPG: ".jpg", SVG: ".svg", PDF: ".pdf" };
-const docIdOf = (key: string) => `figma:${key}`;
-const keyOf = (docId: string) => docId.replace(/^figma:/, "");
 const safeName = (name: string) => name.replace(/[/\\:*?"<>|]/g, "-").trim() || "export";
 
+function insideAny(target: string, folders: string[]) {
+  const t = path.resolve(target);
+  return folders.some((f) => t === path.resolve(f) || t.startsWith(path.resolve(f) + path.sep));
+}
+
+/** A path for a new file in `folder` that doesn't overwrite anything ("name.png", "name-2.png", …). */
+async function freePath(folder: string, base: string, ext: string) {
+  for (let n = 1; ; n++) {
+    const candidate = path.join(folder, `${base}${n > 1 ? `-${n}` : ""}${ext}`);
+    try {
+      await fs.access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+}
+
 /**
- * Real Figma: files are connected by link and read with Figma's REST API (personal access token);
- * routines run through the Doppel plugin open in Figma (figma-plugin/), which can change designs.
+ * Real Figma: the Doppl plugin, open in each Figma file, runs action lists (figma-plugin/). Files connected by
+ * link (Figma REST API, personal access token) can be read without the plugin and opened in Figma.
  */
 export class FigmaAdapter implements DesignAppAdapter {
   readonly id = "figma";
   readonly name = "Figma";
-  readonly scriptLanguage = "Figma Plugin API (JavaScript)";
+  readonly scriptLanguage = "Doppl action lists (JSON)";
   readonly connection = "links-and-plugin" as const;
   readonly modelGuide = FIGMA_MODEL_GUIDE;
+  readonly stageKind = "actions" as const;
   readonly qcChecks = [
     { level: "rule" as const, types: ["font-missing" as const], label: () => "Fonts are available" },
+    { level: "rule" as const, types: ["font-style-missing" as const], label: () => "Font styles are available" },
+    { level: "rule" as const, types: ["file-missing" as const], label: () => "Images and files exist" },
+    { level: "rule" as const, types: ["barcode-invalid" as const], label: () => "Barcodes are valid" },
     { level: "rule" as const, types: ["upscaled-image" as const], label: () => "Images aren't shown larger than their pixels" },
-    { level: "object" as const, types: ["cut-off" as const], label: () => "Text stays inside its frame" },
+    { level: "object" as const, types: ["text-overflow" as const, "cut-off" as const], label: () => "Text fits its box and frame" },
+    { level: "object" as const, types: ["outside-boundary" as const], label: () => "Elements stay inside their boundary" },
   ];
+
+  /** Trial pages per run, removed in endRun. */
+  private trialPages = new Map<string, { sessionId: string; pageId: string }[]>();
+  /** Page each run works on per document, so later Figma stages of a run continue on it. */
+  private runPages = new Map<string, string>();
 
   constructor(
     private readonly deps: {
@@ -48,124 +85,240 @@ export class FigmaAdapter implements DesignAppAdapter {
     },
   ) {}
 
-  private async token(): Promise<string> {
-    const token = await this.deps.getToken();
-    if (!token) throw new FigmaApiError(401, "Add your Figma access token in Connect apps → Figma first.");
-    return token;
+  private timeoutMs() {
+    return this.deps.getTimeoutSec() * 1000;
   }
 
-  private file(docId: string): FigmaFile {
-    const key = keyOf(docId);
-    const file = this.deps.getFiles().find((f) => f.key === key);
-    if (!file) throw new FigmaApiError(404, "This Figma file isn't connected anymore. Add its link in Connect apps → Figma.");
-    return file;
-  }
-
-  /** The connected file the plugin is open on (matched by key when Figma shares it, else by name). */
-  private pluginFileKey(): string | undefined {
-    const { connected, info } = this.deps.bridge.status();
-    if (!connected || !info) return undefined;
-    const files = this.deps.getFiles();
-    return (
-      files.find((f) => info.fileKey && f.key === info.fileKey)?.key ??
-      files.find((f) => f.name.trim().toLowerCase() === info.fileName.trim().toLowerCase())?.key
+  /** The plugin session for a document (or the only open one). */
+  private session(documentId?: string) {
+    const sessions = this.deps.bridge.list();
+    const s = documentId ? sessions.find((x) => x.documentId === documentId) : sessions.length === 1 ? sessions[0] : undefined;
+    if (s) return s;
+    const linked = documentId ? this.linkedFile(documentId) : undefined;
+    const name = linked?.name ?? documentId?.replace(/^figma(-name)?:/, "");
+    throw new PluginNotConnectedError(
+      name
+        ? `Open “${name}” in Figma and start the Doppl plugin there (Plugins → Development → Doppl).`
+        : "Open your file in Figma and start the Doppl plugin (Plugins → Development → Doppl).",
     );
   }
 
+  private linkedFile(documentId: string): FigmaFile | undefined {
+    const key = documentId.startsWith("figma:") ? documentId.slice(6) : undefined;
+    const name = documentId.startsWith("figma-name:") ? documentId.slice(11) : undefined;
+    return this.deps.getFiles().find((f) => (key && f.key === key) || (name && f.name.toLowerCase() === name.toLowerCase()));
+  }
+
+  private async request<T>(sessionId: string, payload: Record<string, unknown>, label: string, onProgress?: (t: string) => void, isCancelled?: () => boolean) {
+    const { id, done } = this.deps.bridge.request<T>(sessionId, payload, { timeoutMs: this.timeoutMs(), onProgress, label });
+    let watcher: NodeJS.Timeout | undefined;
+    if (isCancelled) {
+      watcher = setInterval(() => {
+        if (isCancelled()) {
+          this.deps.bridge.cancel(sessionId, id);
+          clearInterval(watcher);
+        }
+      }, 400);
+    }
+    try {
+      return await done;
+    } catch (err) {
+      if (err instanceof PluginCancelledError) throw new CancelledError();
+      throw err;
+    } finally {
+      if (watcher) clearInterval(watcher);
+    }
+  }
+
   async getStatus(): Promise<AppStatus> {
-    return (await this.deps.getToken()) ? "connected" : "needs-setup";
+    return this.deps.bridge.list().length > 0 ? "connected" : "not-running";
   }
 
   async getDetail() {
-    const { connected, info } = this.deps.bridge.status();
-    return connected && info ? `Plugin open on ${info.fileName} · ${info.pageName}` : "Plugin not open";
+    const sessions = this.deps.bridge.list();
+    if (sessions.length === 0) return "Plugin not open";
+    if (sessions.length === 1) return `Plugin open on ${sessions[0].fileName}${sessions[0].pageName ? ` · ${sessions[0].pageName}` : ""}`;
+    return `Plugin open in ${sessions.length} files`;
   }
 
   async getAppVersion() {
     return null;
   }
 
+  async connect() {
+    return this.getStatus();
+  }
+
   async listOpenDocuments(): Promise<DocumentRef[]> {
-    const open = this.pluginFileKey();
-    return this.deps.getFiles().map((f) => ({ id: docIdOf(f.key), appId: this.id, name: f.name, path: f.url, active: f.key === open }));
+    const sessions = this.deps.bridge.list().sort((a, b) => b.connectedAt.localeCompare(a.connectedAt));
+    return sessions.map((s, i) => ({ id: s.documentId, appId: this.id, name: s.fileName, active: i === 0 }));
   }
 
   async inspectDocument(docId: string): Promise<DocumentSummary> {
-    const file = this.file(docId);
-    const data = await getFile(await this.token(), file.key, 2);
-    const frames = topFrames(data);
-    const styles = Object.values(data.styles ?? {});
+    const live = this.deps.bridge.sessionFor(docId);
+    if (live) {
+      const res = await this.request<{
+        file: { fileName: string };
+        pages: { name: string; current: boolean }[];
+        page: { name: string; children?: { id: string; name: string; type: string; width?: number; height?: number }[] };
+      }>(live.id, { type: "inspect", depth: 1 }, "inspect");
+      const frames = (res.page.children ?? [])
+        .filter((c) => ["FRAME", "COMPONENT", "COMPONENT_SET", "SECTION", "INSTANCE"].includes(c.type))
+        .map((c) => ({ name: c.name, id: c.id, width: c.width ?? 0, height: c.height ?? 0, page: res.page.name }));
+      return {
+        ref: { id: docId, appId: this.id, name: res.file.fileName },
+        appVersion: "",
+        pageCount: res.pages.length,
+        layers: res.pages.map((p) => p.name),
+        paragraphStyles: [],
+        characterStyles: [],
+        textFrameCount: 0,
+        links: [],
+        fonts: [],
+        frames,
+      };
+    }
+    // Linked but not open: read it through the REST API.
+    const file = this.linkedFile(docId);
+    const token = await this.deps.getToken();
+    if (!file || !token) this.session(docId);
+    const data = await getFile(token!, file!.key, 2);
     return {
-      ref: { id: docId, appId: this.id, name: data.name, path: file.url },
+      ref: { id: docId, appId: this.id, name: data.name, path: file!.url },
       appVersion: "",
       pageCount: data.document.children?.length ?? 0,
       layers: (data.document.children ?? []).map((p) => p.name),
-      paragraphStyles: styles.filter((s) => s.styleType === "TEXT").map((s) => s.name),
+      paragraphStyles: Object.values(data.styles ?? {}).filter((s) => s.styleType === "TEXT").map((s) => s.name),
       characterStyles: [],
       textFrameCount: 0,
       links: [],
       fonts: [],
-      frames,
+      frames: topFrames(data),
     };
   }
 
-  /** The plugin must be open on the file the routine runs on. */
-  private assertPluginOn(file: FigmaFile) {
-    const { connected, info } = this.deps.bridge.status();
-    if (!connected || !info) {
-      throw new PluginNotConnectedError(`Open “${file.name}” in Figma and start the Doppel plugin (Plugins → Development → Doppel).`);
-    }
-    if (this.pluginFileKey() !== file.key) {
-      throw new PluginNotConnectedError(`The Doppel plugin is open on “${info.fileName}”. Open “${file.name}” in Figma and start the plugin there.`);
-    }
+  async inspectForModel(docId: string, args: Record<string, unknown>) {
+    const s = this.session(docId);
+    return this.request(s.id, { type: "inspect", node: typeof args.node === "string" ? args.node : undefined, depth: Number(args.depth ?? 2) }, "inspect");
   }
 
-  async runScript(script: string, params: Record<string, unknown>, onProgress: (p: Progress) => void, ctx: ScriptContext): Promise<ScriptResult> {
-    const file = this.file(ctx.documentId ?? docIdOf(this.pluginFileKey() ?? this.deps.getFiles()[0]?.key ?? ""));
-    this.assertPluginOn(file);
-    onProgress({
-      phase:
-        ctx.target === "trial"
-          ? "Running on a temporary copy of the page in Figma"
-          : ctx.target === "copy"
-            ? "Duplicating the page in Figma and running there"
-            : "Running in Figma",
-    });
-    const res = await this.deps.bridge.request<RunResponse>(
-      { type: "run", script, params, routineName: ctx.routineName, mode: ctx.target, previewWidth: 640 },
-      this.deps.getTimeoutSec() * 1000,
+  capabilityManifest() {
+    return figmaCapabilityManifest();
+  }
+
+  // ---------- Stages ----------
+
+  async beginStage(ctx: StageRunContext): Promise<StageSession> {
+    const s = this.session(ctx.documentId);
+    const runKey = `${ctx.runId}:${s.documentId}`;
+    const res = await this.request<{ stageSessionId: string; pageId: string; pageName: string }>(
+      s.id,
+      { type: "beginStage", mode: ctx.target, routineName: ctx.routineName, reusePageId: this.runPages.get(runKey) },
+      "beginStage",
     );
+    this.runPages.set(runKey, res.pageId);
+    if (ctx.target === "trial") {
+      const list = this.trialPages.get(ctx.runId) ?? [];
+      if (!list.some((p) => p.pageId === res.pageId)) list.push({ sessionId: s.id, pageId: res.pageId });
+      this.trialPages.set(ctx.runId, list);
+    }
+    const state: FigmaStageState = { sessionId: s.id, stageSessionId: res.stageSessionId, pageId: res.pageId, documentId: s.documentId };
+    return { state, documentName: `${s.fileName} · ${res.pageName}` };
+  }
 
-    const outputs: AdapterOutput[] = res.outputs.map((o) => ({
-      key: o.key,
-      label: o.label,
-      nodeId: o.nodeId,
-      details: o.details,
-      preview: o.preview ? bufferPreview(Buffer.from(o.preview, "base64"), o.label) : undefined,
-      profile: "web",
-    }));
-
-    // Exports go only into folders the designer picked for this run.
-    const allowed = ctx.allowedFolders.map((f) => path.resolve(f));
-    for (const [i, e] of res.exports.entries()) {
-      const folder = e.folder ? path.resolve(e.folder) : "";
-      if (!allowed.includes(folder)) throw new Error("The routine tried to save a file outside the folders you picked.");
-      await fs.mkdir(folder, { recursive: true });
-      const filePath = path.join(folder, `${safeName(path.basename(e.fileName)).replace(/\.(png|jpe?g|svg|pdf)$/i, "")}${EXT[e.format] ?? ".png"}`);
-      await fs.writeFile(filePath, Buffer.from(e.data, "base64"));
-      const owner = outputs.find((o) => o.nodeId && o.nodeId === e.nodeId && !o.filePath);
-      if (owner) owner.filePath = filePath;
-      else outputs.push({ key: `file-${i + 1}`, label: path.basename(filePath), filePath, nodeId: e.nodeId });
+  async runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult> {
+    const st = session.state as FigmaStageState;
+    const allowed = [ctx.workDir, ...ctx.allowedFolders];
+    let prepared;
+    try {
+      prepared = await prepareActions((input.body as FigmaActionList).actions as Record<string, unknown>[], allowed);
+    } catch (err) {
+      if (err instanceof ItemDataError) {
+        return { ok: false, error: err.message, outputs: [], values: {}, findings: err.finding ? [err.finding] : [], log: [] };
+      }
+      throw err;
+    }
+    let res: ItemResponse;
+    try {
+      res = await this.request<ItemResponse>(
+        st.sessionId,
+        { type: "runItem", stageSessionId: st.stageSessionId, actions: prepared.actions, label: input.label },
+        "runItem",
+        (text) => onProgress(`Figma · ${text}`),
+        ctx.isCancelled,
+      );
+    } catch (err) {
+      // Validation in the plugin or an unexpected error there: the action list must be fixed.
+      if (err instanceof Error && !(err instanceof PluginNotConnectedError) && !(err instanceof CancelledError) && !/didn't finish within/.test(err.message)) {
+        return { ok: false, error: err.message, scriptFailure: true, outputs: [], values: {}, findings: [], log: [] };
+      }
+      throw err;
     }
 
-    const pageNote = ctx.target === "copy" ? ` · ${res.page.name}` : "";
+    const outputs: AdapterOutput[] = [];
+    const values: Record<string, unknown[]> = {};
+    for (const [key, list] of Object.entries(res.outputs ?? {})) values[key] = [...list];
+    const fileList = ctx.stage.outputs.find((o) => o.type === "fileList" || o.type === "file");
+
+    // Exports go only into the stage's working folder or folders picked for this run.
+    for (const [i, e] of (res.exports ?? []).entries()) {
+      const folder = e.folder ? path.resolve(e.folder) : ctx.workDir;
+      if (!insideAny(folder, allowed)) throw new Error("A Figma export tried to save outside the folders picked for this run.");
+      await fs.mkdir(folder, { recursive: true });
+      const filePath = await freePath(folder, safeName(path.basename(e.fileName)).replace(/\.(png|jpe?g|svg|pdf)$/i, ""), EXT[e.format] ?? ".png");
+      const bytes = Buffer.from(e.data, "base64");
+      await fs.writeFile(filePath, bytes);
+      const preview = e.format === "PNG" || e.format === "JPG" ? bufferPreview(bytes, path.basename(filePath)) : await filePreview(filePath).catch(() => undefined);
+      outputs.push({ key: `${input.key}-export-${i + 1}`, label: path.basename(filePath), filePath, nodeId: e.nodeId, preview, profile: "web" });
+      const target = e.output ?? fileList?.key;
+      if (target) (values[target] ??= []).push(filePath);
+    }
+    if (outputs.length === 0) {
+      for (const [i, n] of (res.shown ?? []).entries()) {
+        outputs.push({
+          key: `${input.key}-node-${i + 1}`,
+          label: n.name,
+          nodeId: n.nodeId,
+          preview: n.preview ? bufferPreview(Buffer.from(n.preview, "base64"), n.name) : undefined,
+          profile: "web",
+        });
+      }
+    }
+    const findings: RuleFinding[] = (res.findings ?? []).map((f) => ({ type: f.type, message: f.message }));
+    const error = res.ok ? undefined : `Action ${res.error!.index + 1} (${res.error!.action}): ${res.error!.message}`;
     return {
+      ok: res.ok,
+      error,
+      scriptFailure: !res.ok,
       outputs,
-      document: { id: docIdOf(file.key), name: `${file.name}${pageNote}` },
-      log: res.log ?? [],
-      data: res.result,
-      findings: res.findings ?? [],
+      values,
+      findings,
+      log: [...(res.log ?? []), ...prepared.barcodes.map((b) => `Barcode ${b}`)],
+      data: { steps: res.steps, results: res.results, page: res.page },
     };
+  }
+
+  async endStage(session: StageSession): Promise<void> {
+    const st = session.state as FigmaStageState;
+    if (!this.deps.bridge.list().some((s) => s.id === st.sessionId)) return;
+    await this.request(st.sessionId, { type: "endStage", stageSessionId: st.stageSessionId }, "endStage").catch(() => undefined);
+  }
+
+  /** Removes scratch pages of a trial run; copies made by real runs stay in the file. */
+  async endRun(runId: string): Promise<void> {
+    for (const key of [...this.runPages.keys()]) if (key.startsWith(`${runId}:`)) this.runPages.delete(key);
+    const pages = this.trialPages.get(runId) ?? [];
+    this.trialPages.delete(runId);
+    for (const p of pages) {
+      if (!this.deps.bridge.list().some((s) => s.id === p.sessionId)) continue;
+      await this.request(p.sessionId, { type: "discardPage", pageId: p.pageId }, "discardPage").catch(() => undefined);
+    }
+  }
+
+  // ---------- Other ----------
+
+  async runScript(): Promise<ScriptResult> {
+    throw new Error("This Figma routine was made by an older Doppl that ran code in Figma. Create it again with New task.");
   }
 
   async renderPreview(target: string): Promise<PreviewImage> {
@@ -175,14 +328,17 @@ export class FigmaAdapter implements DesignAppAdapter {
     } else {
       const m = target.match(/^node:(.*)#(.+)$/);
       if (!m) throw new Error(`Unknown preview target: ${target}`);
-      const file = this.file(m[1]);
-      if (this.pluginFileKey() === file.key) {
-        const previews = await this.deps.bridge.request<Record<string, string>>({ type: "export", nodeIds: [m[2]], width: 640 }, 60_000);
-        if (previews[m[2]]) preview = bufferPreview(Buffer.from(previews[m[2]], "base64"), file.name);
-      }
-      if (!preview) {
-        const images = await renderNodes(await this.token(), file.key, [m[2]], 1);
-        if (images[m[2]]) preview = bufferPreview(images[m[2]], file.name);
+      const live = this.deps.bridge.sessionFor(m[1]);
+      if (live) {
+        const previews = await this.request<Record<string, string>>(live.id, { type: "preview", nodeIds: [m[2]], width: 640 }, "preview");
+        if (previews[m[2]]) preview = bufferPreview(Buffer.from(previews[m[2]], "base64"), m[2]);
+      } else {
+        const file = this.linkedFile(m[1]);
+        const token = await this.deps.getToken();
+        if (file && token) {
+          const images = await renderNodes(token, file.key, [m[2]], 1);
+          if (images[m[2]]) preview = bufferPreview(images[m[2]], file.name);
+        }
       }
     }
     if (!preview) throw new Error("Couldn't render a preview.");
@@ -194,51 +350,44 @@ export class FigmaAdapter implements DesignAppAdapter {
   }
 
   async ruleChecks() {
-    // Figma checks each frame while the routine runs (ScriptResult.findings).
+    // Figma findings come from the actions while a stage runs (measure, fonts, images, barcodes).
     return [];
   }
 
   async getParamOptions(source: string, docId?: string): Promise<ParamOption[]> {
     if (source !== "frames" || !docId) return [];
-    const data = await getFile(await this.token(), this.file(docId).key, 2);
-    const seen = new Set<string>();
-    return topFrames(data)
-      .filter((f) => !seen.has(f.name) && seen.add(f.name))
-      .map((f) => ({ value: f.name, label: `${f.name} (${f.width}×${f.height}) · ${f.page}` }));
+    const summary = await this.inspectDocument(docId);
+    return [...new Map((summary.frames ?? []).map((f) => [f.name, f])).values()].map((f) => ({ value: f.name, label: `${f.name} (${f.width}×${f.height})` }));
   }
 
   async missingFonts(families: string[]): Promise<string[]> {
-    if (families.length === 0 || !this.deps.bridge.status().connected) return [];
-    const available = new Set((await this.deps.bridge.request<string[]>({ type: "fonts" }, 30_000)).map((f) => f.toLowerCase()));
+    const sessions = this.deps.bridge.list();
+    if (families.length === 0 || sessions.length === 0) return [];
+    const available = new Set((await this.request<string[]>(sessions[0].id, { type: "fonts" }, "fonts")).map((f) => f.toLowerCase()));
     return families.filter((f) => !available.has(f.toLowerCase()));
   }
 
   async openInApp(docId: string, target?: { nodeId?: string }) {
-    const file = this.file(docId);
-    if (target?.nodeId && this.pluginFileKey() === file.key) {
-      await this.deps.bridge.request({ type: "focus", nodeId: target.nodeId }, 15_000);
+    const live = this.deps.bridge.sessionFor(docId);
+    if (live && target?.nodeId) {
+      await this.request(live.id, { type: "focus", nodeId: target.nodeId }, "focus");
       return;
     }
-    await shell.openExternal(fileLink(file.key, target?.nodeId));
+    const file = this.linkedFile(docId);
+    if (file) await shell.openExternal(fileLink(file.key, target?.nodeId));
   }
 
   async closeDocument() {
-    // Trial pages are removed by the plugin itself.
-  }
-
-  async connect() {
-    return this.getStatus();
-  }
-
-  lintScript(script: string) {
-    return lintFigmaScript(script);
+    // Trial pages are removed in endRun.
   }
 
   /** Frame sizes, text and color styles of a Figma file (for the style profile). */
   async readStyleFacts(link: string): Promise<StyleFacts> {
     const parsed = parseFigmaLink(link);
     if (!parsed) throw new FigmaApiError(400, "That doesn't look like a Figma file link.");
-    const data = await getFile(await this.token(), parsed.key, 2);
+    const token = await this.deps.getToken();
+    if (!token) throw new FigmaApiError(401, "Add your Figma access token in Connect apps → Figma first.");
+    const data = await getFile(token, parsed.key, 2);
     const frames = topFrames(data);
     const sizes = new Map<string, number>();
     for (const f of frames) sizes.set(`${f.width}×${f.height}`, (sizes.get(`${f.width}×${f.height}`) ?? 0) + 1);

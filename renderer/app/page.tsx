@@ -1,11 +1,12 @@
 "use client";
 
+import type { TaskApp } from "@core/types";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AppsPicker } from "@/components/newTask/AppsPicker";
 import { ExamplePrompts } from "@/components/newTask/ExamplePrompts";
 import { ReferencePicker } from "@/components/newTask/ReferencePicker";
 import { RequestInput } from "@/components/newTask/RequestInput";
-import { TargetPicker } from "@/components/newTask/TargetPicker";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -18,8 +19,11 @@ export default function NewTaskPage() {
   const apps = useShell((s) => s.apps);
   const [request, setRequest] = useState("");
   const [references, setReferences] = useState<string[]>([]);
-  const [appId, setAppId] = useState<string>(() => apps.find((a) => a.status === "connected")?.id ?? apps[0]?.id ?? "indesign");
-  const [documentId, setDocumentId] = useState<string>();
+  const [folders, setFolders] = useState<string[]>([]);
+  const [picked, setPicked] = useState<TaskApp[]>(() => {
+    const first = apps.find((a) => a.status === "connected") ?? apps[0];
+    return first ? [{ appId: first.id }] : [];
+  });
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +31,15 @@ export default function NewTaskPage() {
     setStarting(true);
     setError(null);
     try {
-      const creation = await doppel().createRoutine({ request, references, appId, documentId });
+      const [first] = picked;
+      const creation = await doppel().createRoutine({
+        request,
+        references,
+        folders,
+        appId: first.appId,
+        documentId: first.documentId,
+        apps: picked,
+      });
       router.push(`/create?task=${creation.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -42,14 +54,14 @@ export default function NewTaskPage() {
       <ExamplePrompts
         onPick={(ex) => {
           setRequest(ex.text);
-          if (apps.some((a) => a.id === ex.appId)) setAppId(ex.appId);
+          if (apps.some((a) => a.id === ex.appId) && !picked.some((p) => p.appId === ex.appId)) setPicked([{ appId: ex.appId }]);
         }}
       />
-      <ReferencePicker files={references} onChange={setReferences} />
-      <TargetPicker appId={appId} documentId={documentId} onAppChange={setAppId} onDocumentChange={setDocumentId} />
+      <ReferencePicker files={references} onChange={setReferences} folders={folders} onFoldersChange={setFolders} />
+      <AppsPicker value={picked} onChange={setPicked} />
       {error && <Notice tone="error">{error}</Notice>}
       <div>
-        <Button variant="primary" onClick={create} disabled={!request.trim() || starting}>
+        <Button variant="primary" onClick={create} disabled={!request.trim() || picked.length === 0 || starting}>
           {starting ? copy.newTask.creating : copy.newTask.create}
         </Button>
       </div>

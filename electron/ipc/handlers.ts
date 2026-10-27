@@ -1,5 +1,7 @@
 import { BrowserWindow, type OpenDialogOptions, dialog, ipcMain, shell } from "electron";
 import type { Services } from "../core/config";
+import { connectionLog } from "../core/services/connectionLog";
+import { checkReadiness } from "../core/stages/readiness";
 import { errorMessage } from "../core/util";
 import type { ApiMethods, IpcResult } from "./api";
 
@@ -46,6 +48,11 @@ export function registerIpc(s: Services) {
     listRoutines: () => s.routines.list(),
     getRoutine: (id) => s.routines.get(id),
     checkEnvironment: (id) => s.routines.checkEnvironment(id),
+    checkReadiness: async (id, documents) => {
+      const routine = await s.routines.get(id);
+      if (!routine?.stages?.length) return [];
+      return checkReadiness(s.registry, s.apps, routine.stages, documents ?? {});
+    },
     getParamOptions: (id, key, docId) => s.routines.getParamOptions(id, key, docId),
 
     // Runs
@@ -84,7 +91,9 @@ export function registerIpc(s: Services) {
     // Settings
     getSettings: async () => s.settings.current,
     saveSettings: async (patch) => {
+      const port = s.settings.current.figmaPort;
       const next = await s.settings.save(patch);
+      if (next.figmaPort !== port) await s.figmaSetup.portChanged();
       void s.apps.refresh();
       return next;
     },
@@ -97,6 +106,15 @@ export function registerIpc(s: Services) {
     clearAccessCode: () => s.access.clearAccessCode(),
     saveApiKey: (key) => s.access.saveApiKey(key),
     clearApiKey: () => s.access.clearApiKey(),
+
+    // Dev panel
+    devRunFigmaActions: (documentId, actionsJson, itemJson) => s.dev.runFigmaActions(documentId, actionsJson, itemJson),
+    devRunPhotoshopScript: (documentId, script) => s.dev.runPhotoshopScript(documentId, script),
+    devBarcode: async (type, value) => s.dev.barcode(type, value),
+    devValidateRoutine: async (json) => s.dev.validateRoutine(json),
+    devSaveRoutine: (json) => s.dev.saveRoutine(json),
+    getConnectionLog: async () => connectionLog.list(),
+    clearConnectionLog: async () => connectionLog.clear(),
 
   };
 

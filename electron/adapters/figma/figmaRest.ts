@@ -37,7 +37,7 @@ async function get<T>(path: string, token: string): Promise<T> {
   try {
     res = await net.fetch(`${FIGMA_API}${path}`, { headers: { "X-Figma-Token": token } });
   } catch {
-    throw new FigmaApiError(0, "Doppel can't reach Figma. Check your internet connection and try again.");
+    throw new FigmaApiError(0, "Doppl can't reach Figma. Check your internet connection and try again.");
   }
   if (res.ok) return (await res.json()) as T;
   switch (res.status) {

@@ -3,6 +3,7 @@ import type { RoutineTemplate } from "../../adapters/types";
 import type {
   DocumentSummary,
   EnvironmentCheck,
+  ObjectCheckDef,
   ParamDef,
   ParamType,
   ParamValue,
@@ -11,6 +12,7 @@ import type {
   RoutineDraft,
   Run,
   RunOutput,
+  Stage,
   Task,
 } from "../types";
 import { newId } from "../util";
@@ -22,6 +24,7 @@ import {
   REVIEW_SCHEMA,
   REVIEW_SYSTEM,
   ROUTINE_SCHEMA,
+  STAGE_TURN_SCHEMA,
   fixMessage,
   systemPrompt,
   taskMessage,
@@ -30,8 +33,8 @@ import type { AiCallContext, AiService, DraftState, ScriptFailure } from "./aiSe
 import { AiError, type ChatMessage, type ChatRequest, type ContentPart, type SegmentBox } from "./aiTransport";
 import type { StyleService } from "./styleService";
 
-const PARAM_TYPES: ParamType[] = ["text", "number", "boolean", "select", "formatList", "file", "folder"];
-const OPTION_SOURCES: Record<string, string[]> = { indesign: ["pdfExportPresets"], figma: ["frames"] };
+const PARAM_TYPES: ParamType[] = ["text", "number", "boolean", "select", "formatList", "file", "folder", "dataFile"];
+const OPTION_SOURCES: Record<string, string[]> = { indesign: ["pdfExportPresets"], figma: ["frames"], photoshop: ["layers", "smartObjects"] };
 const ROUTINE_TOKENS = 8000;
 const SHORT_TOKENS = 1500;
 const MAX_REVIEW_IMAGES = 4;
@@ -66,7 +69,7 @@ function toParam(raw: Record<string, any>, appId: string): ParamDef | null {
   if (type === "number") def = Number.isFinite(Number(def)) && def !== "" && def !== null ? Number(def) : undefined;
   else if (type === "boolean") def = def === undefined ? undefined : def === true || def === "true";
   else if (type === "formatList") def = Array.isArray(def) ? strings(def) : options?.map((o: { value: string }) => o.value);
-  else if (type === "file" || type === "folder") def = undefined; // locations are picked at run time
+  else if (type === "file" || type === "folder" || type === "dataFile") def = undefined; // locations are picked at run time
   else if (def !== undefined && def !== null) def = String(def);
   const source = typeof raw.optionsSource === "string" && OPTION_SOURCES[appId]?.includes(raw.optionsSource) ? raw.optionsSource : undefined;
   return {
@@ -78,7 +81,9 @@ function toParam(raw: Record<string, any>, appId: string): ParamDef | null {
     ...(typeof raw.help === "string" && raw.help ? { help: raw.help } : {}),
     ...(options?.length ? { options } : {}),
     ...(source ? { optionsSource: source } : {}),
-    ...(type === "file" && strings(raw.extensions).length ? { extensions: strings(raw.extensions).map((e) => e.replace(/^\./, "")) } : {}),
+    ...((type === "file" || type === "folder") && strings(raw.extensions).length ? { extensions: strings(raw.extensions).map((e) => e.replace(/^\./, "")) } : {}),
+    ...(type === "dataFile" && strings(raw.columns).length ? { columns: strings(raw.columns, 100) } : {}),
+    ...(type === "folder" && (raw.role === "input" || raw.role === "output") ? { role: raw.role } : {}),
     ...(Number.isFinite(raw.min) ? { min: raw.min } : {}),
     ...(Number.isFinite(raw.max) ? { max: raw.max } : {}),
   };
@@ -113,6 +118,52 @@ export function toDraft(raw: Record<string, any> | undefined, appId: string, app
   };
 }
 
+
+/** Turns the model's multi-app routine JSON into a draft. Structure is checked later by the validator. */
+export function toStagedDraft(raw: Record<string, any> | undefined, appVersions: Record<string, string>): RoutineDraft {
+  if (!raw || typeof raw !== "object") throw new AiOutputError("The answer didn't contain a routine.");
+  const rawStages: any[] = Array.isArray(raw.stages) ? raw.stages : [];
+  if (rawStages.length === 0) throw new AiOutputError("The routine had no stages.");
+  const firstApp = String(rawStages[0]?.app ?? "");
+  const params = (Array.isArray(raw.params) ? raw.params : []).map((p: any) => toParam(p, firstApp));
+  if (params.some((p: ParamDef | null) => p === null)) throw new AiOutputError("Some params had an invalid key or type.");
+  const stages: Stage[] = rawStages.map((s) => {
+    const kind = s.kind === "actions" ? "actions" : "script";
+    return {
+      id: String(s.id ?? ""),
+      name: String(s.name || s.id || "Stage").slice(0, 60),
+      appId: String(s.app ?? s.appId ?? ""),
+      kind,
+      body: kind === "actions" ? { actions: Array.isArray(s.actions) ? s.actions : [] } : typeof s.script === "string" ? s.script.trim() : "",
+      ...(s.repeat && typeof s.repeat.over === "string" && s.repeat.over.trim() ? { repeat: { over: s.repeat.over.trim() } } : {}),
+      inputs: strings(s.inputs, 40),
+      outputs: (Array.isArray(s.outputs) ? s.outputs : [])
+        .filter((o: any) => o && typeof o.key === "string")
+        .map((o: any) => ({ key: o.key, type: o.type, ...(typeof o.label === "string" && o.label ? { label: o.label } : {}) })),
+      steps: strings(s.steps, 8),
+      document: s.document === "none" ? "none" : "open",
+      modifiesDocument: s.modifiesDocument === true,
+    };
+  });
+  return {
+    name: String(raw.name || "New routine").slice(0, 80),
+    description: String(raw.description || "").slice(0, 400),
+    appId: stages[0].appId,
+    steps: stages.flatMap((s) => (s.steps ?? []).map((text) => ({ id: newId(), plainLanguage: text }))),
+    params: params as ParamDef[],
+    script: "",
+    appVersion: appVersions[stages[0].appId] ?? "",
+    requiredFonts: strings(raw.requiredFonts, 10),
+    modifiesDocument: stages.some((s) => s.modifiesDocument),
+    qcProfile: raw.qcProfile === "print" ? "print" : "web",
+    keyObjects: strings(raw.keyObjects, 2),
+    stages,
+    objectChecks: (Array.isArray(raw.objectChecks) ? raw.objectChecks : [])
+      .filter((c: any) => c && typeof c.object === "string" && typeof c.region === "string")
+      .slice(0, 4)
+      .map((c: any) => ({ object: c.object, region: c.region })),
+  };
+}
 
 /** Which edge (if any) a SAM box touches. */
 function touchedEdge(b: SegmentBox): string | null {
@@ -191,6 +242,20 @@ export class ModelAiService implements AiService {
       { role: "system", content: systemPrompt(adapter, this.examples(task)) },
       { role: "user", content: taskMessage(task, summary, style) },
     ];
+  }
+
+  /** One turn of the multi-app creation loop (see aiPrompts → STAGE_TURN_SCHEMA). */
+  async stageTurn(messages: ChatMessage[], ctx: AiCallContext): Promise<Record<string, any>> {
+    return this.chatWithRetry(
+      { messages, schema: { name: "doppl_stage_turn", schema: STAGE_TURN_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "medium" },
+      ctx,
+      (json) => {
+        if (!["inspect", "preview_stage", "propose_routine", "ask_question"].includes(json.action)) {
+          throw new AiOutputError('"action" must be inspect, preview_stage, propose_routine or ask_question.');
+        }
+        return json;
+      },
+    );
   }
 
   async readDocument() {
@@ -364,6 +429,29 @@ export class ModelAiService implements AiService {
     };
     const repaired = await this.fixRoutine(task, null, draft, { kind: "run", messages: problems }, ctx);
     return { ...repaired, templateId: routine.templateId, builtInQc: routine.builtInQc, experimental: routine.experimental };
+  }
+
+  async checkObjectInRegion(output: RunOutput, check: ObjectCheckDef, ctx: AiCallContext): Promise<QcCheck> {
+    const label = `${capitalize(check.object)} is inside ${check.region}`;
+    if (output.preview?.kind !== "image") return { level: "object", label, passed: true, reason: "No preview to check" };
+    const transport = await this.deps.access.transport();
+    const find = async (concept: string) => {
+      if (ctx.isCancelled()) throw new AiError("cancelled", "Cancelled.");
+      ctx.onAiCall();
+      return transport.segment(output.preview!.src, concept, { creationId: ctx.creationId, onQuota: ctx.onQuota });
+    };
+    const objects = await find(check.object);
+    if (objects.length === 0) return { level: "object", label, passed: false, reason: `Couldn't find ${check.object} in the image` };
+    const regions = await find(check.region);
+    if (regions.length === 0) return { level: "object", label, passed: false, reason: `Couldn't find ${check.region} in the image` };
+    const inside = (o: SegmentBox, r: SegmentBox) => {
+      const t = Math.max(2, o.w * 0.005);
+      return o.x1 >= r.x1 - t && o.y1 >= r.y1 - t && o.x2 <= r.x2 + t && o.y2 <= r.y2 + t;
+    };
+    const outside = objects.filter((o) => !regions.some((r) => inside(o, r)));
+    return outside.length
+      ? { level: "object", label, passed: false, reason: `${capitalize(check.object)} sticks out of ${check.region}` }
+      : { level: "object", label, passed: true };
   }
 
   async reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck> {
