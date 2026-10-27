@@ -10,17 +10,31 @@ import { useOpenDocuments } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
 import { Notice } from "../ui/Notice";
 
+/** Value of the "No document" option (an explicit choice, unlike an empty value). */
+const NONE = "__none__";
+
 /** The open document an app's stages work on (or none, for stages that open their own files). */
-function DocumentSelect({ appId, documentId, onChange }: { appId: string; documentId: string | undefined; onChange: (id: string | undefined) => void }) {
+function DocumentSelect({
+  appId,
+  documentId,
+  noDocument,
+  onChange,
+}: {
+  appId: string;
+  documentId: string | undefined;
+  noDocument: boolean;
+  onChange: (id: string | undefined, noDocument: boolean) => void;
+}) {
   const { data: docs, connected, app, loading } = useOpenDocuments(appId);
   const allowNone = appId !== "figma";
 
+  // Pick the active document until the designer chooses; "No document" is a choice too and stays.
   useEffect(() => {
-    if (!docs) return;
+    if (!docs || (noDocument && allowNone)) return;
     if (documentId && docs.some((d) => d.id === documentId)) return;
     const fallback = defaultDocument(docs)?.id;
-    if (fallback !== documentId) onChange(fallback);
-  }, [docs, documentId, onChange]);
+    if (fallback !== documentId) onChange(fallback, false);
+  }, [docs, documentId, noDocument, allowNone, onChange]);
 
   if (app && !connected) {
     return (
@@ -36,9 +50,9 @@ function DocumentSelect({ appId, documentId, onChange }: { appId: string; docume
     <select
       className="ui-select max-w-md"
       aria-label={copy.newTask.documentLabel}
-      value={documentId ?? ""}
+      value={noDocument && allowNone ? NONE : (documentId ?? "")}
       disabled={loading && !docs}
-      onChange={(e) => onChange(e.target.value || undefined)}
+      onChange={(e) => (e.target.value === NONE ? onChange(undefined, true) : onChange(e.target.value || undefined, false))}
     >
       {(!docs || docs.length === 0) && !allowNone && <option value="">{loading ? copy.common.loading : copy.newTask.noFigmaFiles}</option>}
       {docs?.map((d) => (
@@ -46,7 +60,7 @@ function DocumentSelect({ appId, documentId, onChange }: { appId: string; docume
           {d.name} {d.active ? copy.newTask.activeDocument : ""}
         </option>
       ))}
-      {allowNone && <option value="">{copy.newTask.noDocumentNeeded}</option>}
+      {allowNone && <option value={NONE}>{copy.newTask.noDocumentNeeded}</option>}
     </select>
   );
 }
@@ -56,8 +70,8 @@ export function AppsPicker({ value, onChange }: { value: TaskApp[]; onChange: (a
   const apps = useShell((s) => s.apps);
   const toggle = (appId: string) =>
     onChange(value.some((a) => a.appId === appId) ? value.filter((a) => a.appId !== appId) : [...value, { appId }]);
-  const setDoc = (appId: string, documentId: string | undefined) =>
-    onChange(value.map((a) => (a.appId === appId ? { ...a, documentId } : a)));
+  const setDoc = (appId: string, documentId: string | undefined, noDocument: boolean) =>
+    onChange(value.map((a) => (a.appId === appId ? { ...a, documentId, noDocument: noDocument || undefined } : a)));
   const figmaWithoutFile = value.some((a) => a.appId === "figma" && !a.documentId) && apps.find((a) => a.id === "figma")?.status === "connected";
 
   return (
@@ -75,7 +89,14 @@ export function AppsPicker({ value, onChange }: { value: TaskApp[]; onChange: (a
                   {appLabel(a.id)} <span className="ui-small ui-muted">— {copy.appStatus[a.status]}</span>
                 </span>
               </label>
-              {picked && <DocumentSelect appId={a.id} documentId={picked.documentId} onChange={(id) => setDoc(a.id, id)} />}
+              {picked && (
+                <DocumentSelect
+                  appId={a.id}
+                  documentId={picked.documentId}
+                  noDocument={!!picked.noDocument}
+                  onChange={(id, none) => setDoc(a.id, id, none)}
+                />
+              )}
             </li>
           );
         })}

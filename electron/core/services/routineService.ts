@@ -93,10 +93,13 @@ const clip = (value: unknown, max = RESULT_CHARS) => {
 /** Every app a task uses, with its document. */
 const taskApps = (task: Task): TaskApp[] => (task.apps?.length ? task.apps : [{ appId: task.appId, documentId: task.documentId }]);
 
-/** InDesign-only tasks keep the single-script flow; anything with Figma, Photoshop or several apps uses stages. */
+/**
+ * InDesign-only tasks on an open document keep the single-script flow; anything with Figma, Photoshop, several
+ * apps, or no document (stages that open their own files) uses stages.
+ */
 const usesStages = (task: Task) => {
   const apps = taskApps(task);
-  return apps.length > 1 || apps.some((a) => a.appId !== "indesign");
+  return apps.length > 1 || apps.some((a) => a.appId !== "indesign" || a.noDocument);
 };
 
 /** Every "name" in an inspection result (layer and frame names may appear in routines). */
@@ -601,11 +604,22 @@ export class RoutineService {
           r.appId === "figma" ? "plugin-not-connected" : "app-not-connected",
         );
       }
-      const picked = apps.find((a) => a.appId === r.appId)?.documentId;
+      const app = apps.find((a) => a.appId === r.appId);
+      if (app?.noDocument) {
+        // The designer chose "No document": don't read (or touch) whatever happens to be open.
+        app.documentId = undefined;
+        documents.push({
+          appId: r.appId,
+          id: "",
+          name: "no document",
+          inspection: 'The designer chose no document for this app: its stages open their own files from params (document "none").',
+        });
+        continue;
+      }
+      const picked = app?.documentId;
       const doc = r.documents.find((d) => d.id === picked) ?? r.documents.find((d) => d.active) ?? r.documents[0];
       if (!doc) continue;
       if (isCancelled()) throw new CancelledError();
-      const app = apps.find((a) => a.appId === r.appId);
       if (app) app.documentId = doc.id;
       const inspection = await registry.get(r.appId).inspectForModel(doc.id, { depth: 2 }).catch((err) => ({ error: errorMessage(err) }));
       documents.push({ appId: r.appId, id: doc.id, name: doc.name, inspection });

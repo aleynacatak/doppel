@@ -111,6 +111,8 @@ export interface Task {
 export interface TaskApp {
   appId: AppId;
   documentId?: string;
+  /** The designer chose "No document": this app's stages open their own files. */
+  noDocument?: boolean;
 }
 
 export interface RoutineStep {

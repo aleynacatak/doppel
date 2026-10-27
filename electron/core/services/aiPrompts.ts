@@ -328,7 +328,9 @@ export function stageTaskMessage(f: StageTaskFacts) {
     ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
     `House style: ${rules}`,
     "Open documents:",
-    ...f.documents.map((d) => `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, 7000)}`),
+    ...f.documents.map((d) =>
+      d.id ? `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, 7000)}` : `- ${d.appId}: ${String(d.inspection)}`,
+    ),
     ...(f.current ? [`Current routine: ${clip(f.current.routine, 12000)}`, `What went wrong: ${f.current.problems.join(" | ")}`, "Fix it and propose the complete corrected routine."] : []),
   ].join("\n");
 }
