@@ -19,8 +19,13 @@ export interface AdobeAppSpec {
   shortName: string;
   /** Folder name prefix in /Applications, e.g. "Adobe InDesign" (fallback install check). */
   folderPrefix: string;
-  /** The app's AppleScript command for running a JavaScript file with arguments. */
+  /** The app's AppleScript command for running JavaScript with arguments. */
   runCommand: "do script" | "do javascript";
+  /**
+   * How the script reaches the app: "file" passes the .jsx file (InDesign); "text" reads the file in osascript
+   * and passes its text (Photoshop 2026 answers "Can't get file" (-1728) for script files in the temp folder).
+   */
+  delivery: "file" | "text";
   /** ExtendScript run before the routine (inside the try) and in its finally block. */
   prologue: string[];
   epilogue: string[];
@@ -86,17 +91,19 @@ export function assembleScript(spec: Pick<AdobeAppSpec, "library" | "prologue" |
 }
 
 /** The AppleScript that runs a .jsx file in the app with one JSON argument and a timeout. */
-export function runnerScript(spec: Pick<AdobeAppSpec, "bundleId" | "runCommand">): string {
+export function runnerScript(spec: Pick<AdobeAppSpec, "bundleId" | "runCommand" | "delivery">): string {
+  const script = spec.delivery === "text" ? "jsxSource" : "jsxFile";
   const call =
     spec.runCommand === "do script"
-      ? "do script jsxFile language javascript with arguments {jsonArgs}"
-      : "do javascript jsxFile with arguments {jsonArgs} show debugger never";
+      ? `do script ${script} language javascript with arguments {jsonArgs}`
+      : `do javascript ${script} with arguments {jsonArgs} show debugger never`;
+  const load = spec.delivery === "text" ? "set jsxSource to read (POSIX file jsxPath) as «class utf8»" : "set jsxFile to POSIX file jsxPath";
   return `
 on run argv
 	set jsxPath to item 1 of argv
 	set jsonArgs to item 2 of argv
 	set timeoutSecs to (item 3 of argv) as integer
-	set jsxFile to POSIX file jsxPath
+	${load}
 	with timeout of timeoutSecs seconds
 		tell application id "${spec.bundleId}"
 			set scriptResult to ${call}
@@ -227,8 +234,9 @@ export class AdobeBridge {
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${newId()}.jsx`);
     const args = JSON.stringify(input ?? {});
-    // UTF-8 with BOM, so ExtendScript reads non-ASCII text correctly.
-    await fs.writeFile(file, `﻿${source}`, "utf8");
+    // A file the app reads itself gets a UTF-8 BOM so ExtendScript reads non-ASCII text correctly. Text that
+    // osascript reads and passes on is decoded there, and a BOM would end up in the script.
+    await fs.writeFile(file, this.spec.delivery === "file" ? `﻿${source}` : source, "utf8");
     let ok = false;
     let bytesIn = 0;
     try {

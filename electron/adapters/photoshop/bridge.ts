@@ -1,8 +1,9 @@
 import { AdobeBridge } from "../adobe/bridge";
 import { DOPPL_PS_LIB } from "./jsx/lib";
 
-// Photoshop on the shared Adobe bridge (adapters/adobe/bridge.ts): `do javascript … with arguments`. While a
-// script runs, dialogs are off and ruler units are pixels; both are restored afterwards.
+// Photoshop on the shared Adobe bridge (adapters/adobe/bridge.ts): `do javascript … with arguments`, with the
+// script passed as text (Photoshop 2026 can't open script files from the temp folder). While a script runs,
+// dialogs are off and ruler units are pixels; both are restored afterwards.
 
 export const PHOTOSHOP_BUNDLE_ID = "com.adobe.Photoshop";
 
@@ -12,6 +13,7 @@ export const photoshopBridge = new AdobeBridge({
   shortName: "Photoshop",
   folderPrefix: "Adobe Photoshop",
   runCommand: "do javascript",
+  delivery: "text",
   library: DOPPL_PS_LIB,
   prologue: [
     "var previousDialogs = app.displayDialogs;",

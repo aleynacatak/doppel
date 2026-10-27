@@ -14,6 +14,7 @@ export const indesignBridge = new AdobeBridge({
   shortName: "InDesign",
   folderPrefix: "Adobe InDesign",
   runCommand: "do script",
+  delivery: "file",
   library: DOPPL_LIB,
   prologue: [
     "var previousLevel = app.scriptPreferences.userInteractionLevel;",
