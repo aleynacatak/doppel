@@ -56,6 +56,8 @@ interface CreationState {
   answer?: (optionId: string) => void;
   /** Multi-app creation: sample values for the validator (literal-data check). */
   samples?: ValidationSamples;
+  /** Sample data files (attached, or found in attached folders) the trial uses for dataFile params. */
+  dataFiles?: string[];
 }
 
 function freshStages(): CreationStage[] {
@@ -613,7 +615,10 @@ export class RoutineService {
   }
 
   /** What the model gets to start: documents (inspected), sample data, folder file names, house style. */
-  private async gatherFacts(c: Creation, isCancelled: () => boolean): Promise<{ facts: StageTaskFacts; samples: ValidationSamples; apps: AppId[] }> {
+  private async gatherFacts(
+    c: Creation,
+    isCancelled: () => boolean,
+  ): Promise<{ facts: StageTaskFacts; samples: ValidationSamples; apps: AppId[]; dataFiles: string[] }> {
     const { registry } = this.deps;
     const apps = taskApps(c.task);
     const readiness = await checkReadiness(
@@ -657,6 +662,7 @@ export class RoutineService {
     const samples: StageTaskFacts["samples"] = [];
     const values: string[] = [];
     const columns: Record<string, string[]> = {};
+    const dataFiles: string[] = [];
 
     for (const ref of c.task.references) {
       const ext = path.extname(ref).slice(1).toLowerCase();
@@ -664,6 +670,7 @@ export class RoutineService {
       if (!DATA_EXTENSIONS.includes(ext) || (ext === "txt" && !(await this.looksTabular(ref)))) continue;
       try {
         const table = await readDataFile(ref);
+        dataFiles.push(ref);
         samples.push({
           file: path.basename(ref),
           columns: table.columns,
@@ -682,6 +689,19 @@ export class RoutineService {
       const files = await listFolderFiles(folder).catch(() => []);
       folders.push({ path: folder, files: files.map((f) => f.name) });
       for (const f of files) values.push(f.name, f.stem);
+      // Data files inside a folder are sample data too. The model gets their columns and row count only:
+      // from folders, only names are shared. The trial and the literal-data check use every row, on this Mac.
+      for (const f of files.filter((x) => DATA_EXTENSIONS.includes(x.ext) && x.ext !== "txt")) {
+        try {
+          const table = await readDataFile(f.path);
+          dataFiles.push(f.path);
+          samples.push({ file: f.name, columns: table.columns, rows: [], totalRows: table.rows.length, errors: [] });
+          columns[f.name] = table.columns;
+          for (const row of table.rows.slice(0, 200)) for (const v of Object.values(row)) if (v !== null && v !== undefined) values.push(String(v));
+        } catch {
+          // Not readable as data: it stays a plain file name.
+        }
+      }
     }
     const allowed = [...documents.flatMap((d) => [...namesIn(d.inspection)])];
     const style = await this.deps.getStyle().catch(() => null);
@@ -689,6 +709,7 @@ export class RoutineService {
       facts: { request: c.task.request, references: c.task.references, folders, samples, documents, style },
       samples: { values, allowed, dataColumns: Object.values(columns) },
       apps: apps.map((a) => a.appId),
+      dataFiles,
     };
   }
 
@@ -699,13 +720,19 @@ export class RoutineService {
   }
 
   /** Values for a trial or preview: sample data and folders from the task, temp folders for output. */
-  private async stagedTrialParams(draft: RoutineDraft, task: Task, workDir: string, previous?: ParamValues): Promise<ParamValues> {
+  private async stagedTrialParams(draft: RoutineDraft, task: Task, workDir: string, dataFiles: string[], previous?: ParamValues): Promise<ParamValues> {
     const values: ParamValues = {};
     const refs = task.references;
+    let nextData = 0;
     for (const p of draft.params) {
       const prev = previous?.[p.key];
       if (p.type === "dataFile") {
-        values[p.key] = (prev as string) ?? refs.find((r) => DATA_EXTENSIONS.includes(path.extname(r).slice(1).toLowerCase())) ?? null;
+        values[p.key] = (prev as string) ?? dataFiles[nextData++] ?? dataFiles[0] ?? null;
+        if (!values[p.key]) {
+          throw new ExecutionError(
+            `Doppl needs sample data to try this routine ("${p.label}"). Attach your CSV, JSON or Excel file, or the folder that contains it, and try again.`,
+          );
+        }
       } else if (p.type === "folder") {
         const output = p.role === "output" || (p.role !== "input" && /out|export|save|result|destination|deliver/i.test(`${p.key} ${p.label}`));
         if (output) {
@@ -735,7 +762,7 @@ export class RoutineService {
     const trialId = `trial-${c.id}-${newId().slice(0, 8)}`;
     const workDir = path.join(this.deps.workRoot, trialId);
     await fs.mkdir(workDir, { recursive: true });
-    const values = await this.stagedTrialParams(draft, c.task, workDir, previous);
+    const values = await this.stagedTrialParams(draft, c.task, workDir, state.dataFiles ?? [], previous);
     const documents = Object.fromEntries(taskApps(c.task).filter((a) => a.documentId).map((a) => [a.appId, a.documentId!]));
     const res = await this.deps.stageRunner.run(
       {
@@ -852,8 +879,9 @@ export class RoutineService {
     try {
       this.setStage(c, "read", "active");
       await this.prepareAi(c);
-      const { facts, samples, apps } = await this.gatherFacts(c, isCancelled);
+      const { facts, samples, apps, dataFiles } = await this.gatherFacts(c, isCancelled);
       state.samples = samples;
+      state.dataFiles = dataFiles;
       let previous: ParamValues | undefined;
       if (c.mode === "repair") {
         const routine = await this.requireRoutine(c.routineId!);
@@ -954,7 +982,14 @@ export class RoutineService {
         if (!check.ok) {
           const errors = errorsForModel(check.errors, draft);
           lastProblem = errors.map((e) => `${e.path}: ${e.message}`).join(" · ");
-          this.note(c, `${t.action === "propose_routine" ? "Proposal" : "Preview"} had ${plural(errors.length, "problem")}; sent back to fix`);
+          const shown = errors
+            .slice(0, 2)
+            .map((e) => `${e.path}: ${e.message}`)
+            .join(" · ");
+          this.note(
+            c,
+            `${t.action === "propose_routine" ? "Proposal" : "Preview"} had ${plural(errors.length, "problem")}, sent back to fix: ${shown.length > 240 ? `${shown.slice(0, 237)}…` : shown}`,
+          );
           reply(`Validation failed. Fix these and send the whole routine again:\n${clip(errors, 6000)}`);
           continue;
         }
@@ -988,7 +1023,7 @@ export class RoutineService {
           if (c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS) {
             throw new ExecutionError("The trial run of the routine failed.", lastProblem, "generic", true);
           }
-          this.note(c, "The trial run failed; sent the errors back to fix");
+          this.note(c, `The trial run failed, sent back to fix: ${lastProblem.length > 240 ? `${lastProblem.slice(0, 237)}…` : lastProblem}`);
           this.setStage(c, "run", "pending", "");
           stage.current = "write";
           this.setStage(c, "write", "active", "Fixing problems from the trial run");

@@ -13,6 +13,9 @@ The script is the BODY of function (doc, params, ctx) { ... }:
 - ctx.report(label, doc?): show a document (default: active) as a result with a preview.
 - ctx.log(message), ctx.format("{name}_v1", { name: "a" }), ctx.safeFileName(s), ctx.join(folder, name),
   ctx.fileName(path), ctx.baseName(path) (file name without extension).
+- ctx.findFile(list, name) -> path: a file from a list (e.g. ctx.stages.s1.outputs.files) by name, with or
+  without extension. Use it when a stage repeats over data rows but needs files that earlier stages made, e.g.
+  ctx.findFile(ctx.stages.s1.outputs.files, ctx.item.image). Throws when there's no such file.
 
 Helper functions (use these; don't call app.open, doc.save, doc.saveAs or doc.close yourself):
 - openDocument(path) -> Document: opens a PSD/image; reused if Doppl already opened it in this stage. If the
@@ -25,8 +28,9 @@ Helper functions (use these; don't call app.open, doc.save, doc.saveAs or doc.cl
 - setLayerVisible(layer, visible)
 - exportImage(path, format, quality) -> path: exports the ACTIVE document as "png", "jpg" (quality 0-100) or "tif".
   The path must be inside a folder param or ctx.workDir. Use app.activeDocument = someDoc to choose what to export.
-- saveCopy(folder?) -> path: saves a PSD copy named "<name>_doppl.psd" next to the source (or in a folder param).
-  Only when the request explicitly asks for a saved PSD.
+- saveCopy(folder, fileName) -> path: saves a PSD copy of the active document as "<fileName>.psd" in a folder
+  param (e.g. saveCopy(params.out, ctx.item.sku)); saveCopy() alone saves "<name>_doppl.psd" next to the source.
+  Never overwrites anything (an existing name gets "-2"). Only when the request asks for a saved PSD.
 - closeWithoutSaving(doc?): closes a document Doppl opened (default: active) without saving.
 - removeWhiteBackground(doc?, tolerance?) -> { removed }: makes a plain white background that touches the image's
   corners transparent (white inside the subject stays). tolerance 0-255, default 24. Then trimTransparent(doc?).

@@ -162,6 +162,21 @@ DopplPS.makeContext = function (input) {
     safeFileName: DopplPS.safeFileName,
     join: function (folder, name) { return String(folder).replace(/\/+$/, "") + "/" + String(name); },
     fileName: function (path) { return decodeURI(new File(path).name); },
+    /** A file from a list (e.g. ctx.stages.s1.outputs.files) by name: exact, any case, or without extension. */
+    findFile: function (list, name) {
+      var want = String(name).toLowerCase(), wantStem = want.replace(/\.[^.\/]+$/, "");
+      var items = list || [];
+      var best = null;
+      for (var i = 0; i < items.length; i++) {
+        var p = typeof items[i] === "string" ? items[i] : items[i] && items[i].path;
+        if (!p) { continue; }
+        var n = decodeURI(new File(p).name).toLowerCase();
+        if (n === want) { return p; }
+        if (!best && n.replace(/\.[^.\/]+$/, "") === wantStem) { best = p; }
+      }
+      if (!best) { throw new Error('No file named "' + name + '" among ' + items.length + " files"); }
+      return best;
+    },
     baseName: function (path) { return DopplPS.baseName(decodeURI(new File(path).name)); }
   };
 };
@@ -284,18 +299,25 @@ function exportImage(path, format, quality) {
   return file.fsName;
 }
 
-/** Saves a PSD copy of the active document with a "_doppl" suffix, next to its file or in a picked folder. Never overwrites. */
-function saveCopy(folderPath) {
+/**
+ * Saves a PSD copy of the active document. With fileName (e.g. a SKU), it is saved as "<fileName>.psd" in folderPath
+ * (a folder picked for the run); otherwise as "<name>_doppl.psd" next to its file. Never overwrites a file:
+ * an existing name gets "-2", "-3"…
+ */
+function saveCopy(folderPath, fileName) {
   var doc = app.activeDocument;
   var source = DopplPS.pathOf(doc);
+  if (fileName && !folderPath) { throw new Error("saveCopy(folder, fileName): give the folder (a folder picked for the run) as well."); }
   var folder = folderPath ? new Folder(folderPath) : (source ? new File(source).parent : null);
   if (!folder) { throw new Error("This document has never been saved; pass a folder picked for the run to saveCopy()."); }
   if (folderPath && !DopplPS.isAllowed(folder.fsName + "/x")) {
     throw new Error("Doppl can only save into the folders picked for this run.");
   }
   DopplPS.ensureFolder(folder);
-  var base = DopplPS.baseName(source ? decodeURI(new File(source).name) : doc.name).replace(/ \(Doppl[^)]*\)$/, "");
-  var file = DopplPS.uniqueFile(folder.fsName, base + "_doppl", ".psd");
+  var base = fileName
+    ? DopplPS.safeFileName(String(fileName).replace(/\.psd$/i, ""))
+    : DopplPS.baseName(source ? decodeURI(new File(source).name) : doc.name).replace(/ \(Doppl[^)]*\)$/, "") + "_doppl";
+  var file = DopplPS.uniqueFile(folder.fsName, base, ".psd");
   doc.saveAs(file, new PhotoshopSaveOptions(), true, Extension.LOWERCASE);
   DopplPS.state.files.push(file.fsName);
   return file.fsName;

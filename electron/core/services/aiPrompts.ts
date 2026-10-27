@@ -298,6 +298,25 @@ Writing the routine:
   kind "script" with "script" (an ExtendScript body as described in that app's guide).
 - qcProfile "print" or "web"; keyObjects: up to 2 things that must stay fully visible in outputs ([] otherwise);
   objectChecks: optional { object, region } pairs checked with an image model on reruns with AI review.
+- When stages repeat over the same data rows, items stay matched across stages (a row that failed is skipped
+  later). A script stage finds files that earlier stages made for the same row with ctx.findFile.
+
+The shape of a routine (an illustration of the format only; use your own names, steps and actions):
+{"name":"Cards and previews","description":"…","qcProfile":"web","keyObjects":[],"objectChecks":[],
+ "params":[{"key":"rows","label":"Data","type":"dataFile","required":true,"columns":["title","photo"]},
+           {"key":"photos","label":"Photos","type":"folder","required":true,"role":"input"},
+           {"key":"out","label":"Output folder","type":"folder","required":true,"role":"output"}],
+ "stages":[
+  {"id":"s1","name":"Prepare photos","app":"photoshop","kind":"script","document":"none",
+   "repeat":{"over":"{{params.rows.rows}}"},"inputs":["{{params.photos}}"],"outputs":[{"key":"files","type":"fileList"}],
+   "steps":["…"],"script":"var img = openDocument(ctx.join(params.photos, ctx.item.photo));\\nexportImage(ctx.join(ctx.workDir, ctx.baseName(ctx.item.photo) + \\".png\\"), \\"png\\");"},
+  {"id":"s2","name":"Fill cards","app":"figma","kind":"actions","document":"open",
+   "repeat":{"over":"{{params.rows.rows}}"},"inputs":["{{stage.s1.outputs.files}}"],"outputs":[{"key":"files","type":"fileList"}],
+   "steps":["…"],"actions":[{"action":"duplicateNode","id":"card","node":"Card"},
+     {"action":"setText","node":"$card.#Title","text":"{{item.title}}"},
+     {"action":"setImageFill","node":"$card.#Photo","image":{"files":"{{stage.s1.outputs.files}}","name":"{{item.photo}}"}},
+     {"action":"exportNode","node":"$card","format":"PNG","folder":"{{params.out}}","fileName":"{{item.title}}","output":"files"}]}]}
+A stage's action list goes in its "actions" array; a script goes in "script".
 
 Apps in this task:
 ${apps.map((a) => `\n=== ${a.adapter.name} (app id "${a.adapter.id}", stage kind "${a.adapter.stageKind}") ===\n${a.manifest}`).join("\n")}`;
@@ -326,7 +345,7 @@ export function stageTaskMessage(f: StageTaskFacts) {
     `Reference files (names only): ${f.references.length ? f.references.map((r) => r.split("/").pop()).join(", ") : "none"}`,
     ...f.samples.map(
       (s) =>
-        `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")}). First rows: ${clip(s.rows, 3000)}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`,
+        `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")})${s.rows.length ? `. First rows: ${clip(s.rows, 3000)}` : " (in a folder: only its columns are shared)"}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`,
     ),
     ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
     `House style: ${rules}`,
