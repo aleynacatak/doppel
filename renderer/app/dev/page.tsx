@@ -1,6 +1,6 @@
 "use client";
 
-import type { ConnectionLogEntry, DevRunResult, DocumentRef, ValidationResult } from "@core/types";
+import type { ConnectionLogEntry, CreationTranscript, DevRunResult, DocumentRef, ValidationResult } from "@core/types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -207,6 +207,30 @@ function RoutineBuilder() {
   );
 }
 
+function LastCreation() {
+  const [t, setT] = useState<CreationTranscript | null | undefined>(undefined);
+  const load = async () => setT(await doppel().devLastCreationTranscript());
+  return (
+    <Section title="Last creation: the AI's answers" aside={<Button size="small" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
+      <p className="ui-small ui-muted">The latest multi-app creation, turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
+      {t === null && <p className="ui-small">No multi-app creation since Doppl started.</p>}
+      {t && (
+        <div className="flex flex-col gap-2">
+          <p className="ui-small">
+            {t.at.slice(0, 19).replace("T", " ")} · “{t.request.slice(0, 120)}{t.request.length > 120 ? "…" : ""}”
+          </p>
+          {t.entries.map((e, i) => (
+            <div key={i} className="flex flex-col gap-1">
+              <div className="ui-label">{e.role === "ai" ? `AI answer` : i === 0 ? "Doppl: the task" : "Doppl's reply"}</div>
+              <pre className="ui-code max-h-72 whitespace-pre-wrap p-2">{e.text}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function ConnectionLog() {
   const [entries, setEntries] = useState<ConnectionLogEntry[]>([]);
   useEffect(() => {
@@ -249,6 +273,7 @@ export default function DevPage() {
       <PhotoshopRunner />
       <BarcodeTester />
       <RoutineBuilder />
+      <LastCreation />
       <ConnectionLog />
     </div>
   );

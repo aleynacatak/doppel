@@ -8,6 +8,7 @@ import type {
   CreationStageKey,
   DocumentSummary,
   ParamDef,
+  CreationTranscript,
   Stage,
   StyleProfile,
   TaskApp,
@@ -157,6 +158,29 @@ function mergeChecks(output: RunOutput, checks: QcCheck[] | undefined) {
 /** Library (list/get), routine creation and repair with the AI, saving with portability checks. */
 export class RoutineService {
   private creations = new Map<string, CreationState>();
+  /** The latest multi-app creation's exchange with the AI, for the dev panel (memory only). */
+  private transcript: CreationTranscript | null = null;
+
+  lastTranscript(): CreationTranscript | null {
+    return this.transcript;
+  }
+
+  /** Keeps what the AI answered and what Doppl replied (not the instructions; images left out). */
+  private record(c: Creation, messages: ChatMessage[]) {
+    const text = (m: ChatMessage) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((p) => (p.type === "text" ? p.text : "[image]")).join("\n");
+    const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… (${s.length - n} more characters)` : s);
+    this.transcript = {
+      creationId: c.id,
+      request: c.task.request,
+      at: nowIso(),
+      entries: messages
+        .slice(1)
+        .map((m) => ({ role: m.role === "assistant" ? ("ai" as const) : ("doppl" as const), text: cap(text(m), m.role === "assistant" ? 40000 : 12000) })),
+    };
+  }
 
   constructor(
     private readonly deps: {
@@ -907,11 +931,14 @@ export class RoutineService {
       let turn = 0;
       // Every reply says how many answers are left, so the model proposes in time.
       const budget = () => `[${Math.max(0, MAX_TURNS - turn)} of ${MAX_TURNS} answers left]`;
-      const reply = (content: string | ContentPart[]) =>
+      const reply = (content: string | ContentPart[]) => {
         messages.push({
           role: "user",
           content: typeof content === "string" ? `${budget()} ${content}` : [{ type: "text", text: budget() }, ...content],
         });
+        this.record(c, messages);
+      };
+      this.record(c, messages);
       for (turn = 1; ; turn++) {
         if (isCancelled()) throw new CancelledError();
         if (turn > MAX_TURNS || c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE) {
@@ -922,8 +949,23 @@ export class RoutineService {
           );
         }
         this.setStage(c, stage.current, "active", `Step ${turn}`);
-        const t = await this.deps.ai.stageTurn(messages, ai);
+        let t: Record<string, any>;
+        try {
+          t = await this.deps.ai.stageTurn(messages, ai);
+        } catch (err) {
+          // An answer that was cut off or wasn't JSON: ask for a shorter one while the budget lasts.
+          const unusable = err instanceof AiError && (err.code === "ai_output_cut" || err.code === "ai_output");
+          if (!unusable || turn >= MAX_TURNS || c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE) throw err;
+          lastProblem = (err as AiError).message;
+          this.note(c, (err as AiError).code === "ai_output_cut" ? "The AI's answer was too long and got cut off; asked for a shorter one" : "The AI's answer wasn't readable; asked again");
+          reply(
+            "Your last answer couldn't be used: it was cut off or wasn't complete JSON. Answer again with the complete JSON, " +
+              "shorter: keep scripts brief, no comments, no repeated explanations.",
+          );
+          continue;
+        }
         messages.push({ role: "assistant", content: JSON.stringify(t) });
+        this.record(c, messages);
         if (typeof t.reason === "string" && t.reason.trim()) this.note(c, t.reason.trim().slice(0, 160));
 
         if (t.action === "ask_question") {

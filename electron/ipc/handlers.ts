@@ -114,6 +114,7 @@ export function registerIpc(s: Services) {
     devValidateRoutine: async (json) => s.dev.validateRoutine(json),
     devSaveRoutine: (json) => s.dev.saveRoutine(json),
     getConnectionLog: async () => connectionLog.list(),
+    devLastCreationTranscript: async () => s.routines.lastTranscript(),
     clearConnectionLog: async () => connectionLog.clear(),
 
   };

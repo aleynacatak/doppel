@@ -41,7 +41,15 @@ const SHORT_TOKENS = 1500;
 const MAX_REVIEW_IMAGES = 4;
 
 /** The model answered, but not with something Doppl can use. */
-export class AiOutputError extends Error {}
+export class AiOutputError extends Error {
+  constructor(
+    message: string,
+    /** The answer hit the length limit (thinking counts toward it) and was cut off. */
+    readonly truncated = false,
+  ) {
+    super(message);
+  }
+}
 
 function parseJson(content: string): Record<string, any> {
   const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
@@ -223,7 +231,7 @@ export class ModelAiService implements AiService {
     const transport = await this.deps.access.transport();
     ctx.onAiCall();
     const result = await transport.chat(request, { creationId: ctx.creationId, onQuota: ctx.onQuota });
-    if (result.finishReason === "length") throw new AiOutputError("The answer was cut off before it was complete.");
+    if (result.finishReason === "length") throw new AiOutputError("The answer was cut off before it was complete.", true);
     return parseJson(result.content);
   }
 
@@ -244,6 +252,13 @@ export class ModelAiService implements AiService {
       try {
         return use(await this.chat(retry, ctx));
       } catch (again) {
+        if (again instanceof AiOutputError && (again.truncated || err.truncated)) {
+          throw new AiError(
+            "ai_output_cut",
+            "The AI's answer was too long for one reply and got cut off, also when it tried again more briefly.",
+            "retry",
+          );
+        }
         if (again instanceof AiOutputError) {
           throw new AiError("ai_output", "Doppl's AI couldn't write a usable routine for this request. Try rephrasing it.", "retry");
         }
@@ -274,7 +289,8 @@ export class ModelAiService implements AiService {
   /** One turn of the multi-app creation loop (see aiPrompts → STAGE_TURN_SCHEMA). */
   async stageTurn(messages: ChatMessage[], ctx: AiCallContext): Promise<Record<string, any>> {
     return this.chatWithRetry(
-      { messages, schema: { name: "doppl_stage_turn", schema: STAGE_TURN_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "medium" },
+      // Low effort: a whole multi-stage routine is a long answer, and thinking counts toward its length limit.
+      { messages, schema: { name: "doppl_stage_turn", schema: STAGE_TURN_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "low" },
       ctx,
       (json) => {
         if (!["inspect", "preview_stage", "propose_routine", "ask_question"].includes(json.action)) {

@@ -198,7 +198,9 @@ const STAGE_SCHEMA = {
       },
     },
     steps: { type: "array", items: { type: "string" } },
-    actions: { type: "array", items: { type: "object" }, description: "Figma stages: the action list" },
+    // Text, not an array: an array of objects without listed properties can only be filled with empty objects
+    // when the AI service enforces the schema, which is how Figma stages arrived without actions.
+    actions: { type: "string", description: 'Figma stages: the action list as JSON text, e.g. "[{\\"action\\":\\"duplicateNode\\",…}]"' },
     script: { type: "string", description: "InDesign/Photoshop stages: the ExtendScript body" },
     modifiesDocument: { type: "boolean" },
   },
@@ -251,6 +253,52 @@ export const STAGE_TURN_SCHEMA = {
   required: ["action"],
 };
 
+/** The routine format, shown to the model (and checked by tests/promptExample.test.ts). */
+export const ROUTINE_FORMAT_EXAMPLE = {
+  name: "Cards and previews",
+  description: "…",
+  qcProfile: "web",
+  keyObjects: [],
+  objectChecks: [],
+  params: [
+    { key: "rows", label: "Data", type: "dataFile", required: true, columns: ["title", "photo"] },
+    { key: "photos", label: "Photos", type: "folder", required: true, role: "input" },
+    { key: "out", label: "Output folder", type: "folder", required: true, role: "output" },
+  ],
+  stages: [
+    {
+      id: "s1",
+      name: "Prepare photos",
+      app: "photoshop",
+      kind: "script",
+      document: "none",
+      repeat: { over: "{{params.rows.rows}}" },
+      inputs: ["{{params.photos}}"],
+      outputs: [{ key: "files", type: "fileList" }],
+      steps: ["…"],
+      script:
+        'var img = openDocument(ctx.join(params.photos, ctx.item.photo));\nexportImage(ctx.join(ctx.workDir, ctx.baseName(ctx.item.photo) + ".png"), "png");',
+    },
+    {
+      id: "s2",
+      name: "Fill cards",
+      app: "figma",
+      kind: "actions",
+      document: "open",
+      repeat: { over: "{{params.rows.rows}}" },
+      inputs: ["{{stage.s1.outputs.files}}"],
+      outputs: [{ key: "files", type: "fileList" }],
+      steps: ["…"],
+      actions: JSON.stringify([
+        { action: "duplicateNode", id: "card", node: "Card" },
+        { action: "setText", node: "$card.#Title", text: "{{item.title}}" },
+        { action: "setImageFill", node: "$card.#Photo", image: { files: "{{stage.s1.outputs.files}}", name: "{{item.photo}}" } },
+        { action: "exportNode", node: "$card", format: "PNG", folder: "{{params.out}}", fileName: "{{item.title}}", output: "files" },
+      ]),
+    },
+  ],
+};
+
 export interface StageAppContext {
   adapter: DesignAppAdapter;
   manifest: string;
@@ -294,7 +342,8 @@ Writing the routine:
   (the placeholders it reads).
 - document: "open" when the stage works on a document the designer has open in that app (picked at run time),
   "none" when it only opens files from params.
-- Figma stages: kind "actions" with "actions" (an action list from the catalog). InDesign and Photoshop stages:
+- Figma stages: kind "actions" with "actions": the action list from the catalog, written as JSON text (a string
+  containing the array, quotes escaped). InDesign and Photoshop stages:
   kind "script" with "script" (an ExtendScript body as described in that app's guide).
 - qcProfile "print" or "web"; keyObjects: up to 2 things that must stay fully visible in outputs ([] otherwise);
   objectChecks: optional { object, region } pairs checked with an image model on reruns with AI review.
@@ -302,21 +351,9 @@ Writing the routine:
   later). A script stage finds files that earlier stages made for the same row with ctx.findFile.
 
 The shape of a routine (an illustration of the format only; use your own names, steps and actions):
-{"name":"Cards and previews","description":"…","qcProfile":"web","keyObjects":[],"objectChecks":[],
- "params":[{"key":"rows","label":"Data","type":"dataFile","required":true,"columns":["title","photo"]},
-           {"key":"photos","label":"Photos","type":"folder","required":true,"role":"input"},
-           {"key":"out","label":"Output folder","type":"folder","required":true,"role":"output"}],
- "stages":[
-  {"id":"s1","name":"Prepare photos","app":"photoshop","kind":"script","document":"none",
-   "repeat":{"over":"{{params.rows.rows}}"},"inputs":["{{params.photos}}"],"outputs":[{"key":"files","type":"fileList"}],
-   "steps":["…"],"script":"var img = openDocument(ctx.join(params.photos, ctx.item.photo));\\nexportImage(ctx.join(ctx.workDir, ctx.baseName(ctx.item.photo) + \\".png\\"), \\"png\\");"},
-  {"id":"s2","name":"Fill cards","app":"figma","kind":"actions","document":"open",
-   "repeat":{"over":"{{params.rows.rows}}"},"inputs":["{{stage.s1.outputs.files}}"],"outputs":[{"key":"files","type":"fileList"}],
-   "steps":["…"],"actions":[{"action":"duplicateNode","id":"card","node":"Card"},
-     {"action":"setText","node":"$card.#Title","text":"{{item.title}}"},
-     {"action":"setImageFill","node":"$card.#Photo","image":{"files":"{{stage.s1.outputs.files}}","name":"{{item.photo}}"}},
-     {"action":"exportNode","node":"$card","format":"PNG","folder":"{{params.out}}","fileName":"{{item.title}}","output":"files"}]}]}
-A stage's action list goes in its "actions" array; a script goes in "script".
+${JSON.stringify(ROUTINE_FORMAT_EXAMPLE)}
+A Figma stage's action list goes in its "actions" text; a script goes in "script". Keep scripts short and without
+comments: the whole answer must fit in one reply.
 
 Apps in this task:
 ${apps.map((a) => `\n=== ${a.adapter.name} (app id "${a.adapter.id}", stage kind "${a.adapter.stageKind}") ===\n${a.manifest}`).join("\n")}`;

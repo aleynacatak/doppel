@@ -59,6 +59,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   devValidateRoutine: true,
   devSaveRoutine: true,
   getConnectionLog: true,
+  devLastCreationTranscript: true,
   clearConnectionLog: true,
 };
 

@@ -725,6 +725,7 @@ export interface DoppelApi {
   devValidateRoutine(json: string): Promise<{ validation: ValidationResult; parseError?: string }>;
   devSaveRoutine(json: string): Promise<SaveRoutineResult>;
   getConnectionLog(): Promise<ConnectionLogEntry[]>;
+  devLastCreationTranscript(): Promise<CreationTranscript | null>;
   clearConnectionLog(): Promise<void>;
 
   // Events (main → renderer)
@@ -732,6 +733,14 @@ export interface DoppelApi {
   onRunProgress(cb: (run: Run) => void): Unsubscribe;
   onAppStatusChange(cb: (apps: App[]) => void): Unsubscribe;
   onConnectionLog(cb: (entry: ConnectionLogEntry) => void): Unsubscribe;
+}
+
+/** Dev panel: the latest multi-app creation's exchange with the AI (kept in memory only, never saved). */
+export interface CreationTranscript {
+  creationId: string;
+  request: string;
+  at: string;
+  entries: { role: "ai" | "doppl"; text: string }[];
 }
 
 /** Dev panel: result of running an action list or script once. */
