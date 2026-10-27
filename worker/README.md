@@ -30,11 +30,13 @@ npx wrangler login
 npx wrangler d1 create doppl-demo
 ```
 
-It prints a `database_id`. Paste it into `wrangler.toml`, replacing `00000000-0000-0000-0000-000000000000`. Then create the tables:
+It prints a `database_id`. Paste it into `wrangler.toml`, replacing `00000000-0000-0000-0000-000000000000`, then commit that change; a Git-connected Worker builds from what's on GitHub. The ID isn't a secret. Then create the tables:
 
 ```bash
 npm run db:migrate:remote
 ```
+
+`npm run deploy` also applies any new migrations before every deploy, so later schema changes need no extra step.
 
 ### 3. Set the two secrets
 
@@ -51,15 +53,31 @@ npx wrangler secret put META_API_KEY
 npx wrangler secret put ADMIN_TOKEN
 ```
 
-Secrets live only in Cloudflare. They're never in the repo or the app.
+Or in the dashboard: Workers & Pages → doppl-demo → Settings → Variables and Secrets → Add, with type **Secret**. Secrets live only in Cloudflare. They're never in the repo or the app, and they stay in place across deploys.
 
 ### 4. Deploy and attach `api.doppl.work`
+
+**With the GitHub repo connected to the Worker (Workers Builds).** Every push to the production branch deploys. In Workers & Pages → doppl-demo → Settings → Build, check these settings:
+
+| Setting | Value |
+| --- | --- |
+| Worker name | `doppl-demo`. It must match `name` in `wrangler.toml`, or the build fails. |
+| Production branch | `main` |
+| Root directory | `worker` (the repo root is the desktop app) |
+| Build command | leave empty |
+| Deploy command | `npm run deploy` (applies migrations, then deploys) |
+| Non-production branch deploy command | `npx wrangler versions upload` (the default) |
+| Build watch paths | include `worker/*`, so desktop-app commits don't redeploy the Worker |
+
+Node 22 comes from `worker/.node-version`, and `worker/.npmrc` makes `npm ci` behave like local installs. If the build log shows a permissions error at the migrations step, run `npm run db:migrate:remote` once from your Mac and set the deploy command to `npx wrangler deploy`.
+
+**Or from your Mac:**
 
 ```bash
 npm run deploy
 ```
 
-`wrangler.toml` already declares `api.doppl.work` as a custom domain, so the deploy creates the DNS record and certificate. This can take a minute or two. Check it:
+`wrangler.toml` already declares `api.doppl.work` as a custom domain, so the deploy creates the DNS record and certificate. This can take a minute or two. If a Git build can't attach the domain, add it once in the dashboard: doppl-demo → Settings → Domains & Routes → Add → Custom domain → `api.doppl.work`. Check it:
 
 ```bash
 curl https://api.doppl.work/health
@@ -98,8 +116,8 @@ npm run spend
 
 - `npm run spend` shows estimated spend against the caps (`DAILY_SPEND_CAP`, `TOTAL_SPEND_CAP` in `wrangler.toml`). When a cap is reached, the Worker pauses itself: testers see a friendly "paused" message, and reruns keep working.
 - **Pause right now:** `npm run demo:pause`. It takes effect immediately, with no redeploy. Undo it with `npm run demo:resume`.
-- **Kill switch:** set `DEMO_ENABLED = "false"` in `wrangler.toml` and run `npm run deploy`. Every AI endpoint then answers `demo_paused` until you set it back to `"true"` and deploy again.
-- To change a limit or price, edit the value in `wrangler.toml` and `npm run deploy`.
+- **Kill switch:** set `DEMO_ENABLED = "false"` in `wrangler.toml` and deploy (push to `main`, or `npm run deploy`). Every AI endpoint then answers `demo_paused` until you set it back to `"true"` and deploy again.
+- To change a limit or price, edit the value in `wrangler.toml` and deploy the same way. Values in `wrangler.toml` replace any you set in the dashboard on every deploy; secrets are never touched.
 
 ### 7. Second safety net on Meta's side
 
