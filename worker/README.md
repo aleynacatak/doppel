@@ -69,7 +69,9 @@ Or in the dashboard: Workers & Pages → doppel → Settings → Variables and S
 | Non-production branch deploy command | `npx wrangler versions upload` (the default) |
 | Build watch paths | include `worker/*`, so desktop-app commits don't redeploy the Worker |
 
-Node 22 comes from `worker/.node-version`, and `worker/.npmrc` makes `npm ci` behave like local installs. If the build log shows a permissions error at the migrations step, run `npm run db:migrate:remote` once from your Mac and set the deploy command to `npx wrangler deploy`.
+Node 22 comes from `worker/.node-version`, and `worker/.npmrc` makes `npm ci` behave like local installs.
+
+If a build log says "Detected Project Settings … Framework: Next.js", Cloudflare is building from the repo root (the desktop app): set **Root directory** to `worker`. If the build log shows a permissions error at the migrations step, run `npm run db:migrate:remote` once from your Mac and set the deploy command to `npx wrangler deploy`.
 
 **Or from your Mac:**
 
