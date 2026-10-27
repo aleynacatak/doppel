@@ -1,0 +1,33 @@
+{
+  "name": "doppl-demo-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Demo access gate between the Doppl desktop app and Meta's Model API.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply doppl-demo --local",
+    "db:migrate:remote": "wrangler d1 migrations apply doppl-demo --remote",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "codes:create": "node scripts/admin.mjs create",
+    "codes:list": "node scripts/admin.mjs list",
+    "codes:revoke": "node scripts/admin.mjs revoke",
+    "spend": "node scripts/admin.mjs spend",
+    "demo:pause": "node scripts/admin.mjs pause",
+    "demo:resume": "node scripts/admin.mjs resume"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.8",
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "@vitest/runner": "^4.1.12",
+    "@vitest/snapshot": "^4.1.12",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.153.0"
+  }
+}

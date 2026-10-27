@@ -1,0 +1,11 @@
+node_modules/
+dist-electron/
+release/
+renderer/.next/
+renderer/out/
+renderer/next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+worker/.dev.vars
+worker/.env
+worker/.wrangler/
