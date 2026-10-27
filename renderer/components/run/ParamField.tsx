@@ -11,12 +11,14 @@ import { Field } from "../ui/Field";
 
 interface Props {
   routineId: string;
+  /** Selected document (options like Figma frames depend on it). */
+  documentId?: string;
   param: ParamDef;
   value: ParamValue | undefined;
   onChange: (value: ParamValue) => void;
 }
 
-function PathPicker({ param, value, onChange }: Omit<Props, "routineId">) {
+function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "documentId">) {
   const pick = async () => {
     if (param.type === "folder") {
       const folder = await doppel().pickFolder();
@@ -37,8 +39,11 @@ function PathPicker({ param, value, onChange }: Omit<Props, "routineId">) {
   );
 }
 
-function SelectField({ routineId, param, value, onChange }: Props) {
-  const { data: options, loading } = useAsync(() => doppel().getParamOptions(routineId, param.key), [routineId, param.key]);
+function SelectField({ routineId, documentId, param, value, onChange }: Props) {
+  const { data: options, loading } = useAsync(
+    () => doppel().getParamOptions(routineId, param.key, documentId),
+    [routineId, param.key, documentId],
+  );
   // Keep the value valid: fall back to the default or the first option the app offers.
   useEffect(() => {
     if (!options?.length) return;
@@ -58,7 +63,7 @@ function SelectField({ routineId, param, value, onChange }: Props) {
   );
 }
 
-function FormatList({ param, value, onChange }: Omit<Props, "routineId">) {
+function FormatList({ param, value, onChange }: Omit<Props, "routineId" | "documentId">) {
   const selected = Array.isArray(value) ? value : [];
   const options = param.options ?? [];
   const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);

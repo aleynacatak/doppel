@@ -16,9 +16,8 @@ import { Segmented } from "@/components/ui/Segmented";
 import { Tag } from "@/components/ui/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { appLabel, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { useRun } from "@/lib/hooks";
-import { useShell } from "@/lib/store";
 
 type Filter = "all" | "flagged" | "passed";
 
@@ -32,7 +31,6 @@ const matches = (o: RunOutput, filter: Filter) => {
 function ResultsScreen() {
   const runId = useSearchParams().get("run");
   const router = useRouter();
-  const apps = useShell((s) => s.apps);
   const { data: run, loading, setData } = useRun(runId);
   const [filter, setFilter] = useState<Filter>("all");
   const [note, setNote] = useState<string | null>(null);
@@ -41,7 +39,6 @@ function ResultsScreen() {
   if (!run) return <EmptyState title={copy.common.notFound} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
 
   const api = doppel();
-  const app = apps.find((a) => a.id === run.appId);
   const failedCount = run.outputs.filter((o) => o.status === "failed").length;
   const shown = run.outputs.filter((o) => matches(o, filter));
   const repair = async () => {
@@ -52,7 +49,6 @@ function ResultsScreen() {
     setNote(null);
     try {
       await api.openOutput(run.id, o.id);
-      if (app?.connection === "in-app-plugin") setNote(copy.results.openedMock(appLabel(run.appId)));
     } catch (e) {
       setNote((e as Error).message);
     }
@@ -73,10 +69,14 @@ function ResultsScreen() {
       {run.status !== "failed" && (
         <>
           <ResultsSummary run={run} />
-          {run.targetDocument && run.appId === "indesign" && (
+          {run.targetDocument && (
             <div className="ui-small ui-muted flex flex-col">
-              <span>{copy.results.ranOn(run.targetDocument.name, run.options.target === "copy")}</span>
-              {run.modifiesDocument && <span>{copy.results.undoHint(run.routineName)}</span>}
+              <span>
+                {run.appId === "figma" && run.options.target === "copy"
+                  ? copy.results.ranOnFigmaCopy(run.targetDocument.name)
+                  : copy.results.ranOn(run.targetDocument.name, run.options.target === "copy")}
+              </span>
+              {run.modifiesDocument && <span>{run.appId === "figma" ? copy.results.undoHintFigma : copy.results.undoHint(run.routineName)}</span>}
             </div>
           )}
           {run.status === "running" && (

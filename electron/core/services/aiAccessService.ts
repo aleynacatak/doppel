@@ -1,11 +1,9 @@
-import type { DevFlagsStore } from "../mock/devFlags";
 import type { AiAccess, AiProvider, CheckResult, DemoSession } from "../types";
 import {
   AiError,
   type AiTransport,
   CHAT_MODEL,
   DopplDemoTransport,
-  META_API_BASE,
   MetaDirectTransport,
   checkMetaKey,
   fetchDemoSession,
@@ -24,11 +22,8 @@ export class AiAccessService {
     private readonly deps: {
       settings: SettingsService;
       secrets: SecretStore;
-      flags: DevFlagsStore;
       /** Demo Worker base URL (build-time setting). */
       workerUrl: string;
-      /** Meta API base URL (overridable for local testing). */
-      metaApiBase?: string;
     },
   ) {}
 
@@ -41,18 +36,17 @@ export class AiAccessService {
   }
 
   async describe(): Promise<AiAccess> {
-    const { settings, secrets, flags } = this.deps;
+    const { settings, secrets } = this.deps;
     const [code, key] = await Promise.all([secrets.get("accessCode"), secrets.get("metaApiKey")]);
     return {
       provider: this.provider(),
       model: CHAT_MODEL,
       workerUrl: this.deps.workerUrl,
-      encryptionAvailable: secrets.available(),
+      encryptionAvailable: await secrets.available(),
       accessCode: { saved: !!code, hint: secretHint(code) },
       session: code ? this.session : null,
       ownKey: { saved: !!key, hint: secretHint(key) },
       ownKeySpend: { month: new Date().toISOString().slice(0, 7), estUsd: settings.ownKeySpend(), limit: settings.current.monthlySpendLimit },
-      mock: flags.get().mockAi,
     };
   }
 
@@ -100,7 +94,7 @@ export class AiAccessService {
     const value = key.trim();
     if (!value) return { ok: false, error: { code: "own_key_invalid", message: "Enter your Meta API key." } };
     try {
-      await checkMetaKey(value, this.deps.metaApiBase ?? META_API_BASE);
+      await checkMetaKey(value);
       await this.deps.secrets.set("metaApiKey", value);
       await this.deps.settings.save({ aiProvider: "meta-api" });
       return { ok: true, value: await this.describe() };
@@ -138,7 +132,6 @@ export class AiAccessService {
           spent: () => settings.ownKeySpend(),
           add: (usd) => settings.addOwnKeySpend(usd),
         },
-        this.deps.metaApiBase ?? META_API_BASE,
       );
     }
     if (provider === "local") throw new AiError("no_access", "Muse Glimmer (local) isn't available yet.", "settings");

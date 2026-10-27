@@ -154,6 +154,7 @@ app.whenReady().then(async () => {
   );
 
   registerIpc(services);
+  services.bridge.start();
   services.apps.start();
   createWindow();
 
@@ -166,4 +167,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => services?.apps.stop());
+app.on("before-quit", () => {
+  services?.apps.stop();
+  services?.bridge.stop();
+});

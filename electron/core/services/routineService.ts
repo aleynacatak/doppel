@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterRegistry } from "../../adapters/registry";
-import type { DevFlagsStore } from "../mock/devFlags";
 import type {
   Creation,
   CreationStage,
@@ -19,13 +18,13 @@ import type {
   SaveRoutineResult,
   Task,
 } from "../types";
-import { CancelledError, compareVersions, delay, errorMessage, newId, nowIso, plural } from "../util";
+import { CancelledError, compareVersions, errorMessage, newId, nowIso, plural } from "../util";
 import type { AiAccessService } from "./aiAccessService";
 import type { AiCallContext, AiService } from "./aiService";
 import { AiError } from "./aiTransport";
 import type { AppStatusService } from "./appStatusService";
 import { findPortabilityIssues } from "./portability";
-import { DEFAULT_QC_OPTIONS, ExecutionError, type RoutineExecutor, toExecutionError } from "./runService";
+import { DEFAULT_QC_OPTIONS, ExecutionError, type RoutineExecutor, folderParams, toExecutionError } from "./runService";
 import type { Storage } from "./storage";
 
 const STAGES: CreationStageKey[] = ["read", "write", "run", "check", "ready"];
@@ -62,7 +61,7 @@ const major = (v: string) => parseInt(v, 10) || 0;
 /** Model fix attempts per creation (after the lint or a failed trial run). */
 const MAX_FIXES = 2;
 
-/** AI checks replace the mocked check with the same label, or are added. */
+/** AI checks replace an existing check with the same label, or are added. */
 function mergeChecks(output: RunOutput, checks: QcCheck[] | undefined) {
   if (!checks?.length) return;
   const list = [...(output.qc?.checks ?? [])];
@@ -74,7 +73,7 @@ function mergeChecks(output: RunOutput, checks: QcCheck[] | undefined) {
   output.qc = { status: list.every((c) => c.passed) ? "pass" : "flagged", checks: list };
 }
 
-/** Library (list/get), routine creation with the mock AI, repair, saving with portability checks. */
+/** Library (list/get), routine creation and repair with the AI, saving with portability checks. */
 export class RoutineService {
   private creations = new Map<string, CreationState>();
 
@@ -86,7 +85,6 @@ export class RoutineService {
       access: AiAccessService;
       executor: RoutineExecutor;
       apps: AppStatusService;
-      flags: DevFlagsStore;
       emit: (creation: Creation) => void;
       workRoot: string;
     },
@@ -95,7 +93,6 @@ export class RoutineService {
   // ---------- Library ----------
 
   async list(): Promise<Routine[]> {
-    if (this.deps.flags.get().emptyLibrary) return [];
     const routines = await this.deps.storage.listRoutines();
     return routines.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -120,10 +117,6 @@ export class RoutineService {
       currentVersion = await adapter.getAppVersion().catch(() => null);
       missingFonts = await adapter.missingFonts(routine.requiredFonts).catch(() => []);
     }
-    if (this.deps.flags.get().envMismatch) {
-      currentVersion = `${Math.max(1, major(routine.appVersion) - 1)}.5`;
-      if (!missingFonts.includes("Inter")) missingFonts = [...missingFonts, "Inter"];
-    }
     const versionMismatch =
       !!currentVersion &&
       !!routine.appVersion &&
@@ -131,7 +124,7 @@ export class RoutineService {
     return { appStatus, currentVersion: currentVersion ?? undefined, routineVersion: routine.appVersion, versionMismatch, missingFonts };
   }
 
-  async getParamOptions(routineId: string, key: string): Promise<ParamOption[]> {
+  async getParamOptions(routineId: string, key: string, docId?: string): Promise<ParamOption[]> {
     const routine = await this.requireRoutine(routineId);
     const param = routine.params.find((p) => p.key === key);
     if (!param) return [];
@@ -139,7 +132,7 @@ export class RoutineService {
     if (!param.optionsSource) return [];
     const options = await this.deps.registry
       .get(routine.appId)
-      .getParamOptions(param.optionsSource)
+      .getParamOptions(param.optionsSource, docId)
       .catch(() => []);
     if (options.length === 0 && typeof param.default === "string") return [{ value: param.default, label: param.default }];
     return options;
@@ -237,7 +230,7 @@ export class RoutineService {
   }
 
   async save(id: string, input: SaveRoutineInput): Promise<SaveRoutineResult> {
-    const { storage, flags } = this.deps;
+    const { storage } = this.deps;
     const c = this.requireState(id).creation;
     if (c.status !== "ready" || !c.draft) throw new Error("This routine isn't ready to save yet.");
     const draft = c.draft;
@@ -265,9 +258,6 @@ export class RoutineService {
         keyObjects: draft.keyObjects,
       });
       routine.versions = [...routine.versions, { version, createdAt: now, aiCalls: c.aiCalls, note: "Repaired with AI" }];
-      // The simulated problem is fixed now.
-      if (flags.get().runOutcome === "fail") flags.set({ runOutcome: "auto" });
-      if (flags.get().envMismatch) flags.set({ envMismatch: false });
     } else {
       routine = {
         id: newId(),
@@ -333,7 +323,6 @@ export class RoutineService {
         this.emit(state.creation);
       },
       isCancelled,
-      speed: this.deps.flags.get().speed,
       // Retries of the same creation keep its id; a repair is a new creation with its own id.
       creationId: state.creation.id,
       onQuota: (q) => {
@@ -347,7 +336,6 @@ export class RoutineService {
 
   /** Fails fast when AI access isn't set up, and shows the demo quota before the first call. */
   private async prepareAi(c: Creation) {
-    if (this.deps.flags.get().mockAi) return;
     await this.deps.access.transport();
     if (this.deps.access.provider() !== "doppl-demo") return;
     const session = await this.deps.access.refreshSession();
@@ -371,7 +359,6 @@ export class RoutineService {
 
   /**
    * Lint → trial run, sending problems back to the model to fix (up to MAX_FIXES times).
-   * The mock AI can't fix scripts: its drafts go straight to the trial run.
    */
   private async buildAndTrial(
     state: CreationState,
@@ -381,12 +368,11 @@ export class RoutineService {
   ) {
     const c = state.creation;
     const { ai } = this.context(state);
-    const canFix = this.deps.ai.canFixScripts;
     for (let attempt = 0; ; attempt++) {
       const lint = this.lintDraft(c.draft!);
-      const problems = canFix ? [...lint.blocking, ...lint.portability] : lint.blocking;
+      const problems = [...lint.blocking, ...lint.portability];
       if (problems.length) {
-        if (!canFix || attempt >= MAX_FIXES) {
+        if (attempt >= MAX_FIXES) {
           throw new ExecutionError("The routine Doppl wrote didn't pass the safety check, so it wasn't run.", problems.join(" · "));
         }
         this.setStage(c, stage.current, "active", `Fixing ${plural(problems.length, "problem")} in the script`);
@@ -400,7 +386,7 @@ export class RoutineService {
         await this.trialRun(state, c.draft!, stage, previousParams);
         return;
       } catch (err) {
-        if (!(err instanceof ExecutionError && err.scriptFailure && canFix && attempt < MAX_FIXES)) throw err;
+        if (!(err instanceof ExecutionError && err.scriptFailure && attempt < MAX_FIXES)) throw err;
         c.outputs = [];
         this.setStage(c, "check", "pending", "");
         stage.current = "run";
@@ -508,13 +494,8 @@ export class RoutineService {
     const c = state.creation;
     const { isCancelled, ai } = this.context(state);
     const trialId = `${c.id}-${newId().slice(0, 8)}`;
-    const speed = this.deps.flags.get().speed;
     stage.current = "run";
     this.setStage(c, "run", "active");
-    if (this.deps.flags.get().creationOutcome === "fail") {
-      await delay(1600 * speed, isCancelled);
-      throw new ExecutionError("The routine stopped before it finished.", "On page 2 it expected a text frame for the body text, but the page has none.");
-    }
 
     const workDir = path.join(this.deps.workRoot, `trial-${trialId}`);
     await fs.mkdir(workDir, { recursive: true });
@@ -534,6 +515,7 @@ export class RoutineService {
           qcOptions: DEFAULT_QC_OPTIONS,
           target: "trial",
           documentId: c.task.documentId,
+          allowedFolders: folderParams(draft.params, params),
           isCancelled,
         },
         {
@@ -585,14 +567,14 @@ export class RoutineService {
           break;
         }
         case "select": {
-          const options = p.options ?? (p.optionsSource ? await adapter.getParamOptions(p.optionsSource).catch(() => []) : []);
+          const options = p.options ?? (p.optionsSource ? await adapter.getParamOptions(p.optionsSource, task.documentId).catch(() => []) : []);
           values[p.key] = options.find((o) => o.value === (prev ?? p.default))?.value ?? options[0]?.value ?? (p.default as string) ?? null;
           break;
         }
         case "formatList": {
+          // A trial needs only a few of the formats.
           const all = (p.default as string[] | undefined) ?? p.options?.map((o) => o.value) ?? [];
-          const preferred = ["instagram-post", "instagram-story", "x-header"].filter((v) => all.includes(v));
-          values[p.key] = preferred.length ? preferred : all.slice(0, 3);
+          values[p.key] = all.slice(0, 3);
           break;
         }
         case "text":

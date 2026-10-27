@@ -1,16 +1,12 @@
 import type { ClarifyingQuestion, DocumentSummary, EnvironmentCheck, QcCheck, Routine, RoutineDraft, Run, RunOutput, Task } from "../types";
 import type { QuotaUpdate } from "./aiTransport";
 
-/**
- * Everything that calls Meta's models. Two implementations, picked per call in core/config.ts:
- * ModelAiService (real: demo Worker or own key) and MockAiService (template library, no network).
- */
+/** Everything that calls Meta's models (implemented by ModelAiService: demo Worker or own key). */
 
 export interface AiCallContext {
   /** Called once per model call, so the UI can count them live. */
   onAiCall: () => void;
   isCancelled: () => boolean;
-  speed: number;
   /** One id per routine creation or repair; the demo Worker counts creations by it. */
   creationId?: string;
   /** Demo quota from the Worker's response headers. */
@@ -32,8 +28,6 @@ export interface ScriptFailure {
 }
 
 export interface AiService {
-  /** Whether fixRoutine can repair scripts (the mock can't). */
-  readonly canFixScripts: boolean;
   /** Understand the request against the document (stage "Reading document"). */
   readDocument(task: Task, summary: DocumentSummary, ctx: AiCallContext): Promise<void>;
   /** Write the routine (stage "Writing routine"). May ask a clarifying question first. */

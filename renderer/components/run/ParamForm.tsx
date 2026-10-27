@@ -5,11 +5,13 @@ import { ParamField } from "./ParamField";
 /** Form generated from the routine's ParamDef[]. */
 export function ParamForm({
   routineId,
+  documentId,
   params,
   values,
   onChange,
 }: {
   routineId: string;
+  documentId?: string;
   params: ParamDef[];
   values: ParamValues;
   onChange: (key: string, value: ParamValue) => void;
@@ -18,7 +20,7 @@ export function ParamForm({
   return (
     <div className="flex flex-col gap-4">
       {params.map((p) => (
-        <ParamField key={p.key} routineId={routineId} param={p} value={values[p.key]} onChange={(v) => onChange(p.key, v)} />
+        <ParamField key={p.key} routineId={routineId} documentId={documentId} param={p} value={values[p.key]} onChange={(v) => onChange(p.key, v)} />
       ))}
     </div>
   );

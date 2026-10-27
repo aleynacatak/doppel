@@ -16,12 +16,21 @@ export function registerIpc(s: Services) {
   const handlers: Handlers = {
     // Apps
     listApps: () => s.apps.list(),
-    checkApp: (appId) => s.apps.check(appId),
+    checkApp: (appId) => s.apps.checkApp(appId),
     listOpenDocuments: (appId) => s.registry.get(appId).listOpenDocuments(),
     inspectDocument: (appId, docId) => s.registry.get(appId).inspectDocument(docId),
+    openDocument: (appId, docId) => s.registry.get(appId).openInApp(docId),
     openAutomationSettings: async () => {
       await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation");
     },
+
+    // Figma
+    getFigmaSetup: () => s.figmaSetup.describe(),
+    saveFigmaToken: (token) => s.figmaSetup.saveToken(token),
+    clearFigmaToken: () => s.figmaSetup.clearToken(),
+    addFigmaLink: (url) => s.figmaSetup.addLink(url),
+    removeFigmaFile: (key) => s.figmaSetup.removeFile(key),
+    showFigmaPlugin: async () => s.figmaSetup.showPlugin(),
 
     // Routine creation
     createRoutine: (input) => s.routines.create(input),
@@ -37,7 +46,7 @@ export function registerIpc(s: Services) {
     listRoutines: () => s.routines.list(),
     getRoutine: (id) => s.routines.get(id),
     checkEnvironment: (id) => s.routines.checkEnvironment(id),
-    getParamOptions: (id, key) => s.routines.getParamOptions(id, key),
+    getParamOptions: (id, key, docId) => s.routines.getParamOptions(id, key, docId),
 
     // Runs
     runRoutine: (id, params, qcMode, options) => s.runs.start(id, params, qcMode, options),
@@ -64,11 +73,12 @@ export function registerIpc(s: Services) {
     getStyleProfile: () => s.style.get(),
     addStyleSources: async () => {
       const paths = await showOpenDialog({
-        properties: ["openFile", "openDirectory", "multiSelections"],
-        filters: [{ name: "Design files", extensions: ["indd", "idml", "fig", "pdf"] }],
+        properties: ["openFile", "multiSelections"],
+        filters: [{ name: "InDesign documents", extensions: ["indd"] }],
       });
-      return paths.length ? s.style.addSources(paths) : s.style.get();
+      return paths.length ? s.style.addInDesignFiles(paths) : s.style.get();
     },
+    addStyleFigmaLink: (url) => s.style.addFigmaLink(url),
     removeStyleSource: (id) => s.style.removeSource(id),
 
     // Settings
@@ -88,10 +98,6 @@ export function registerIpc(s: Services) {
     saveApiKey: (key) => s.access.saveApiKey(key),
     clearApiKey: () => s.access.clearApiKey(),
 
-    // Dev panel
-    getDevFlags: async () => s.flags.get(),
-    setDevFlags: async (patch) => s.flags.set(patch),
-    resetData: () => s.reset(),
   };
 
   for (const [name, fn] of Object.entries(handlers)) {

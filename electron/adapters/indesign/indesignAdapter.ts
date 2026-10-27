@@ -4,7 +4,7 @@ import path from "node:path";
 import type { AppStatus, DocumentRef, DocumentSummary, ParamOption, PreviewImage } from "../../core/types";
 import { shortVersion } from "../../core/util";
 import { filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult } from "../types";
+import type { AdapterOutput, DesignAppAdapter, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult, StyleFacts } from "../types";
 import { BridgeError, activate, isBusy, isInstalled, isRunning, runJsx } from "./bridge";
 import { lintExtendScript } from "./lint";
 import { INDESIGN_MODEL_GUIDE } from "./modelGuide";
@@ -20,6 +20,7 @@ import {
   PROBE,
   RULE_CHECKS,
   SAVE_DOCUMENT,
+  STYLE_FACTS,
   wrapRoutine,
 } from "./jsx/scripts";
 
@@ -37,6 +38,14 @@ export class InDesignAdapter implements DesignAppAdapter {
   readonly scriptLanguage = "ExtendScript";
   readonly connection = "script-bridge" as const;
   readonly modelGuide = INDESIGN_MODEL_GUIDE;
+  readonly qcChecks = [
+    { level: "rule" as const, types: ["overset" as const], label: () => "Text fits its frames" },
+    { level: "rule" as const, types: ["link-missing" as const, "link-modified" as const], label: () => "Links are present and up to date" },
+    { level: "rule" as const, types: ["font-missing" as const], label: () => "Fonts are installed" },
+    { level: "rule" as const, types: ["low-res" as const], label: (ppi: number) => `Images are at least ${ppi} ppi` },
+    { level: "object" as const, types: ["off-page" as const], label: () => "Text stays inside the page" },
+    { level: "object" as const, types: ["short-of-bleed" as const], label: () => "Images reach the bleed" },
+  ];
 
   private installed: boolean | null = null;
   private installedCheckedAt = 0;
@@ -93,6 +102,10 @@ export class InDesignAdapter implements DesignAppAdapter {
       // Still launching, or busy with a modal dialog.
       return "not-running";
     }
+  }
+
+  async getDetail() {
+    return undefined;
   }
 
   async getAppVersion(): Promise<string | null> {
@@ -195,7 +208,11 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 
   async renderPreview(target: string): Promise<PreviewImage> {
-    if (target.startsWith("file:")) return filePreview(target.slice(5));
+    if (target.startsWith("file:")) {
+      const preview = await filePreview(target.slice(5));
+      if (!preview) throw new Error("Couldn't render a preview of the file.");
+      return preview;
+    }
     const m = target.match(/^page:(.*)#(\d+)$/);
     if (!m) throw new Error(`Unknown preview target: ${target}`);
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppel-preview-"));
@@ -220,11 +237,8 @@ export class InDesignAdapter implements DesignAppAdapter {
     });
     const result: Record<number, PreviewImage> = {};
     for (const f of files) {
-      try {
-        result[f.pageIndex] = await filePreview(f.file, `Page ${f.page}`);
-      } catch {
-        // Leave the page without a preview; the run marks it.
-      }
+      const preview = await filePreview(f.file, `Page ${f.page}`).catch(() => undefined);
+      if (preview) result[f.pageIndex] = preview;
     }
     return result;
   }
@@ -245,8 +259,8 @@ export class InDesignAdapter implements DesignAppAdapter {
     return this.call<string[]>(MISSING_FONTS, { families });
   }
 
-  async openInApp(docId: string, pageIndex?: number): Promise<void> {
-    await this.call(OPEN_PAGE, { docId, pageIndex });
+  async openInApp(docId: string, target?: { pageIndex?: number }): Promise<void> {
+    await this.call(OPEN_PAGE, { docId, pageIndex: target?.pageIndex });
     await activate();
   }
 
@@ -256,6 +270,12 @@ export class InDesignAdapter implements DesignAppAdapter {
 
   lintScript(script: string): string[] {
     return lintExtendScript(script);
+  }
+
+  /** Page size, margins, columns, bleed and paragraph styles of an .indd file (InDesign must be running). */
+  async readStyleFacts(filePath: string): Promise<StyleFacts> {
+    if (!(await isRunning())) throw new BridgeError("not-running", "Open InDesign to read this file's styles.");
+    return this.call<StyleFacts>(STYLE_FACTS, { path: filePath });
   }
 
   async connect(): Promise<AppStatus> {

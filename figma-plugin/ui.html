@@ -1,0 +1,88 @@
+<!-- Doppel plugin window: connects to the Doppel app on this Mac and passes its requests to code.js. -->
+<style>
+  body { font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; margin: 12px; color: var(--figma-color-text, #1a1a1a); background: var(--figma-color-bg, #fff); }
+  h1 { font-size: 13px; margin: 0 0 6px; }
+  p { margin: 6px 0; color: var(--figma-color-text-secondary, #666); }
+  input { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #999; border-radius: 4px; font: inherit; text-transform: uppercase; }
+  button { margin-top: 8px; padding: 6px 12px; border: 1px solid #2b2b2b; border-radius: 4px; background: #2b2b2b; color: #fff; font: inherit; }
+  #status { font-weight: 600; color: var(--figma-color-text, #1a1a1a); }
+</style>
+<h1>Doppel</h1>
+<div id="status">Connecting to Doppel…</div>
+<div id="pair" hidden>
+  <p>Enter the pairing code from Doppel → Connect apps → Figma.</p>
+  <input id="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false" />
+  <button id="save">Connect</button>
+</div>
+<p id="hint">Keep this window open while Doppel runs routines in this file.</p>
+<script>
+  const URL = "ws://localhost:17433";
+  let ws = null;
+  let code = "";
+  let info = null;
+  let retryTimer = null;
+  let rejected = false;
+
+  const $ = (id) => document.getElementById(id);
+  const setStatus = (text) => ($("status").textContent = text);
+  const toCode = (msg) => parent.postMessage({ pluginMessage: msg }, "*");
+  const send = (msg) => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
+
+  function showPair(message) {
+    $("pair").hidden = false;
+    if (message) setStatus(message);
+    $("code").focus();
+  }
+
+  function connect() {
+    clearTimeout(retryTimer);
+    rejected = false;
+    ws = new WebSocket(URL);
+    ws.onopen = () => send({ type: "hello", code, info });
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "welcome") {
+        $("pair").hidden = true;
+        setStatus("Connected to Doppel · " + (info ? info.fileName : ""));
+      } else if (msg.type === "rejected") {
+        rejected = true;
+        showPair("The pairing code doesn't match Doppel's.");
+      } else if (msg.type === "request") {
+        setStatus("Running a routine…");
+        toCode(msg);
+      }
+    };
+    ws.onclose = () => {
+      if (rejected) return;
+      setStatus("Waiting for the Doppel app on this Mac…");
+      retryTimer = setTimeout(connect, 2000);
+    };
+  }
+
+  $("save").onclick = () => {
+    code = $("code").value.trim().toUpperCase();
+    if (!code) return;
+    toCode({ type: "saveCode", code });
+    if (ws) ws.onclose = null, ws.close();
+    connect();
+  };
+
+  window.onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === "init") {
+      info = msg.info;
+      code = msg.code || "";
+      if (code) connect();
+      else showPair("Pair this plugin with Doppel once.");
+    } else if (msg.type === "info") {
+      info = msg.info;
+      send({ type: "info", info });
+    } else if (msg.type === "response") {
+      send(msg);
+      setStatus("Connected to Doppel · " + (info ? info.fileName : ""));
+    }
+  };
+
+  toCode({ type: "ready" });
+</script>

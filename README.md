@@ -2,31 +2,87 @@
 
 Doppel learns your design routines and runs them in your own apps. Describe a task once; Meta's models turn it into a reusable routine you can rerun with no AI calls. Works across InDesign, Figma and more.
 
-This repo is the desktop app (wireframe styling) plus [`worker/`](worker/README.md), the Cloudflare Worker that gives testers demo access to the AI.
+This repo holds the desktop app (wireframe styling), the Doppel Figma plugin ([`figma-plugin/`](figma-plugin/)) and [`worker/`](worker/README.md), the Cloudflare Worker that gives testers demo access to the AI. There is no mock data: every app connection, AI call and check is real.
 
-| Part | Status |
+| Part | How |
 | --- | --- |
-| InDesign adapter (AppleScript → ExtendScript) | **Real** |
-| Rule-level QC for InDesign (overset text, links, fonts, image resolution) | **Real** |
-| AI: writing, clarifying question, fixing, repairing routines (Muse Spark 1.3) | **Real**, through the demo Worker (access code) or the designer's own Meta API key |
-| Visual QC (Muse Spark) and key-object checks (SAM 3.1) while creating | **Real** |
-| Storage (JSON in `userData`), encrypted code/key (Keychain), native pickers | **Real** |
-| Figma adapter (plugin + WebSocket) | Mock |
-| Style profile extraction, object-level QC on reruns | Mock |
-| Mock AI (template library, no network) | Dev panel → "Mock AI" or `DOPPEL_MOCK_AI=1` |
+| InDesign | AppleScript → ExtendScript on this Mac |
+| Figma | Files connected by link (Figma REST API, personal access token); routines run in the Doppel plugin |
+| AI (writing, clarifying question, fixing, repairing routines) | Muse Spark 1.3 through the demo Worker (access code) or your own Meta API key |
+| Checks | Each app's own checks; Muse Spark looks at previews; SAM 3.1 checks key objects against the edges |
+| Style profile | Read from your InDesign files and Figma links |
+| Storage | JSON in `userData`; codes, keys and tokens encrypted with the macOS Keychain |
 
 ## Try it
 
 1. Download `Doppel-<version>-arm64.dmg` and drag Doppel to Applications.
 2. The first time, right-click Doppel → **Open** (the app isn't notarized). If macOS only offers "Move to Trash", go to System Settings → Privacy & Security and click **Open Anyway**.
-3. On the Connect screen, click **Check again** under Figma (simulated for now). If you have InDesign, open it with a document and Doppel connects on its own.
+3. **Connect apps.**
+   - **InDesign:** open it with a document; Doppel connects on its own.
+   - **Figma:** see [Figma setup](#figma-setup) below (about 5 minutes, once).
 4. Go to **Settings → AI access**, paste your access code (`DOPPL-…`) and click **Check code**. It shows how many routine creations you have left.
-5. First run: **New task** → "Resize this campaign visual into all social formats" (Figma) → **Create routine** → answer the question → **Save routine** → **Run**. The rerun uses 0 AI calls.
-6. With InDesign: open a document, then **New task** → "Export every page as a PNG at 150 ppi" → create, save, run on a copy.
+5. **New task** → describe what you want → **Create routine** → answer the question if Doppel asks one → **Save routine** → **Run**. Reruns use 0 AI calls.
 
 Creating or repairing a routine uses AI and one creation from your code. Rerunning saved routines never does, even offline.
 
-## Run it
+## Figma setup
+
+Doppel reads Figma files through their links, and runs routines inside Figma through the Doppel plugin.
+
+1. **Access token** (lets Doppel read your files): in Figma, open the account menu → **Settings** → **Security** → **Personal access tokens** → **Generate new token**. Give it the scopes `file_content:read` and `current_user:read`. Paste it in Doppel → **Connect apps** → Figma → **Check token**.
+2. **Add files:** in Figma, **Share** → **Copy link**; paste the link in Doppel → Connect apps → Figma → **Add file**.
+3. **Plugin** (once, in the Figma desktop app):
+   1. In Doppel, click **Show plugin files**.
+   2. In Figma, go to **Plugins** → **Development** → **Import plugin from manifest…** and choose that `manifest.json`.
+   3. Open your file and run **Plugins** → **Development** → **Doppel**.
+   4. Type the **pairing code** shown in Doppel.
+
+   Keep the small Doppel window open in Figma while routines run.
+
+How runs work in Figma:
+- **On a copy of the page (default):** a routine duplicates the open page and works there. "Run on the page itself" is an option, and Cmd+Z in Figma undoes it.
+- **While creating a routine,** the trial run happens on a temporary copy of the page, which is removed afterwards.
+- **Checks on every frame a routine makes:** text cut off by its frame, missing fonts, and images shown larger than their pixels (blurry).
+- **Files** a routine exports (PNG, JPG, SVG, PDF) can only be saved into folders you pick on the Run screen.
+
+The plugin connects to Doppel on `ws://localhost:17433`. Doppel listens only on this Mac, refuses web pages, and requires the pairing code. Figma's plugin docs don't say whether plugins may run code they receive (Doppel's routines are run with `new Function`); Figma's own Scripter plugin works the same way. If a Figma version blocks it, the plugin reports a clear error.
+
+## InDesign
+
+With InDesign open and a document active, Doppel shows InDesign as connected, lists open documents, and runs routines for real.
+
+- **Bridge:** each call writes a temp `.jsx` (UTF-8 with BOM) and runs it with `osascript` via `execFile` (never a shell string). A bundled JSON polyfill is prepended; every script returns `{ ok, data }` or `{ ok: false, error }`.
+- **Status:** installed via Spotlight, running via `application id … is running`, polled every 3 s without launching InDesign.
+- **Permission:** the first script triggers macOS's "Doppel wants to control Adobe InDesign" prompt. In `npm run dev` the prompt names your terminal app instead of Doppel. If you clicked "Don't Allow": System Settings → Privacy & Security → Automation.
+- **Safety:**
+  - **Runs go on a copy by default:** `<name>_doppel.indd` is saved next to the original. Unsaved documents are copied to `~/Documents/Doppel copies`.
+  - **Undo:** every routine is one undo step ("Doppel: <name>").
+  - **Timeout:** scripts give up after 120 s (Settings).
+  - **Unsafe code is refused:** model-written scripts are checked before they run (no deleting files, no running programs, no network, no dialogs).
+- **Checks after a run:**
+  - **Rules:** overset text, missing or modified links, missing fonts, images below a minimum resolution (300 ppi print / 150 ppi web).
+  - **Objects:** text frames that run past the page edge, and images that cross the page edge but stop before the bleed.
+  - All reported per page.
+
+Example routines (real ExtendScript, shown to the model as examples): Export pages as PNG · Export print and web PDFs · Preflight report · Rename layers by pattern · Place text into template.
+
+## AI access
+
+Settings → AI access:
+- **Demo access code:** requests go to the Doppl demo Worker (`worker/`, default `https://api.doppl.work`) with an `X-Doppl-Creation-Id` per routine creation. The creation screen shows "Demo: 17 of 20 creations left".
+- **My own Meta API key:** requests go straight to Meta's Model API. Doppel estimates spend and stops at your monthly limit.
+- **Muse Glimmer (local):** shown, not available yet.
+
+How a routine gets written:
+1. **Draft:** Muse Spark gets the request, the document summary, the app's scripting guide, two example routines and your house style. It may ask one question.
+2. **Safety check:** Doppel checks the script before it runs (syntax, unsupported or unsafe calls, fixed file locations).
+3. **Trial run:** the routine runs on a temporary copy, so the preview and checks you see while creating are real.
+4. **Fixes:** problems from the check or the trial run go back to the model, up to twice.
+5. **Review:** the model reviews the previews, and SAM 3.1 checks that key objects (e.g. "product") don't touch the edges.
+
+The Worker URL is set at build time: `DOPPEL_API_BASE_URL=https://… npm run dist`.
+
+## Run it (developers)
 
 Requirements: macOS on Apple Silicon, Node **22.12+** (`nvm use` picks it up from `.nvmrc`).
 
@@ -42,58 +98,10 @@ npm start          # production build, run without packaging
 npm run typecheck
 ```
 
-If `npm install` ran under an older Node, the Electron binary may be missing; run `node node_modules/electron/install.js` with Node 22.
-
-### Opening the unsigned app
-
-`npm run dist` writes `release/Doppel-<version>-arm64.dmg` (and `release/mac-arm64/Doppel.app`). The app is ad-hoc signed, not notarized. The first time, right-click Doppel.app → **Open**. If macOS only offers "Move to Trash", open **System Settings → Privacy & Security** and click **Open Anyway** next to the Doppel message (or run `xattr -dr com.apple.quarantine /Applications/Doppel.app`).
-
-## InDesign (real)
-
-With InDesign open and a document active, Doppel shows InDesign as connected, lists open documents, and can run every InDesign routine for real.
-
-- **Bridge**: each call writes a temp `.jsx` (UTF-8 with BOM), and runs it with `osascript` via `execFile` (never a shell string): `tell application id "com.adobe.InDesign" to do script … language javascript with arguments {json}`. A bundled JSON polyfill is prepended; every script returns `{ ok, data }` or `{ ok: false, error }`.
-- **Status**: installed via Spotlight (`mdfind` on the bundle id), running via `application id … is running`, polled every 3 s without launching InDesign. Closing InDesign shows "Not running"; reopening it reconnects on its own.
-- **Permission**: the first script triggers macOS's "Doppel wants to control Adobe InDesign" prompt (`NSAppleEventsUsageDescription` is set in Info.plist). In `npm run dev` the prompt names your **terminal app** instead of Doppel, because it launched Electron. If you clicked "Don't Allow": System Settings → Privacy & Security → Automation → enable InDesign under Doppel (or your terminal). The Connect screen shows this state with a button that opens the right settings page.
-- **Safety**: runs go on a copy by default: `<name>_doppel.indd` (then `_doppel-2`, …) saved next to the original and opened. Unsaved documents are copied to `~/Documents/Doppel copies`. Copies of read-only routines (exports, preflight) are closed after the run so your original stays in front; "Open in app" reopens them. The Run and New task screens preselect the original even when a Doppel copy is frontmost. "Run on the original" is an explicit option. Every routine is wrapped in `app.doScript(…, UndoModes.ENTIRE_SCRIPT, "Doppel: <name>")`, so one Cmd+Z reverts it. Scripts time out after 120 s (Settings → Script timeout).
-- **Previews**: pages are exported as PNG (72 ppi) into a temp folder and sent to the UI as data URLs; exported PNGs and PDFs (Quick Look thumbnail) are previewed directly.
-- **QC (rule level)**, after every InDesign run with "Automatic check": overset text, missing/modified links, missing fonts, images below a minimum effective resolution (300 ppi print / 150 ppi web, editable on the Run screen), reported per page.
-- **Creation**: the model writes the routine; the "Running" and "Checking result" stages run it for real on a hidden temporary copy (closed and deleted afterwards), so the preview and QC you see while creating are real.
-
-Seed routines (real ExtendScript, no hardcoded paths): Export pages as PNG · Export print and web PDFs · Preflight report · Rename layers by pattern (with dry run) · Place text into template (experimental).
-
-Cancelling an InDesign run stops after the current step; InDesign can't interrupt a script that is already running.
-
-## AI access
-
-Settings → AI access has three options (`Settings.aiProvider`):
-
-- **Demo access code** (`"doppl-demo"`): requests go to the Doppl demo Worker (`worker/`, default `https://api.doppl.work`) with the code and an `X-Doppl-Creation-Id` per routine creation. The Worker holds the Meta key and enforces the code's limits; the creation screen shows "Demo: 17 of 20 creations left". AI review on reruns isn't offered: reruns never call the Worker.
-- **My own Meta API key** (`"meta-api"`): requests go straight to `https://api.meta.ai/v1`. The app estimates spend from token counts and stops at the monthly limit you set.
-- **Muse Glimmer (local)**: shown, not available yet.
-
-The code and key are encrypted with Electron `safeStorage` (macOS Keychain) in `secrets.json` and never reach the renderer. Every AI error comes with a plain message and the next step: Settings, "Use your own API key", "Try again" or "Start over".
-
-How a routine gets written (`core/services/modelAiService.ts`, prompts in `aiPrompts.ts`):
-1. Muse Spark gets the request, the document summary, the app's scripting guide (`adapters/*/modelGuide`) and two example routines. It answers with structured JSON: one clarifying question, or a routine (steps, params, script).
-2. Doppl checks the script before it runs (`adapters/indesign/lint.ts`). It rejects syntax errors, code ExtendScript doesn't support, and anything unsafe: deleting files, running programs or other scripts, network access, `eval`, dialogs. Absolute paths are rejected too. Problems go back to the model to fix, up to twice.
-3. The trial run happens on a temporary copy. If InDesign reports an error, it goes back to the model with the line number.
-4. Muse Spark reviews the previews, and SAM 3.1 checks that key objects (e.g. "product") don't touch the edges.
-
-The Worker URL is set at build time: `DOPPEL_API_BASE_URL=https://… npm run dist` (default `https://api.doppl.work`).
-
-## Dev panel
-
-Press **Shift+D** anywhere (outside text fields) to force states for design: mock AI (no network, no quota), empty library, each app's status (connected / not running / not installed / needs permission), creation failure / always ask a question / absolute path in the script, run failure (cleared by a repair) / partial failure, QC all pass / some flagged, version and font mismatch on the Run screen, mock speed, back to first launch, reset all data.
-
 Environment variables:
-
 - `DOPPEL_USER_DATA=/some/folder`: keep data elsewhere (handy for testing).
-- `DOPPEL_MOCK_INDESIGN=1`: use a mock InDesign (for designing without InDesign installed).
-- `DOPPEL_MOCK_AI=1`: start with the mock AI switched on.
 - `DOPPEL_API_BASE_URL=http://127.0.0.1:8787`: use another Worker at run time (e.g. `wrangler dev`).
-- `DOPPEL_META_API_BASE`: testing only; another base URL for own-key requests (e.g. a local fake of Meta's API).
-- `DOPPEL_DEV_SERVER_URL`: set by `npm run dev`; without it Electron serves the static export through `app://doppel/`.
+- `DOPPEL_DEV_SERVER_URL`: set by `npm run dev`. Without it, Electron serves the static export through `app://doppel/`.
 
 ## Structure
 
@@ -104,45 +112,47 @@ electron/
   ipc/                 handlers: window.doppel method → core service
   core/
     types.ts           domain types + DoppelApi, shared with the renderer (import type only)
-    config.ts          THE one place that picks mock vs real implementations
-    services/          routineService (create/repair/save/list), runService (runs, previews, QC),
-                       qcService, aiService (interface), modelAiService + aiPrompts (real AI),
-                       aiTransport (demo Worker / Meta), aiAccessService + secretStore (Settings → AI access),
-                       storage, settings, appStatus, style, portability
-    mock/              mock AI, seed data + template library, dev flags
+    config.ts          builds every service
+    templates.ts       example routines shown to the model
+    services/          routineService (create/repair/save/list), runService (runs, previews, checks),
+                       qcService, modelAiService + aiPrompts, aiTransport (demo Worker / Meta),
+                       aiAccessService + secretStore, figmaService, styleService, storage, settings, appStatus
   adapters/
     types.ts           DesignAppAdapter interface
-    indesign/          real adapter: bridge.ts (osascript), jsx/ (ExtendScript), templates.ts (seed routines),
-                       modelGuide.ts (what the model is told), lint.ts (safety check)
-    figma/             mock Figma adapter + templates
-    mock/              generic mock adapter (placeholder previews, fake progress)
+    indesign/          bridge.ts (osascript), jsx/ (ExtendScript), templates.ts, modelGuide.ts, lint.ts
+    figma/             figmaRest.ts (links), pluginBridge.ts (local connection), figmaAdapter.ts,
+                       templates.ts, modelGuide.ts, lint.ts
     registry.ts
+figma-plugin/          the Doppel plugin for Figma (manifest.json, code.js, ui.html)
 renderer/              Next.js (App Router, static export)
   app/                 one folder per screen; IDs travel as query params (/routine?id=…)
   components/          one component per UI block, grouped by screen; ui/ holds primitives
   lib/doppel.ts        typed access to window.doppel
-  lib/store.ts         small Zustand store (apps, settings, dev flags)
   copy.ts              all UI strings
   app/globals.css      all visual styling (.ui-* classes); Tailwind is used for layout only
 worker/                Cloudflare Worker for demo access codes (own package; see worker/README.md)
 ```
 
-Data lives in `~/Library/Application Support/Doppel/`: `routines/<id>.json` (one file per routine, with a stable id, `version` and `updatedAt`), `runs/<id>.json`, `settings.json`, `style-profile.json`, and `secrets.json` (access code and own key, encrypted with the Keychain).
+Data lives in `~/Library/Application Support/Doppel/`:
+- `routines/<id>.json`: one file per routine, with a stable id, `version` and `updatedAt`.
+- `runs/<id>.json`, `settings.json` (including connected Figma files), `style-profile.json`.
+- `secrets.json`: access code, Meta key and Figma token, encrypted with the Keychain.
 
-## Where real implementations plug in
+## Adding more
 
-Everything the UI touches goes through interfaces; swap the construction in `electron/core/config.ts`:
-
-- **AI**: `ModelAiService` implements `AiService` on top of an `AiTransport` (demo Worker or Meta). Another provider is a new transport; the dev panel switches to `MockAiService`.
-- **Figma**: implement `DesignAppAdapter` with a local WebSocket server that the Doppel Figma plugin connects to; replace `createFigmaMockAdapter`.
-- **More apps**: add an adapter folder and register it in `config.ts`; the Connect screen, sidebar chips and app pickers pick it up from the registry.
-- **QC**: rule level comes from each adapter's `ruleChecks`; while creating, the model and SAM add visual and key-object checks; object-level checks on reruns are still mocked in `qcService.ts`.
-- **Local model** (Muse Glimmer): `aiProvider` already has `"local"`; add a transport that talks to Ollama / LM Studio and enable the option in Settings.
+- **Another app:** implement `DesignAppAdapter` (status, documents, running scripts, previews, checks, a model guide and example routines) and register it in `core/config.ts`. The Connect screen, sidebar and pickers pick it up from the registry.
+- **Local model (Muse Glimmer):** `aiProvider` already has `"local"`. Add a transport that talks to Ollama / LM Studio and enable the option in Settings.
 
 ## Routine portability
 
-Routines will sync across devices, so: scripts never contain absolute paths (every file or folder is a param picked at run time; `/Users/`, `~/`, `/Volumes/`, drive letters and `file://` are flagged when saving). Each routine records `appVersion` and `requiredFonts`; the Run screen warns on a version or font mismatch and offers "Run anyway" or "Repair with AI".
+Routines will sync across devices:
+- **No fixed locations:** scripts never contain absolute paths. Every file or folder is a param picked at run time, and fixed locations are sent back to the model to fix.
+- **Environment check:** each routine records `appVersion` and `requiredFonts`. The Run screen warns on a version or font mismatch and offers "Run anyway" or "Repair with AI".
 
 ## Restyling
 
-The UI is deliberately wireframe-grade. Visual styling is only in `renderer/app/globals.css` (`.ui-*` classes and CSS variables); components use Tailwind for layout only; strings are in `renderer/copy.ts`. No component library, no theme.
+The UI is deliberately wireframe-grade:
+- Visual styling lives only in `renderer/app/globals.css` (`.ui-*` classes and CSS variables).
+- Components use Tailwind for layout only.
+- Strings are in `renderer/copy.ts`.
+- No component library, no theme.

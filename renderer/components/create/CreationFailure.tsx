@@ -1,5 +1,6 @@
 import type { Creation } from "@core/types";
 import { copy } from "@/copy";
+import { doppel } from "@/lib/doppel";
 import { Button, ButtonLink } from "../ui/Button";
 import { Notice } from "../ui/Notice";
 
@@ -25,6 +26,9 @@ export function CreationFailure({
       actions={
         <>
           {error?.kind === "app-not-connected" && <ButtonLink href="/connect">{copy.common.connectApps}</ButtonLink>}
+          {error?.kind === "plugin-not-connected" && creation.task.documentId && (
+            <Button onClick={() => doppel().openDocument(creation.task.appId, creation.task.documentId!)}>{copy.connect.figma.openInFigma}</Button>
+          )}
           {settingsAction && (
             <ButtonLink href="/settings" variant="primary">
               {copy.create.actions[action]}

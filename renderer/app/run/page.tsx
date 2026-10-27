@@ -19,13 +19,12 @@ import { Section } from "@/components/ui/Section";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useAsync, useOpenDocuments, useRun } from "@/lib/hooks";
-import { useAiReviewAvailable, useShell } from "@/lib/store";
+import { useAiReviewAvailable } from "@/lib/store";
 
 const DEFAULT_QC: QcOptions = { minPpiPrint: 300, minPpiWeb: 150 };
 
 function RunForm({ routine }: { routine: Routine }) {
   const router = useRouter();
-  const flagsVersion = useShell((s) => s.flagsVersion);
   const aiReviewAvailable = useAiReviewAvailable();
   const { data: docs = [], connected, app } = useOpenDocuments(routine.appId);
   const [values, setValues] = useState<ParamValues>(() => initialValues(routine.params, routine.lastParams));
@@ -37,7 +36,7 @@ function RunForm({ routine }: { routine: Routine }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: env } = useAsync(() => doppel().checkEnvironment(routine.id), [routine.id, flagsVersion, app?.status]);
+  const { data: env } = useAsync(() => doppel().checkEnvironment(routine.id), [routine.id, app?.status]);
   useEffect(() => {
     if (qcMode === "auto_ai" && !aiReviewAvailable) setQcMode("auto");
   }, [qcMode, aiReviewAvailable]);
@@ -63,8 +62,11 @@ function RunForm({ routine }: { routine: Routine }) {
     }
   };
 
-  const needsDocument = app?.connection === "script-bridge";
-  const blocked = !connected || (needsDocument && docs.length === 0) || (envProblem && !envAccepted);
+  const figma = app?.connection === "links-and-plugin";
+  const doc = docs.find((d) => d.id === documentId);
+  // Figma routines run in the Doppel plugin, which has to be open on the chosen file.
+  const pluginOnDoc = !figma || !!doc?.active;
+  const blocked = !connected || docs.length === 0 || !pluginOnDoc || (envProblem && !envAccepted);
 
   return (
     <div className="flex flex-col gap-8">
@@ -78,13 +80,23 @@ function RunForm({ routine }: { routine: Routine }) {
           </span>
         </Notice>
       )}
-      {app && connected && needsDocument && docs.length === 0 && <Notice tone="warning">{copy.run.noDocument(app.name)}</Notice>}
+      {app && connected && docs.length === 0 && (
+        <Notice tone="warning">{figma ? copy.newTask.addFigmaFile : copy.run.noDocument(app.name)}</Notice>
+      )}
+      {figma && doc && (
+        <Notice
+          tone={pluginOnDoc ? "info" : "warning"}
+          actions={!pluginOnDoc && <Button onClick={() => doppel().openDocument("figma", doc.id)}>{copy.connect.figma.openInFigma}</Button>}
+        >
+          {pluginOnDoc ? copy.run.figmaPluginOn(doc.name, app?.detail?.split(" · ").pop() ?? "") : copy.run.figmaPluginNeeded(doc.name)}
+        </Notice>
+      )}
       {envProblem && !envAccepted && env && (
         <EnvironmentWarning env={env} appName={app?.name ?? ""} onRunAnyway={() => setEnvAccepted(true)} onRepair={repair} />
       )}
 
       <Section title={copy.run.inputsTitle}>
-        <ParamForm routineId={routine.id} params={routine.params} values={values} onChange={setValue} />
+        <ParamForm routineId={routine.id} documentId={documentId} params={routine.params} values={values} onChange={setValue} />
       </Section>
 
       {app && (

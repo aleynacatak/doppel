@@ -1,12 +1,13 @@
 import { shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FigmaApiError } from "../../adapters/figma/figmaRest";
+import { PluginNotConnectedError } from "../../adapters/figma/pluginBridge";
 import { BridgeError } from "../../adapters/indesign/bridge";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { AdapterOutput, ScriptResult } from "../../adapters/types";
 import { AiError } from "./aiTransport";
 import type { AiAccessService } from "./aiAccessService";
-import type { DevFlagsStore } from "../mock/devFlags";
 import type {
   AppId,
   ParamDef,
@@ -20,7 +21,7 @@ import type {
   RunOutput,
   RunSummary,
 } from "../types";
-import { CancelledError, delay, errorMessage, newId, nowIso } from "../util";
+import { CancelledError, errorMessage, newId, nowIso } from "../util";
 import type { AppStatusService } from "./appStatusService";
 import type { QcService } from "./qcService";
 import type { Storage } from "./storage";
@@ -34,7 +35,7 @@ export class ExecutionError extends Error {
   constructor(
     message: string,
     readonly detail?: string,
-    readonly kind: "app-not-connected" | "no-document" | "generic" = "generic",
+    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "generic" = "generic",
     /** The routine script itself failed (the error can be sent back to the model for a fix). */
     readonly scriptFailure = false,
   ) {
@@ -56,6 +57,8 @@ export interface ExecutionSpec {
   qcOptions: QcOptions;
   target: "copy" | "original" | "trial";
   documentId?: string;
+  /** Folder params of this run: the only places a routine may write files (Figma exports). */
+  allowedFolders: string[];
   isCancelled: () => boolean;
 }
 
@@ -76,12 +79,15 @@ export interface ExecutionResult {
 
 function notConnectedMessage(appName: string, status: string) {
   if (status === "permission-denied") return `Doppel isn't allowed to control ${appName} yet.`;
+  if (status === "needs-setup") return `${appName} isn't set up in Doppel yet. Open Connect apps.`;
   if (status === "not-installed") return `${appName} isn't set up for Doppel on this Mac.`;
   return `${appName} isn't running. Open it with your document, then try again.`;
 }
 
 export function toExecutionError(err: unknown, appName: string): Error {
   if (err instanceof CancelledError || err instanceof ExecutionError || err instanceof AiError) return err;
+  if (err instanceof PluginNotConnectedError) return new ExecutionError(err.message, undefined, "plugin-not-connected");
+  if (err instanceof FigmaApiError) return new ExecutionError(err.message, undefined, err.status === 401 ? "app-not-connected" : "generic");
   if (err instanceof BridgeError) {
     switch (err.kind) {
       case "permission-denied":
@@ -102,7 +108,8 @@ export function toExecutionError(err: unknown, appName: string): Error {
         return new ExecutionError(`Doppel couldn't talk to ${appName}.`, err.detail);
     }
   }
-  return new ExecutionError(`Something went wrong while running in ${appName}.`, errorMessage(err));
+  // Errors raised by the routine's own code inside the app (e.g. the Figma plugin) can be fixed by the model.
+  return new ExecutionError(`This routine couldn't finish in ${appName}.`, errorMessage(err), "generic", true);
 }
 
 /**
@@ -114,7 +121,6 @@ export class RoutineExecutor {
     private readonly deps: {
       registry: AdapterRegistry;
       qc: QcService;
-      flags: DevFlagsStore;
       apps: AppStatusService;
       workRoot: string;
       copiesDir: string;
@@ -122,9 +128,8 @@ export class RoutineExecutor {
   ) {}
 
   async execute(spec: ExecutionSpec, hooks: ExecutionHooks): Promise<ExecutionResult> {
-    const { registry, qc, flags, apps } = this.deps;
+    const { registry, qc, apps } = this.deps;
     const adapter = registry.get(spec.appId);
-    const speed = flags.get().speed;
     const status = await apps.statusOf(spec.appId);
     if (status !== "connected") throw new ExecutionError(notConnectedMessage(adapter.name, status), undefined, "app-not-connected");
 
@@ -142,26 +147,19 @@ export class RoutineExecutor {
         filePath: o.filePath,
         page: o.page,
         pageIndex: o.pageIndex,
+        nodeId: o.nodeId,
         details: o.details,
         profile: o.profile,
       };
       if (existing) Object.assign(existing, next);
       else outputs.push(next);
     };
-    const aiCtx = { onAiCall: hooks.onAiCall, isCancelled: spec.isCancelled, speed };
+    const aiCtx = { onAiCall: hooks.onAiCall, isCancelled: spec.isCancelled };
     let result: ScriptResult | undefined;
 
     try {
       hooks.onStage?.("run");
       hooks.onPhase(`Running in ${adapter.name}`);
-      if (spec.target !== "trial" && flags.get().runOutcome === "fail") {
-        await delay(1500 * speed, spec.isCancelled);
-        throw new ExecutionError(
-          "This routine couldn't finish on the new content.",
-          "The headline is now inside a group, so the routine couldn't find the text it needs to resize.",
-        );
-      }
-
       try {
         result = await adapter.runScript(
           spec.script,
@@ -181,8 +179,8 @@ export class RoutineExecutor {
             workDir,
             copiesDir: this.deps.copiesDir,
             modifiesDocument: spec.modifiesDocument,
+            allowedFolders: spec.allowedFolders,
             isCancelled: spec.isCancelled,
-            speed,
           },
         );
       } catch (err) {
@@ -204,15 +202,16 @@ export class RoutineExecutor {
       }
       hooks.onOutputs(outputs);
 
-      // Previews: exported files directly, pages through the app.
+      // Previews: exported files directly, Figma frames by node, pages through the app.
       const pending = outputs.filter((o) => o.status === "running");
       if (pending.length) hooks.onPhase("Rendering previews");
-      for (const o of pending.filter((x) => x.filePath)) {
-        o.preview = await adapter.renderPreview(`file:${o.filePath}`).catch(() => undefined);
+      for (const o of pending.filter((x) => x.filePath || x.nodeId)) {
+        const target = o.filePath ? `file:${o.filePath}` : `node:${result.document?.id ?? spec.documentId}#${o.nodeId}`;
+        o.preview = await adapter.renderPreview(target).catch(() => undefined);
         o.status = "done";
         hooks.onOutputs(outputs);
       }
-      const pageOutputs = pending.filter((x) => !x.filePath);
+      const pageOutputs = pending.filter((x) => !x.filePath && !x.nodeId);
       const pageIndexes = [...new Set(pageOutputs.map((o) => o.pageIndex ?? 1))].slice(0, MAX_PAGE_PREVIEWS);
       if (pageOutputs.length && result.document) {
         const previews = await adapter.renderPagePreviews(result.document.id, pageIndexes, workDir).catch(() => ({}) as Record<number, never>);
@@ -221,17 +220,6 @@ export class RoutineExecutor {
       for (const o of pageOutputs) o.status = "done";
       if (spec.isCancelled()) throw new CancelledError();
 
-      // Dev panel: some outputs fail to generate.
-      if (spec.target !== "trial" && flags.get().runOutcome === "partial") {
-        const picks = outputs.length >= 4 ? [1, outputs.length - 2] : [outputs.length - 1];
-        for (const i of picks) {
-          Object.assign(outputs[i], {
-            status: "failed",
-            preview: undefined,
-            error: "Couldn't generate this output. The routine stopped before finishing it.",
-          });
-        }
-      }
       hooks.onOutputs(outputs);
 
       // Quality control
@@ -240,11 +228,11 @@ export class RoutineExecutor {
       const subject = this.qcSubject(spec);
       let findings: RuleFinding[] | null = null;
       try {
-        findings = await qc.collectFindings(adapter, subject, outputs, result.document?.id, result.data);
+        findings = await qc.collectFindings(adapter, subject, outputs, result.document?.id, result.data, result.findings);
       } catch (err) {
-        result.log.push(`Rule checks failed: ${errorMessage(err)}`);
+        result.log.push(`Automatic checks failed: ${errorMessage(err)}`);
       }
-      await qc.evaluate(subject, outputs, findings, aiCtx);
+      await qc.evaluate(adapter, subject, outputs, findings, aiCtx);
       hooks.onOutputs(outputs);
       return { outputs, document: result.document, log: result.log, findings };
     } finally {
@@ -258,16 +246,21 @@ export class RoutineExecutor {
     }
   }
 
-  qcSubject(spec: Pick<ExecutionSpec, "appId" | "qcMode" | "qcOptions" | "qcProfile" | "builtInQc" | "params">) {
+  qcSubject(spec: Pick<ExecutionSpec, "qcMode" | "qcOptions" | "qcProfile" | "builtInQc" | "params">) {
     const qcOptions = { ...spec.qcOptions };
     // Preflight report checks resolution against its own param.
     const routinePpi = Number(spec.params.minPpi);
     if (spec.builtInQc && routinePpi > 0) qcOptions.minPpiPrint = qcOptions.minPpiWeb = routinePpi;
-    return { appId: spec.appId, qcMode: spec.qcMode, qcOptions, qcProfile: spec.qcProfile, builtInQc: spec.builtInQc };
+    return { qcMode: spec.qcMode, qcOptions, qcProfile: spec.qcProfile, builtInQc: spec.builtInQc };
   }
 }
 
 // ---------- Runs ----------
+
+/** Values of the folder params: where this run may write files. */
+export function folderParams(defs: ParamDef[], values: ParamValues): string[] {
+  return defs.filter((d) => d.type === "folder" && typeof values[d.key] === "string" && values[d.key]).map((d) => String(values[d.key]));
+}
 
 function isEmpty(v: unknown) {
   return v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
@@ -321,7 +314,6 @@ export class RunService {
       executor: RoutineExecutor;
       registry: AdapterRegistry;
       qc: QcService;
-      flags: DevFlagsStore;
       access: AiAccessService;
       emit: (run: Run) => void;
     },
@@ -333,7 +325,7 @@ export class RunService {
     if (!routine) throw new Error("This routine doesn't exist anymore.");
     const missing = routine.params.filter((p) => p.required && isEmpty(params[p.key]));
     if (missing.length) throw new Error(`Fill in ${missing.map((p) => p.label).join(", ")} first.`);
-    if (qcMode === "auto_ai" && !this.deps.flags.get().mockAi && this.deps.access.provider() !== "meta-api") {
+    if (qcMode === "auto_ai" && this.deps.access.provider() !== "meta-api") {
       throw new Error("AI review isn't included in demo access. Choose Automatic check, or use your own Meta API key in Settings.");
     }
 
@@ -379,6 +371,7 @@ export class RunService {
           qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS,
           target: run.options.target,
           documentId: run.options.documentId,
+          allowedFolders: folderParams(routine.params, run.params),
           isCancelled: () => entry.cancelled,
         },
         {
@@ -463,21 +456,20 @@ export class RunService {
 
     void (async () => {
       const adapter = this.deps.registry.get(run.appId);
-      const speed = this.deps.flags.get().speed;
+      const docId = run.targetDocument?.id ?? run.options.documentId;
       for (const o of failed) {
-        await delay(600 * speed);
         const target = o.filePath
           ? `file:${o.filePath}`
-          : o.pageIndex && run.targetDocument
-            ? `page:${run.targetDocument.id}#${o.pageIndex}`
-            : o.id;
+          : o.nodeId && docId
+            ? `node:${docId}#${o.nodeId}`
+            : `page:${docId}#${o.pageIndex ?? 1}`;
         o.preview = await adapter.renderPreview(target).catch(() => undefined);
         o.status = "done";
         this.deps.emit(run);
       }
-      const subject = this.deps.executor.qcSubject({ ...routine, appId: run.appId, qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, params: run.params });
+      const subject = this.deps.executor.qcSubject({ ...routine, qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, params: run.params });
       const findings = run.qcMode === "manual" && !routine.builtInQc ? null : (run.findings ?? []);
-      await this.deps.qc.evaluate(subject, run.outputs, findings, { onAiCall: () => (run.aiCalls += 1), isCancelled: () => false, speed }, new Set(failed.map((o) => o.id)));
+      await this.deps.qc.evaluate(adapter, subject, run.outputs, findings, { onAiCall: () => (run.aiCalls += 1), isCancelled: () => false }, new Set(failed.map((o) => o.id)));
       run.status = run.outputs.some((o) => o.status === "failed") ? "partial" : "succeeded";
       run.phase = undefined;
       this.active.delete(run.id);
@@ -501,7 +493,7 @@ export class RunService {
     const output = run.outputs.find((o) => o.id === outputId);
     const docId = run.targetDocument?.id ?? run.options.documentId;
     if (!docId) return;
-    await this.deps.registry.get(run.appId).openInApp(docId, output?.pageIndex);
+    await this.deps.registry.get(run.appId).openInApp(docId, { pageIndex: output?.pageIndex, nodeId: output?.nodeId });
   }
 
   async revealOutput(runId: string, outputId: string) {

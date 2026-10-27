@@ -11,20 +11,6 @@ export class CancelledError extends Error {
   }
 }
 
-/** A delay that can be scaled by the dev panel's speed and stops early on cancel. */
-export function delay(ms: number, isCancelled?: () => boolean): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const step = 50;
-    let elapsed = 0;
-    const tick = () => {
-      if (isCancelled?.()) return reject(new CancelledError());
-      if (elapsed >= ms) return resolve();
-      elapsed += step;
-      setTimeout(tick, step);
-    };
-    tick();
-  });
-}
 
 /** "21.6.0.57" → "21.6" */
 export function shortVersion(version: string | undefined | null): string {

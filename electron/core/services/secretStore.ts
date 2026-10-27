@@ -2,7 +2,7 @@ import { safeStorage } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export type SecretName = "accessCode" | "metaApiKey";
+export type SecretName = "accessCode" | "metaApiKey" | "figmaToken";
 
 /**
  * The demo access code and the own Meta API key, encrypted with Electron safeStorage
@@ -15,8 +15,8 @@ export class SecretStore {
     this.file = path.join(userData, "secrets.json");
   }
 
-  available(): boolean {
-    return safeStorage.isEncryptionAvailable();
+  available(): Promise<boolean> {
+    return safeStorage.isAsyncEncryptionAvailable();
   }
 
   private async readAll(): Promise<Partial<Record<SecretName, string>>> {
@@ -29,11 +29,21 @@ export class SecretStore {
 
   async get(name: SecretName): Promise<string | null> {
     const encrypted = (await this.readAll())[name];
-    if (!encrypted || !this.available()) return null;
+    if (!encrypted || !(await this.available())) return null;
+    const bytes = Buffer.from(encrypted, "base64");
     try {
-      return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+      const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(bytes);
+      if (shouldReEncrypt) await this.set(name, result);
+      return result;
     } catch {
-      return null;
+      // Saved by an earlier version with the old synchronous API: read it once and save it again.
+      try {
+        const value = safeStorage.decryptString(bytes);
+        await this.set(name, value);
+        return value;
+      } catch {
+        return null;
+      }
     }
   }
 
@@ -42,15 +52,11 @@ export class SecretStore {
     if (value === null) {
       delete all[name];
     } else {
-      if (!this.available()) throw new Error("Encryption isn't available on this Mac, so Doppel can't store secrets.");
-      all[name] = safeStorage.encryptString(value).toString("base64");
+      if (!(await this.available())) throw new Error("Encryption isn't available on this Mac, so Doppel can't store secrets.");
+      all[name] = (await safeStorage.encryptStringAsync(value)).toString("base64");
     }
     await fs.mkdir(path.dirname(this.file), { recursive: true });
     await fs.writeFile(this.file, JSON.stringify(all, null, 2), { encoding: "utf8", mode: 0o600 });
-  }
-
-  async clear() {
-    await fs.rm(this.file, { force: true });
   }
 }
 

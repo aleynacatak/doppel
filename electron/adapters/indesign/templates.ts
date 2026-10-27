@@ -4,7 +4,7 @@ import type { RoutineTemplate } from "../types";
 // `function (doc, params, ctx) { … }`: `doc` is the document to work on, `params` the values the user
 // picked on the Run screen, `ctx` Doppel's helpers (see jsx/lib.ts → makeContext).
 // No absolute paths: every file and folder is a param chosen at run time.
-// These double as the template library the mock AI picks from.
+// They're shown to the model as examples of how InDesign routines are written.
 
 const exportPng = String.raw`// Export the chosen pages as PNG files into the output folder.
 var folder = ctx.ensureFolder(params.outputFolder);
@@ -192,7 +192,6 @@ export const INDESIGN_TEMPLATES: RoutineTemplate[] = [
     modifiesDocument: false,
     qcProfile: "web",
     requiredFonts: [],
-    naming: { paramKey: "namingPattern", houseStyle: "{doc}_{page}_v1" },
   },
   {
     id: "indesign-export-pdfs",
@@ -215,7 +214,6 @@ export const INDESIGN_TEMPLATES: RoutineTemplate[] = [
     modifiesDocument: false,
     qcProfile: "print",
     requiredFonts: [],
-    naming: { paramKey: "namingPattern", houseStyle: "{doc}_{format}_v1" },
   },
   {
     id: "indesign-preflight",

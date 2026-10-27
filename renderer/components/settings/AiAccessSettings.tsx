@@ -109,7 +109,6 @@ export function AiAccessSettings() {
   return (
     <div className="flex flex-col gap-3">
       <p className="ui-muted">{copy.settings.aiSubtitle}</p>
-      {aiAccess.mock && <Notice>{copy.settings.mockNote}</Notice>}
       {!aiAccess.encryptionAvailable && <Notice tone="warning">{copy.settings.noEncryption}</Notice>}
 
       <div className="flex flex-col gap-2" role="radiogroup" aria-label={copy.settings.aiTitle}>

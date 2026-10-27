@@ -1,14 +1,11 @@
 "use client";
 
 import type { App } from "@core/types";
-import { useState } from "react";
 import { copy } from "@/copy";
-import { doppel } from "@/lib/doppel";
 import { useOpenDocuments } from "@/lib/hooks";
-import { useShell } from "@/lib/store";
-import { Button } from "../ui/Button";
 import { Spinner } from "../ui/Progress";
 import { Tag } from "../ui/Tag";
+import { FigmaSetup } from "./FigmaSetup";
 import { PermissionHelp } from "./PermissionHelp";
 
 function ScriptBridgeBody({ app }: { app: App }) {
@@ -40,36 +37,6 @@ function ScriptBridgeBody({ app }: { app: App }) {
   );
 }
 
-function PluginBody({ app }: { app: App }) {
-  const setApps = useShell((s) => s.setApps);
-  const [checking, setChecking] = useState(false);
-  if (app.status === "connected") return <p>{copy.connect.figma.connected}</p>;
-  const check = async () => {
-    setChecking(true);
-    try {
-      await doppel().checkApp(app.id);
-      setApps(await doppel().listApps());
-    } finally {
-      setChecking(false);
-    }
-  };
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="ui-h3">{copy.connect.figma.installTitle}</div>
-      <ol className="list-decimal pl-5">
-        {copy.connect.figma.steps.map((s) => (
-          <li key={s}>{s}</li>
-        ))}
-      </ol>
-      <div>
-        <Button onClick={check} disabled={checking}>
-          {checking && <Spinner />} {copy.connect.figma.checkAgain}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function AppConnectCard({ app }: { app: App }) {
   return (
     <div className="ui-card flex flex-col gap-3 p-4" data-selected={app.status === "connected"}>
@@ -77,12 +44,12 @@ export function AppConnectCard({ app }: { app: App }) {
         <div>
           <div className="ui-h2">{app.name}</div>
           <div className="ui-small ui-muted">
-            {app.connection === "script-bridge" ? copy.connect.scriptBridge : copy.connect.inAppPlugin} · {app.scriptLanguage}
+            {app.connection === "script-bridge" ? copy.connect.scriptBridge : copy.connect.linksAndPlugin} · {app.scriptLanguage}
           </div>
         </div>
         <Tag tone={app.status === "connected" ? "filled" : "default"}>{copy.appStatus[app.status]}</Tag>
       </div>
-      {app.connection === "script-bridge" ? <ScriptBridgeBody app={app} /> : <PluginBody app={app} />}
+      {app.connection === "script-bridge" ? <ScriptBridgeBody app={app} /> : <FigmaSetup />}
     </div>
   );
 }

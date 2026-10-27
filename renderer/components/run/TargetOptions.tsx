@@ -28,6 +28,8 @@ export function TargetOptions({
   }, [docs, documentId, onDocumentChange]);
 
   const doc = docs.find((d) => d.id === documentId);
+  const figma = app.connection === "links-and-plugin";
+  const pluginPage = figma && app.detail?.startsWith("Plugin open on") ? app.detail.split(" · ").pop() : undefined;
   return (
     <div className="flex flex-col gap-4">
       <Field label={copy.run.documentLabel} htmlFor="run-document">
@@ -46,25 +48,23 @@ export function TargetOptions({
           ))}
         </select>
       </Field>
-      {app.connection === "script-bridge" && (
-        <div className="flex flex-col gap-2" role="radiogroup" aria-label={copy.run.targetTitle}>
-          <label className="ui-choice">
-            <input type="radio" name="target" checked={target === "copy"} onChange={() => onTargetChange("copy")} />
-            <span className="flex flex-col">
-              {copy.run.onCopy}
-              <span className="ui-small ui-muted">{copy.run.onCopyHint(doc?.name)}</span>
-            </span>
-          </label>
-          <label className="ui-choice">
-            <input type="radio" name="target" checked={target === "original"} onChange={() => onTargetChange("original")} />
-            <span className="flex flex-col">
-              {copy.run.onOriginal}
-              <span className="ui-small ui-muted">{copy.run.onOriginalHint}</span>
-            </span>
-          </label>
-          {!modifiesDocument && <p className="ui-small ui-muted">{copy.run.readOnlyHint}</p>}
-        </div>
-      )}
+      <div className="flex flex-col gap-2" role="radiogroup" aria-label={copy.run.targetTitle}>
+        <label className="ui-choice">
+          <input type="radio" name="target" checked={target === "copy"} onChange={() => onTargetChange("copy")} />
+          <span className="flex flex-col">
+            {figma ? copy.run.figmaOnCopy : copy.run.onCopy}
+            <span className="ui-small ui-muted">{figma ? copy.run.figmaOnCopyHint(pluginPage) : copy.run.onCopyHint(doc?.name)}</span>
+          </span>
+        </label>
+        <label className="ui-choice">
+          <input type="radio" name="target" checked={target === "original"} onChange={() => onTargetChange("original")} />
+          <span className="flex flex-col">
+            {figma ? copy.run.figmaOnOriginal : copy.run.onOriginal}
+            <span className="ui-small ui-muted">{figma ? copy.run.figmaOnOriginalHint : copy.run.onOriginalHint}</span>
+          </span>
+        </label>
+        {!modifiesDocument && <p className="ui-small ui-muted">{copy.run.readOnlyHint}</p>}
+      </div>
     </div>
   );
 }

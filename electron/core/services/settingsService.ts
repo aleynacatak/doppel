@@ -1,5 +1,12 @@
+import { randomInt } from "node:crypto";
 import type { Settings } from "../types";
 import type { Storage } from "./storage";
+
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const newPairingCode = () => {
+  const chars = Array.from({ length: 8 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]);
+  return `${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`;
+};
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
@@ -7,7 +14,8 @@ export const DEFAULT_SETTINGS: Settings = {
   monthlySpendLimit: 50,
   ownKeySpend: { month: "", estUsd: 0 },
   scriptTimeoutSec: 120,
-  mockFigmaConnected: false,
+  figmaFiles: [],
+  figmaPairingCode: "",
 };
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -18,9 +26,14 @@ export class SettingsService {
   constructor(private readonly storage: Storage) {}
 
   async load(): Promise<Settings> {
-    const stored = (await this.storage.getSettings()) as Partial<Settings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
-    if (this.settings.aiProvider === "local") this.settings.aiProvider = "doppl-demo";
+    const stored = (await this.storage.getSettings()) as (Partial<Settings> & Record<string, unknown>) | null;
+    const next: Settings = { ...DEFAULT_SETTINGS };
+    for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+      if (stored && stored[key] !== undefined) (next as unknown as Record<string, unknown>)[key] = stored[key];
+    }
+    if (next.aiProvider === "local") next.aiProvider = "doppl-demo";
+    this.settings = next;
+    if (!next.figmaPairingCode) await this.save({ figmaPairingCode: newPairingCode() });
     return this.settings;
   }
 

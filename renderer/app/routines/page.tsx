@@ -14,8 +14,8 @@ import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
 
 export default function LibraryPage() {
-  const { apps, flagsVersion } = useShell();
-  const { data: routines, loading, error } = useAsync(() => doppel().listRoutines(), [flagsVersion]);
+  const apps = useShell((s) => s.apps);
+  const { data: routines, loading, error } = useAsync(() => doppel().listRoutines(), []);
   const [query, setQuery] = useState("");
   const [appFilter, setAppFilter] = useState("all");
   const [view, setView] = useState<LibraryView>("grid");

@@ -236,3 +236,44 @@ export const OPEN_PAGE = String.raw`function (input) {
   if (input.pageIndex && input.pageIndex <= pages.length) { win.activePage = pages[input.pageIndex - 1]; }
   return true;
 }`;
+
+/** House-style facts from an InDesign file (opened without a window if it isn't open already). */
+export const STYLE_FACTS = String.raw`function (input) {
+  var file = new File(input.path);
+  if (!file.exists) { throw new Error("The file couldn't be found: " + file.name); }
+  var doc = null;
+  var opened = false;
+  var docs = DoppelLib.all(app.documents);
+  for (var i = 0; i < docs.length; i++) {
+    if (docs[i].saved && docs[i].fullName.fsName === file.fsName) { doc = docs[i]; }
+  }
+  if (!doc) { doc = app.open(file, false); opened = true; }
+  var oldUnit = app.scriptPreferences.measurementUnit;
+  app.scriptPreferences.measurementUnit = MeasurementUnits.MILLIMETERS;
+  var facts = [];
+  var r1 = function (n) { return Math.round(n * 10) / 10; };
+  try {
+    var dp = doc.documentPreferences;
+    facts.push({ label: "Page size", value: r1(dp.pageWidth) + " × " + r1(dp.pageHeight) + " mm" + (dp.facingPages ? ", facing pages" : "") });
+    var mp = doc.pages[0].marginPreferences;
+    facts.push({ label: "Margins", value: "top " + r1(mp.top) + ", bottom " + r1(mp.bottom) + ", inside " + r1(mp.left) + ", outside " + r1(mp.right) + " mm" });
+    facts.push({ label: "Columns", value: mp.columnCount + (mp.columnCount > 1 ? " columns, " + r1(mp.columnGutter) + " mm gutter" : " column") });
+    if (dp.documentBleedTopOffset > 0) { facts.push({ label: "Bleed", value: r1(dp.documentBleedTopOffset) + " mm" }); }
+    try { facts.push({ label: "Baseline grid", value: r1(doc.gridPreferences.baselineDivision * 2.8346) + " pt" }); } catch (e) {}
+    var styles = doc.allParagraphStyles;
+    var count = 0;
+    for (var s = 0; s < styles.length && count < 8; s++) {
+      var st = styles[s];
+      if (st.name.charAt(0) === "[") { continue; }
+      var font = "";
+      try { font = typeof st.appliedFont === "string" ? st.appliedFont : st.appliedFont.fontFamily; } catch (e2) {}
+      var leading = st.leading == Leading.AUTO ? "auto" : r1(st.leading);
+      facts.push({ label: "Style · " + st.name, value: (font ? font + " " + st.fontStyle + ", " : "") + r1(st.pointSize) + "/" + leading + " pt" });
+      count++;
+    }
+  } finally {
+    app.scriptPreferences.measurementUnit = oldUnit;
+    if (opened) { doc.close(SaveOptions.NO); }
+  }
+  return { name: file.name, facts: facts };
+}`;

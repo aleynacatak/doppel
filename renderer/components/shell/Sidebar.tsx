@@ -43,7 +43,6 @@ export function Sidebar() {
             </li>
           ))}
         </ul>
-        <div className="ui-small ui-muted px-2 pt-2">{copy.nav.devHint}</div>
       </div>
     </nav>
   );

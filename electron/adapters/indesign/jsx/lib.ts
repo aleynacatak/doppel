@@ -228,6 +228,62 @@ DoppelLib.preflight = function (doc, opts) {
     } catch (e10) {}
   }
 
+  // Object checks, in points: text frames running past the page edge, and images that cross the page
+  // edge but stop before the bleed. The spine side of facing pages is skipped (spreads cross it).
+  var oldUnit = app.scriptPreferences.measurementUnit;
+  app.scriptPreferences.measurementUnit = MeasurementUnits.POINTS;
+  try {
+    var dp = doc.documentPreferences;
+    var tol = 0.5;
+    var reported = 0;
+    var objPages = DoppelLib.all(doc.pages);
+    for (var pi = 0; pi < objPages.length && reported < 200; pi++) {
+      var pg = objPages[pi];
+      var pb = pg.bounds;
+      var side = pg.side;
+      var leftSpine = dp.facingPages && side == PageSideOptions.RIGHT_HAND;
+      var rightSpine = dp.facingPages && side == PageSideOptions.LEFT_HAND;
+      var bleed = {
+        top: dp.documentBleedTopOffset,
+        bottom: dp.documentBleedBottomOffset,
+        left: dp.facingPages && side == PageSideOptions.LEFT_HAND ? dp.documentBleedOutsideOrRightOffset : dp.documentBleedInsideOrLeftOffset,
+        right: dp.facingPages && side == PageSideOptions.LEFT_HAND ? dp.documentBleedInsideOrLeftOffset : dp.documentBleedOutsideOrRightOffset
+      };
+      var edges = ["right", "left", "bottom", "top"];
+      var items = pg.allPageItems;
+      for (var ii = 0; ii < items.length && ii < 2000; ii++) {
+        var it = items[ii];
+        var gb;
+        try { gb = it.geometricBounds; } catch (e12) { continue; }
+        var over = { top: pb[0] - gb[0], left: pb[1] - gb[1], bottom: gb[2] - pb[2], right: gb[3] - pb[3] };
+        var kind = it.constructor.name;
+        var hasImage = false;
+        try { hasImage = (kind === "Rectangle" || kind === "Polygon" || kind === "Oval") && it.allGraphics.length > 0; } catch (e13) {}
+        for (var ei = 0; ei < edges.length; ei++) {
+          var ed = edges[ei];
+          if ((ed === "left" && leftSpine) || (ed === "right" && rightSpine) || over[ed] <= tol) { continue; }
+          if (kind === "TextFrame") {
+            add("off-page", "A text frame on page " + pg.name + " runs past the " + ed + " page edge", pg);
+            reported++;
+            break;
+          }
+          if (hasImage && bleed[ed] <= tol) {
+            add("short-of-bleed", "An image on page " + pg.name + " runs past the " + ed + " page edge, but the document has no bleed", pg);
+            reported++;
+            break;
+          }
+          if (hasImage && over[ed] < bleed[ed] - tol) {
+            add("short-of-bleed", "An image on page " + pg.name + " crosses the " + ed + " page edge but stops " + (Math.round((bleed[ed] - over[ed]) * 0.3528 * 10) / 10) + " mm before the bleed", pg);
+            reported++;
+            break;
+          }
+        }
+      }
+    }
+  } finally {
+    app.scriptPreferences.measurementUnit = oldUnit;
+  }
+
   return findings;
 };
 

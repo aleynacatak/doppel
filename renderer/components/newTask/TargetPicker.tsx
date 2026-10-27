@@ -53,7 +53,9 @@ export function TargetPicker({
             disabled={!connected || !docs?.length}
             onChange={(e) => onDocumentChange(e.target.value || undefined)}
           >
-            {(!docs || docs.length === 0) && <option value="">{loading && connected ? copy.common.loading : copy.newTask.noDocuments}</option>}
+            {(!docs || docs.length === 0) && (
+              <option value="">{loading && connected ? copy.common.loading : appId === "figma" ? copy.newTask.noFigmaFiles : copy.newTask.noDocuments}</option>
+            )}
             {docs?.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name} {d.active ? copy.newTask.activeDocument : ""}
@@ -62,6 +64,13 @@ export function TargetPicker({
           </select>
         </Field>
       </div>
+      {app && connected && appId === "figma" && docs?.length === 0 && (
+        <Notice>
+          <Link href="/connect" className="ui-link">
+            {copy.newTask.addFigmaFile}
+          </Link>
+        </Notice>
+      )}
       {app && !connected && (
         <Notice tone="warning">
           <span>

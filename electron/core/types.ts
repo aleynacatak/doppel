@@ -3,16 +3,41 @@
 
 export type AppId = "indesign" | "figma" | (string & {});
 
-export type AppStatus = "connected" | "not-running" | "not-installed" | "permission-denied";
+export type AppStatus = "connected" | "not-running" | "not-installed" | "permission-denied" | "needs-setup";
 
 export interface App {
   id: AppId;
   name: string;
   scriptLanguage: string;
-  connection: "script-bridge" | "in-app-plugin";
+  /** InDesign: AppleScript bridge on this Mac. Figma: file links (REST API) plus the Doppel plugin. */
+  connection: "script-bridge" | "links-and-plugin";
   status: AppStatus;
   /** Display version, e.g. "21.6". Only known while connected. */
   version?: string;
+  /** One line about the connection, e.g. "Plugin open on Campaign · Page 1". */
+  detail?: string;
+}
+
+// ---------- Figma ----------
+
+/** A Figma file connected to Doppel by its link. */
+export interface FigmaFile {
+  key: string;
+  url: string;
+  name: string;
+  lastModified?: string;
+  thumbnailUrl?: string;
+  addedAt: string;
+}
+
+export interface FigmaSetup {
+  token: { saved: boolean; hint: string | null };
+  files: FigmaFile[];
+  plugin: { connected: boolean; fileName?: string; pageName?: string; matchedKey?: string };
+  /** Typed once into the Doppel plugin in Figma, so only this Mac's Doppel can talk to it. */
+  pairingCode: string;
+  /** Folder that holds the plugin's manifest.json (for Plugins → Development → Import plugin from manifest). */
+  pluginFolder: string;
 }
 
 export interface DocumentRef {
@@ -47,8 +72,8 @@ export interface DocumentSummary {
   textFrameCount: number;
   links: LinkInfo[];
   fonts: FontInfo[];
-  /** Figma-style top-level frames. */
-  frames?: { name: string; width: number; height: number }[];
+  /** Figma top-level frames, with the page they're on. */
+  frames?: { name: string; width: number; height: number; page?: string; id?: string }[];
 }
 
 export interface Task {
@@ -115,7 +140,7 @@ export interface Routine {
   createdAt: string;
   updatedAt: string;
   versions: RoutineVersion[];
-  /** Template the routine was built from (mock AI). */
+  /** Example routine the routine was based on, if any. */
   templateId?: string;
   experimental?: boolean;
   /** Whether the routine edits the document (vs. only exporting or reading it). */
@@ -148,7 +173,7 @@ export interface RunSummary {
 }
 
 export interface PreviewImage {
-  kind: "image" | "placeholder";
+  kind: "image";
   /** data: URL */
   src: string;
   width?: number;
@@ -173,6 +198,8 @@ export interface RunOutput {
   /** Page name as shown in the app, and its 1-based position. */
   page?: string;
   pageIndex?: number;
+  /** Figma node the output is (a frame the routine made). */
+  nodeId?: string;
   details?: OutputDetail[];
   profile?: "print" | "web";
   markedOk?: boolean;
@@ -193,7 +220,20 @@ export interface QcResult {
   checks: QcCheck[];
 }
 
-export type RuleFindingType = "overset" | "link-missing" | "link-modified" | "font-missing" | "low-res";
+export type RuleFindingType =
+  | "overset"
+  | "link-missing"
+  | "link-modified"
+  | "font-missing"
+  | "low-res"
+  /** InDesign: a text frame runs past the page edge. */
+  | "off-page"
+  /** InDesign: an image crosses the page edge but stops before the bleed. */
+  | "short-of-bleed"
+  /** Figma: text is clipped by its frame. */
+  | "cut-off"
+  /** Figma: an image is shown larger than its pixels (blurry). */
+  | "upscaled-image";
 
 /** A rule-level problem found in a document. */
 export interface RuleFinding {
@@ -201,12 +241,10 @@ export interface RuleFinding {
   message: string;
   page?: string;
   pageIndex?: number;
-  /** Ties a finding to one output when the adapter knows it (mock adapters). */
+  /** Ties a finding to one output when the adapter knows it (Figma frames). */
   outputKey?: string;
   /** Effective resolution for low-res images. */
   value?: number;
-  /** Produced by a mock adapter (the dev panel's "QC all pass" hides these). */
-  simulated?: boolean;
 }
 
 export interface QcOptions {
@@ -251,9 +289,14 @@ export interface Run {
 
 export interface StyleSource {
   id: string;
+  kind: "indesign" | "figma";
   name: string;
+  /** InDesign file path, or Figma file link. */
   path?: string;
   addedAt: string;
+  /** Facts read from the file (styles, grid, margins…), used to build the rules. */
+  facts?: { label: string; value: string }[];
+  error?: string;
 }
 
 export interface StyleProfile {
@@ -318,7 +361,7 @@ export interface Creation {
   error?: {
     message: string;
     detail?: string;
-    kind?: "app-not-connected" | "no-document" | "ai-access" | "generic";
+    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "generic";
     /** AI error code (from the demo Worker or Meta), e.g. "quota_exhausted". */
     code?: string;
     action?: AiErrorAction;
@@ -369,8 +412,10 @@ export interface Settings {
   /** Estimated spend with the own key, per calendar month. */
   ownKeySpend: { month: string; estUsd: number };
   scriptTimeoutSec: number;
-  /** Mock: whether the Doppel Figma plugin has been "installed". */
-  mockFigmaConnected: boolean;
+  /** Figma files connected by link. */
+  figmaFiles: FigmaFile[];
+  /** Pairing code the Doppel Figma plugin must send (see FigmaSetup). */
+  figmaPairingCode: string;
 }
 
 // ---------- AI access ----------
@@ -394,8 +439,6 @@ export interface AiAccess {
   session: DemoSession | null;
   ownKey: { saved: boolean; hint: string | null };
   ownKeySpend: { month: string; estUsd: number; limit: number };
-  /** Dev panel: the mock AI is answering instead. */
-  mock: boolean;
 }
 
 /** What to offer next to an AI error. */
@@ -408,23 +451,6 @@ export interface AiAccessError {
 }
 
 export type CheckResult<T> = { ok: true; value: T } | { ok: false; error: AiAccessError };
-
-// ---------- Dev panel ----------
-
-export type ForcedStatus = "auto" | AppStatus;
-
-export interface DevFlags {
-  emptyLibrary: boolean;
-  forceStatus: Record<string, ForcedStatus>;
-  creationOutcome: "auto" | "fail" | "always-ask" | "absolute-path";
-  runOutcome: "auto" | "fail" | "partial";
-  qcOutcome: "default" | "all-pass" | "some-flagged";
-  envMismatch: boolean;
-  /** Multiplier for mock delays. */
-  speed: number;
-  /** Use the mock AI (no network, no quota) instead of the configured AI access. */
-  mockAi: boolean;
-}
 
 // ---------- The API the preload exposes as window.doppel ----------
 
@@ -443,7 +469,20 @@ export interface DoppelApi {
   checkApp(appId: AppId): Promise<App>;
   listOpenDocuments(appId: AppId): Promise<DocumentRef[]>;
   inspectDocument(appId: AppId, docId: string): Promise<DocumentSummary>;
+  /** Brings the document forward in its app (Figma: the plugin, or the file link). */
+  openDocument(appId: AppId, docId: string): Promise<void>;
   openAutomationSettings(): Promise<void>;
+
+  // Figma (Connect screen)
+  getFigmaSetup(): Promise<FigmaSetup>;
+  /** Checks the personal access token with Figma; saves it (encrypted) only if it works. */
+  saveFigmaToken(token: string): Promise<CheckResult<FigmaSetup>>;
+  clearFigmaToken(): Promise<FigmaSetup>;
+  /** Reads the file behind a Figma link and adds it. */
+  addFigmaLink(url: string): Promise<CheckResult<FigmaSetup>>;
+  removeFigmaFile(key: string): Promise<FigmaSetup>;
+  /** Shows the plugin's manifest.json in Finder. */
+  showFigmaPlugin(): Promise<void>;
 
   // Routine creation
   createRoutine(input: NewTaskInput): Promise<Creation>;
@@ -459,7 +498,7 @@ export interface DoppelApi {
   listRoutines(): Promise<Routine[]>;
   getRoutine(id: string): Promise<Routine | null>;
   checkEnvironment(routineId: string): Promise<EnvironmentCheck>;
-  getParamOptions(routineId: string, paramKey: string): Promise<ParamOption[]>;
+  getParamOptions(routineId: string, paramKey: string, documentId?: string): Promise<ParamOption[]>;
 
   // Runs
   runRoutine(routineId: string, params: ParamValues, qcMode: QcMode, options: RunOptions): Promise<Run>;
@@ -476,7 +515,9 @@ export interface DoppelApi {
 
   // Style profile
   getStyleProfile(): Promise<StyleProfile>;
+  /** Pick InDesign files and read their styles (InDesign must be running). */
   addStyleSources(): Promise<StyleProfile>;
+  addStyleFigmaLink(url: string): Promise<CheckResult<StyleProfile>>;
   removeStyleSource(id: string): Promise<StyleProfile>;
 
   // Settings
@@ -493,11 +534,6 @@ export interface DoppelApi {
   /** Checks the key with Meta's API; saves it (encrypted) only if it works. */
   saveApiKey(key: string): Promise<CheckResult<AiAccess>>;
   clearApiKey(): Promise<AiAccess>;
-
-  // Dev panel
-  getDevFlags(): Promise<DevFlags>;
-  setDevFlags(patch: Partial<DevFlags>): Promise<DevFlags>;
-  resetData(): Promise<void>;
 
   // Events (main → renderer)
   onCreationProgress(cb: (creation: Creation) => void): Unsubscribe;

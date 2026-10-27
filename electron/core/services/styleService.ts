@@ -1,41 +1,78 @@
 import path from "node:path";
-import type { StyleProfile } from "../types";
-import { newId, nowIso } from "../util";
+import type { AdapterRegistry } from "../../adapters/registry";
+import { parseFigmaLink } from "../../adapters/figma/figmaRest";
+import type { CheckResult, StyleProfile, StyleSource } from "../types";
+import { errorMessage, newId, nowIso } from "../util";
 import type { Storage } from "./storage";
 
-// Mock: rules a real model would extract from past projects. "Coming soon" in the UI.
-const EXTRACTED_RULES: StyleProfile["rules"] = [
-  { label: "Body text", value: "10/14 pt" },
-  { label: "Headlines", value: "28/32 pt, sentence case" },
-  { label: "Grid", value: "12 columns, 5 mm gutter" },
-  { label: "Margins", value: "15 mm, 20 mm inside" },
-  { label: "Image resolution", value: "300 ppi for print, 150 ppi for web" },
-  { label: "Export naming", value: "client_format_v1" },
-];
-
+/**
+ * Style profile: house-style facts read from past projects (InDesign files through InDesign,
+ * Figma files through their links). The rules are the facts, grouped and de-duplicated; they go
+ * into the prompt whenever Doppel writes a routine.
+ */
 export class StyleService {
-  constructor(private readonly storage: Storage) {}
+  constructor(
+    private readonly storage: Storage,
+    private readonly registry: AdapterRegistry,
+  ) {}
 
   async get(): Promise<StyleProfile> {
-    return (await this.storage.getStyleProfile()) ?? { sources: [], rules: [] };
+    const profile = (await this.storage.getStyleProfile()) ?? { sources: [], rules: [] };
+    profile.sources = profile.sources.map((s) => ({ ...s, kind: s.kind ?? "indesign" }));
+    return profile;
   }
 
-  async addSources(paths: string[]): Promise<StyleProfile> {
+  private async save(profile: StyleProfile) {
+    profile.rules = buildRules(profile.sources);
+    await this.storage.saveStyleProfile(profile);
+    return profile;
+  }
+
+  private async read(kind: StyleSource["kind"], source: string): Promise<StyleSource> {
+    const adapter = this.registry.get(kind);
+    const base: StyleSource = { id: newId(), kind, name: kind === "indesign" ? path.basename(source) : source, path: source, addedAt: nowIso() };
+    try {
+      const facts = await adapter.readStyleFacts!(source);
+      return { ...base, name: facts.name, facts: facts.facts };
+    } catch (err) {
+      return { ...base, error: errorMessage(err) };
+    }
+  }
+
+  async addInDesignFiles(paths: string[]): Promise<StyleProfile> {
     const profile = await this.get();
     for (const p of paths) {
       if (profile.sources.some((s) => s.path === p)) continue;
-      profile.sources.push({ id: newId(), name: path.basename(p), path: p, addedAt: nowIso() });
+      profile.sources.push(await this.read("indesign", p));
     }
-    if (profile.sources.length) profile.rules = EXTRACTED_RULES;
-    await this.storage.saveStyleProfile(profile);
-    return profile;
+    return this.save(profile);
+  }
+
+  async addFigmaLink(url: string): Promise<CheckResult<StyleProfile>> {
+    if (!parseFigmaLink(url)) return { ok: false, error: { code: "invalid_link", message: "That doesn't look like a Figma file link." } };
+    const source = await this.read("figma", url.trim());
+    if (source.error) return { ok: false, error: { code: "figma", message: source.error } };
+    const profile = await this.get();
+    profile.sources = [...profile.sources.filter((s) => s.path !== source.path), source];
+    return { ok: true, value: await this.save(profile) };
   }
 
   async removeSource(id: string): Promise<StyleProfile> {
     const profile = await this.get();
     profile.sources = profile.sources.filter((s) => s.id !== id);
-    if (profile.sources.length === 0) profile.rules = [];
-    await this.storage.saveStyleProfile(profile);
-    return profile;
+    return this.save(profile);
   }
+}
+
+/** One rule per fact label; when several projects disagree, the values are listed together. */
+function buildRules(sources: StyleSource[]): StyleProfile["rules"] {
+  const byLabel = new Map<string, string[]>();
+  for (const s of sources) {
+    for (const f of s.facts ?? []) {
+      const values = byLabel.get(f.label) ?? [];
+      if (!values.includes(f.value)) values.push(f.value);
+      byLabel.set(f.label, values);
+    }
+  }
+  return [...byLabel.entries()].map(([label, values]) => ({ label, value: values.slice(0, 3).join(" | ") }));
 }

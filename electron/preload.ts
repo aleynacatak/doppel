@@ -10,7 +10,14 @@ const METHODS: Record<keyof ApiMethods, true> = {
   checkApp: true,
   listOpenDocuments: true,
   inspectDocument: true,
+  openDocument: true,
   openAutomationSettings: true,
+  getFigmaSetup: true,
+  saveFigmaToken: true,
+  clearFigmaToken: true,
+  addFigmaLink: true,
+  removeFigmaFile: true,
+  showFigmaPlugin: true,
   createRoutine: true,
   getCreation: true,
   answerQuestion: true,
@@ -34,6 +41,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   pickFolder: true,
   getStyleProfile: true,
   addStyleSources: true,
+  addStyleFigmaLink: true,
   removeStyleSource: true,
   getSettings: true,
   saveSettings: true,
@@ -44,9 +52,6 @@ const METHODS: Record<keyof ApiMethods, true> = {
   clearAccessCode: true,
   saveApiKey: true,
   clearApiKey: true,
-  getDevFlags: true,
-  setDevFlags: true,
-  resetData: true,
 };
 
 const api: Record<string, unknown> = {};

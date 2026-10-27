@@ -74,7 +74,7 @@ export function useOpenDocuments(appId: string | undefined) {
   const connected = app?.status === "connected";
   const state = useAsync<DocumentRef[]>(
     () => (appId && connected ? doppel().listOpenDocuments(appId) : Promise.resolve([])),
-    [appId, connected],
+    [appId, connected, app?.detail],
   );
   return { ...state, connected, app };
 }

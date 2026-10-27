@@ -130,7 +130,6 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Real AI: Muse Spark for writing and reviewing routines, SAM 3.1 for key-object checks. */
 export class ModelAiService implements AiService {
-  readonly canFixScripts = true;
 
   constructor(
     private readonly deps: {
@@ -256,7 +255,7 @@ export class ModelAiService implements AiService {
   async reviewTrial(task: Task, draft: RoutineDraft, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
     const checks: Record<string, QcCheck[]> = {};
     const add = (id: string, check: QcCheck) => (checks[id] ??= []).push(check);
-    // Placeholders (mock apps) carry no information; only real previews are sent.
+    // Only outputs with a rendered preview can be looked at.
     const withImages = outputs.filter((o) => o.status === "done" && o.preview?.kind === "image").slice(0, MAX_REVIEW_IMAGES);
     if (withImages.length === 0) return checks;
 

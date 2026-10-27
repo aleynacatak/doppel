@@ -11,17 +11,17 @@ export interface Storage {
   listRoutines(): Promise<Routine[]>;
   getRoutine(id: string): Promise<Routine | null>;
   saveRoutine(routine: Routine): Promise<void>;
+  deleteRoutine(id: string): Promise<void>;
   getRun(id: string): Promise<Run | null>;
   saveRun(run: Run): Promise<void>;
+  deleteRun(id: string): Promise<void>;
   getSettings(): Promise<Settings | null>;
   saveSettings(settings: Settings): Promise<void>;
   getStyleProfile(): Promise<StyleProfile | null>;
   saveStyleProfile(profile: StyleProfile): Promise<void>;
-  /** Marker files, e.g. "seeded". */
+  /** Marker files, e.g. "demo-data-removed". */
   hasMarker(name: string): Promise<boolean>;
   setMarker(name: string): Promise<void>;
-  /** Removes routines, runs, settings and markers (dev panel "Reset all data"). */
-  clear(): Promise<void>;
 }
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
@@ -77,8 +77,16 @@ export class JsonStorage implements Storage {
     return this.writeJson(this.fileFor("routines", routine.id), routine);
   }
 
+  async deleteRoutine(id: string) {
+    await fs.rm(this.fileFor("routines", id), { force: true });
+  }
+
   getRun(id: string) {
     return this.readJson<Run>(this.fileFor("runs", id));
+  }
+
+  async deleteRun(id: string) {
+    await fs.rm(this.fileFor("runs", id), { force: true });
   }
 
   saveRun(run: Run) {
@@ -113,14 +121,5 @@ export class JsonStorage implements Storage {
   async setMarker(name: string) {
     await fs.mkdir(this.root, { recursive: true });
     await fs.writeFile(path.join(this.root, `.${name}`), new Date().toISOString());
-  }
-
-  async clear() {
-    for (const name of ["routines", "runs"]) {
-      await fs.rm(this.dir(name), { recursive: true, force: true });
-    }
-    for (const file of ["settings.json", "style-profile.json", ".seeded"]) {
-      await fs.rm(path.join(this.root, file), { force: true });
-    }
   }
 }
