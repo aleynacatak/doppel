@@ -81,6 +81,7 @@ export interface ExecutionResult {
 
 function notConnectedMessage(appName: string, status: string) {
   if (status === "permission-denied") return `Doppl isn't allowed to control ${appName} yet.`;
+  if (status === "awaiting-permission") return `macOS is asking whether Doppl may control ${appName}. Click OK in that prompt, then try again.`;
   if (status === "needs-setup") return `${appName} isn't set up in Doppl yet. Open Connect apps.`;
   if (appName === "Figma") return "Open your file in Figma and start the Doppl plugin (Plugins → Development → Doppl).";
   if (status === "not-installed") return `${appName} isn't set up for Doppl on this Mac.`;

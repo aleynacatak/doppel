@@ -25,6 +25,7 @@ function notReadyMessage(appId: AppId, appName: string, status: string, needsDoc
     return `Doppl isn't allowed to control ${appName}. Turn it on in System Settings → Privacy & Security → Automation.`;
   }
   if (status === "not-installed") return `${appName} isn't installed on this Mac.`;
+  if (status === "awaiting-permission") return `macOS is asking whether Doppl may control ${appName}. Click OK in that prompt.`;
   if (appId === "figma") return "Open your file in Figma and start the Doppl plugin (Plugins → Development → Doppl).";
   return needsDocument ? `Open ${appName} with your document.` : `Open ${appName}.`;
 }

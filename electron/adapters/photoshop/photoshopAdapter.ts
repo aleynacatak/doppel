@@ -83,8 +83,8 @@ export class PhotoshopAdapter implements DesignAppAdapter {
 
   private readonly adobe: AdobeConnection;
 
-  constructor(private readonly options: { getTimeoutSec: () => number }) {
-    this.adobe = new AdobeConnection(photoshopBridge, PROBE, () => this.options.getTimeoutSec());
+  constructor(private readonly options: { getTimeoutSec: () => number; onStatusChange?: () => void }) {
+    this.adobe = new AdobeConnection(photoshopBridge, PROBE, () => this.options.getTimeoutSec(), { onChange: options.onStatusChange });
   }
 
   private call<T>(main: string, input: unknown, label?: string, timeoutSec?: number): Promise<T> {

@@ -46,14 +46,16 @@ export class AppStatusService {
     return this.inflight;
   }
 
+  /** Checks every app side by side, so a slow one never holds up the others. */
   private async check(): Promise<App[]> {
-    const next: App[] = [];
-    for (const adapter of this.registry.list()) {
-      const status: AppStatus = await adapter.getStatus().catch(() => "not-running" as const);
-      const version = status === "connected" ? ((await adapter.getAppVersion().catch(() => null)) ?? undefined) : undefined;
-      const detail = await adapter.getDetail().catch(() => undefined);
-      next.push({ id: adapter.id, name: adapter.name, scriptLanguage: adapter.scriptLanguage, connection: adapter.connection, status, version, detail });
-    }
+    const next: App[] = await Promise.all(
+      this.registry.list().map(async (adapter): Promise<App> => {
+        const status: AppStatus = await adapter.getStatus().catch(() => "not-running" as const);
+        const version = status === "connected" ? ((await adapter.getAppVersion().catch(() => null)) ?? undefined) : undefined;
+        const detail = await adapter.getDetail().catch(() => undefined);
+        return { id: adapter.id, name: adapter.name, scriptLanguage: adapter.scriptLanguage, connection: adapter.connection, status, version, detail };
+      }),
+    );
     if (JSON.stringify(next) !== JSON.stringify(this.apps)) {
       this.apps = next;
       this.onChange(next);

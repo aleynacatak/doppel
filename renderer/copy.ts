@@ -21,8 +21,11 @@ export const copy = {
     "not-running": "Not running",
     "not-installed": "Not installed",
     "permission-denied": "Needs permission",
+    "awaiting-permission": "Waiting for your permission",
     "needs-setup": "Needs setup",
   } satisfies Record<AppStatus, string>,
+  /** Shorter labels where space is tight (sidebar). */
+  appStatusShort: { awaiting: "Needs your OK" },
 
   common: {
     loading: "Loading…",
@@ -60,6 +63,10 @@ export const copy = {
       notRunning: (app: string) => `Open ${app} to connect. Doppl notices it within a few seconds.`,
       promptHint: (app: string) => `The first time, macOS asks whether Doppl may control ${app}. Click OK.`,
       notInstalled: (app: string) => `${app} isn't installed on this Mac.`,
+      awaitingTitle: "Waiting for your permission",
+      awaiting: (app: string) =>
+        `macOS is asking whether Doppl may control ${app}. Click OK in that window; it can be hidden behind ${app} or other windows.`,
+      awaitingStarting: (app: string) => `If you don't see a prompt, ${app} may still be starting. Doppl connects as soon as it answers.`,
     },
     permission: {
       title: "Doppl needs permission to control this app",

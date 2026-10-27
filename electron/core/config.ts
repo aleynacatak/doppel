@@ -51,14 +51,16 @@ export async function createServices(
     () => settings.current.figmaPairingCode,
     () => settings.current.figmaPort,
   );
-  const indesign = new InDesignAdapter({ getTimeoutSec: () => settings.current.scriptTimeoutSec });
+  // Adobe apps report when a background probe answers (e.g. after the macOS permission prompt); set below.
+  let refreshApps = () => {};
+  const indesign = new InDesignAdapter({ getTimeoutSec: () => settings.current.scriptTimeoutSec, onStatusChange: () => refreshApps() });
   const figma = new FigmaAdapter({
     getToken: () => secrets.get("figmaToken"),
     getFiles: () => settings.current.figmaFiles,
     bridge,
     getTimeoutSec: () => settings.current.scriptTimeoutSec,
   });
-  const photoshop = new PhotoshopAdapter({ getTimeoutSec: () => settings.current.scriptTimeoutSec });
+  const photoshop = new PhotoshopAdapter({ getTimeoutSec: () => settings.current.scriptTimeoutSec, onStatusChange: () => refreshApps() });
   const registry = new AdapterRegistry([indesign, photoshop, figma]);
 
   const access = new AiAccessService({ settings, secrets, workerUrl });
@@ -66,6 +68,7 @@ export async function createServices(
   const ai = new ModelAiService({ registry, access, style, templates: EXAMPLE_ROUTINES });
   const qc = new QcService(ai);
   const apps = new AppStatusService(registry, emit.apps);
+  refreshApps = () => void apps.refresh();
   const figmaSetup = new FigmaService({ settings, secrets, bridge, userData: paths.userData, onChange: () => void apps.refresh() });
   await figmaSetup.preparePlugin().catch((err) => console.error("[figma plugin] couldn't prepare the plugin folder:", err));
   bridge.onChange(() => void apps.refresh());

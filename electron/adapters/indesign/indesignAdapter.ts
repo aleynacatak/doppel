@@ -42,6 +42,8 @@ import {
 interface Options {
   /** Seconds before a script is abandoned (Settings → script timeout). */
   getTimeoutSec: () => number;
+  /** The connection state changed without a status check (a background probe answered). */
+  onStatusChange?: () => void;
 }
 
 /** Real InDesign adapter: AppleScript → ExtendScript via osascript, in the main process. */
@@ -64,7 +66,7 @@ export class InDesignAdapter implements DesignAppAdapter {
   private readonly adobe: AdobeConnection;
 
   constructor(private readonly options: Options) {
-    this.adobe = new AdobeConnection(indesignBridge, PROBE, () => this.options.getTimeoutSec());
+    this.adobe = new AdobeConnection(indesignBridge, PROBE, () => this.options.getTimeoutSec(), { onChange: options.onStatusChange });
   }
 
   /** Runs a script and keeps the permission state up to date. */

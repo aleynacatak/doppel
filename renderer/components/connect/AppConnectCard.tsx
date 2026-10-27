@@ -27,6 +27,17 @@ function ScriptBridgeBody({ app }: { app: App }) {
   }
   const short = app.name.replace(/^Adobe /, "");
   if (app.status === "permission-denied") return <PermissionHelp appName={app.name} />;
+  if (app.status === "awaiting-permission") {
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="flex items-center gap-2 font-semibold">
+          <Spinner label={copy.connect.adobe.awaitingTitle} /> {copy.connect.adobe.awaitingTitle}
+        </p>
+        <p>{copy.connect.adobe.awaiting(short)}</p>
+        <p className="ui-small ui-muted">{copy.connect.adobe.awaitingStarting(short)}</p>
+      </div>
+    );
+  }
   if (app.status === "not-installed") return <p className="ui-muted">{copy.connect.adobe.notInstalled(short)}</p>;
   return (
     <div className="flex flex-col gap-1">

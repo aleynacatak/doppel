@@ -492,7 +492,11 @@ export class RoutineService {
       const status = await this.deps.apps.statusOf(c.task.appId);
       if (status !== "connected") {
         throw new ExecutionError(
-          status === "permission-denied" ? `Doppl isn't allowed to control ${adapter.name} yet.` : `${adapter.name} isn't connected.`,
+          status === "permission-denied"
+            ? `Doppl isn't allowed to control ${adapter.name} yet.`
+            : status === "awaiting-permission"
+              ? `macOS is asking whether Doppl may control ${adapter.name}. Click OK in that prompt, then try again.`
+              : `${adapter.name} isn't connected.`,
           undefined,
           "app-not-connected",
         );

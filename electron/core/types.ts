@@ -3,7 +3,8 @@
 
 export type AppId = "indesign" | "figma" | "photoshop" | (string & {});
 
-export type AppStatus = "connected" | "not-running" | "not-installed" | "permission-denied" | "needs-setup";
+/** "awaiting-permission": the app is open, but macOS is still asking whether Doppl may control it. */
+export type AppStatus = "connected" | "not-running" | "not-installed" | "permission-denied" | "awaiting-permission" | "needs-setup";
 
 export interface App {
   id: AppId;
