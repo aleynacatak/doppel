@@ -29,8 +29,8 @@ TOTAL_SPEND_CAP = "100"
 [[d1_databases]]
 binding = "DB"
 database_name = "doppl-demo"
-# Paste the id printed by `npx wrangler d1 create doppl-demo` here.
-database_id = "00000000-0000-0000-0000-000000000000"
+# From `npx wrangler d1 create doppl-demo` (an identifier, not a secret).
+database_id = "00febba5-d3b5-499d-ad3c-9f3eeede17e8"
 migrations_dir = "migrations"
 
 # 30 requests per minute per access code.
