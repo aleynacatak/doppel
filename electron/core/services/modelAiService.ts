@@ -128,23 +128,107 @@ export function toDraft(raw: Record<string, any> | undefined, appId: string, app
 }
 
 
-/** A Figma stage's action list, wherever the model put it ("actions", "body.actions", a JSON string…). */
-function stageActions(s: Record<string, any>): FigmaActionStep[] {
-  const candidates: unknown[] = [s.actions, s.body?.actions, s.body, s.script];
-  for (let c of candidates) {
-    if (typeof c === "string") {
+/** Why a Figma stage's action list couldn't be read, for the message back to the model (never saved with the routine). */
+const actionProblems = new WeakMap<Stage, string>();
+export const actionsProblem = (stage: Stage | undefined) => (stage ? actionProblems.get(stage) : undefined);
+
+type ActionsRead = { actions: FigmaActionStep[] } | { problem: string };
+
+/** An action list from parsed JSON: the list, { actions: [...] }, one action, or a list of JSON strings. */
+function actionsFrom(value: unknown): FigmaActionStep[] | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const v = value as { actions?: unknown; action?: unknown };
+    if (Array.isArray(v.actions)) return actionsFrom(v.actions);
+    if (typeof v.action === "string") return [value as FigmaActionStep];
+    return null;
+  }
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const list = value.map((a) => {
+    if (typeof a !== "string") return a;
+    try {
+      return JSON.parse(a);
+    } catch {
+      return a;
+    }
+  });
+  return list.every((a) => a && typeof a === "object" && !Array.isArray(a)) ? (list as FigmaActionStep[]) : null;
+}
+
+/**
+ * Reads the action list the model wrote as JSON text. Small slips are repaired here (code fences, trailing commas,
+ * text encoded twice); anything else comes back as a problem that says where the text breaks.
+ */
+export function readActionsText(raw: string): ActionsRead {
+  let text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  if (!text) return { problem: 'its "actions" text is empty.' };
+  for (let depth = 0; depth < 2; depth++) {
+    let parsed: unknown;
+    let firstError: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      firstError = err;
       try {
-        c = JSON.parse(c);
+        parsed = JSON.parse(text.replace(/,(\s*[\]}])/g, "$1"));
+        firstError = undefined;
       } catch {
-        continue;
+        // Report the original error: it points at the first slip.
       }
     }
-    if (Array.isArray(c) && c.length) return c as FigmaActionStep[];
-    if (c && typeof c === "object" && Array.isArray((c as { actions?: unknown }).actions) && (c as { actions: unknown[] }).actions.length) {
-      return (c as { actions: FigmaActionStep[] }).actions;
+    if (firstError) return { problem: describeJsonError(text, firstError) };
+    if (typeof parsed === "string") {
+      text = parsed.trim();
+      continue;
     }
+    const actions = actionsFrom(parsed);
+    if (actions) return { actions };
+    return {
+      problem: Array.isArray(parsed)
+        ? parsed.length === 0
+          ? 'its "actions" text is an empty list.'
+          : 'its "actions" text is a list, but not of actions (each action is an object like {"action":"setText",…}).'
+        : 'its "actions" text is JSON, but not a list of actions.',
+    };
   }
-  return [];
+  return { problem: 'its "actions" text is JSON text inside JSON text; write the list once.' };
+}
+
+/** Where JSON text breaks, in words the model can act on. */
+function describeJsonError(text: string, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const at = message.match(/position (\d+)/);
+  const pos = at ? Number(at[1]) : text.length;
+  const reason = message.replace(/\s*in JSON at position \d+.*$/, "").replace(/\s*\(line \d+ column \d+\)/, "");
+  if (pos >= text.length - 1 || /end of JSON input/i.test(message)) {
+    return (
+      `its "actions" text isn't a complete JSON list: it is ${text.length} characters long and stops at ` +
+      `"…${text.slice(-60)}". It may have been cut short, or a quote inside it wasn't escaped (inside the text, every " is written \\").`
+    );
+  }
+  return (
+    `its "actions" text isn't valid JSON (${reason}) at character ${pos + 1} of ${text.length}, right after ` +
+    `"…${text.slice(Math.max(0, pos - 60), pos)}" and before "${text.slice(pos, pos + 30)}…".`
+  );
+}
+
+/** A Figma stage's action list, wherever the model put it ("actions", "body.actions", a JSON string…). */
+function stageActions(s: Record<string, any>): ActionsRead {
+  const candidates: unknown[] = [s.actions, s.body?.actions, s.body, s.script];
+  let problem: string | undefined;
+  for (const c of candidates) {
+    if (typeof c === "string") {
+      if (!c.trim()) continue;
+      const read = readActionsText(c);
+      if ("actions" in read) return read;
+      // The model's "actions" text says most about what went wrong; a script in place of actions is named as such.
+      if (c === s.actions) problem ??= read.problem;
+      else if (c === s.script && !problem) problem = 'it has a "script", but Figma stages run an action list from the catalog, written as JSON text in "actions".';
+      continue;
+    }
+    const actions = actionsFrom(c);
+    if (actions) return { actions };
+  }
+  return { problem: problem ?? 'its "actions" text is missing or empty.' };
 }
 
 /** A script stage's ExtendScript body ("script", or "body" when the model used that name). */
@@ -164,12 +248,13 @@ export function toStagedDraft(raw: Record<string, any> | undefined, appVersions:
   if (params.some((p: ParamDef | null) => p === null)) throw new AiOutputError("Some params had an invalid key or type.");
   const stages: Stage[] = rawStages.map((s) => {
     const kind = s.kind === "actions" ? "actions" : "script";
-    return {
+    const read = kind === "actions" ? stageActions(s) : null;
+    const stage: Stage = {
       id: String(s.id ?? ""),
       name: String(s.name || s.id || "Stage").slice(0, 60),
       appId: String(s.app ?? s.appId ?? ""),
       kind,
-      body: kind === "actions" ? { actions: stageActions(s) } : stageScript(s),
+      body: read ? { actions: "actions" in read ? read.actions : [] } : stageScript(s),
       ...(s.repeat && typeof s.repeat.over === "string" && s.repeat.over.trim() ? { repeat: { over: s.repeat.over.trim() } } : {}),
       inputs: strings(s.inputs, 40),
       outputs: (Array.isArray(s.outputs) ? s.outputs : [])
@@ -179,6 +264,8 @@ export function toStagedDraft(raw: Record<string, any> | undefined, appVersions:
       document: s.document === "none" ? "none" : "open",
       modifiesDocument: s.modifiesDocument === true,
     };
+    if (read && "problem" in read) actionProblems.set(stage, read.problem);
+    return stage;
   });
   return {
     name: String(raw.name || "New routine").slice(0, 80),

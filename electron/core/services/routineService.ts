@@ -35,7 +35,7 @@ import { DEFAULT_QC_OPTIONS, ExecutionError, type RoutineExecutor, folderParams,
 import type { Storage } from "./storage";
 import { DataFileError, listFolderFiles, readDataFile } from "../helpers/dataFiles";
 import { stageSystemPrompt, stageTaskMessage, type StageTaskFacts } from "./aiPrompts";
-import { AiOutputError, toStagedDraft } from "./modelAiService";
+import { AiOutputError, actionsProblem, toStagedDraft } from "./modelAiService";
 import type { ChatMessage, ContentPart } from "./aiTransport";
 import type { QcService } from "./qcService";
 import { checkReadiness } from "../stages/readiness";
@@ -137,6 +137,9 @@ const usesStages = (task: Task) => {
   return apps.length > 1 || apps.some((a) => a.appId !== "indesign" || a.noDocument);
 };
 
+/** A Figma stage's "actions" as the model writes it: JSON text inside the routine's JSON. */
+const ACTIONS_TEXT_EXAMPLE = JSON.stringify(JSON.stringify([{ action: "duplicateNode", id: "label", node: "Label" }]));
+
 /**
  * Validation errors in the shape the model writes routines in: a stage's "actions" or "script", not Doppl's
  * internal "body". (Doppl's paths made the model move its actions to "body.actions", where they weren't read.)
@@ -149,10 +152,13 @@ export function errorsForModel(errors: ValidationError[], draft: RoutineDraft): 
     if (stage?.kind !== "actions") return { ...e, path: `stages[${m[1]}].script${m[2]}` };
     const path = `stages[${m[1]}].actions${m[2].replace(/^\.actions/, "")}`;
     if (m[2] === ".actions" && /too small|>=\s*1/i.test(e.message)) {
+      const problem = actionsProblem(stage) ?? 'its "actions" text is missing or empty.';
       return {
         ...e,
         path,
-        message: `Stage "${stage.id}" (${stage.appId}) has no actions. Put its action list in the stage's "actions" array, e.g. "actions": [{ "action": "duplicateNode", "id": "label", "node": "Label" }, …].`,
+        message:
+          `Stage "${stage.id}" (${stage.appId}) has no readable actions: ${problem} "actions" is the action list written as ` +
+          `JSON text (a string), e.g. "actions": ${ACTIONS_TEXT_EXAMPLE}.`,
       };
     }
     return { ...e, path };
@@ -1092,7 +1098,9 @@ export class RoutineService {
         try {
           draft = toStagedDraft(t.routine, versions);
         } catch (err) {
-          reply(`The routine couldn't be read: ${err instanceof AiOutputError ? err.message : errorMessage(err)} Send the complete routine again.`);
+          const reason = err instanceof AiOutputError ? err.message : errorMessage(err);
+          this.note(c, `The routine couldn't be read, sent back: ${reason}`);
+          reply(`The routine couldn't be read: ${reason} Send the complete routine again.`);
           continue;
         }
         const check = this.validate(draft, t.action === "propose_routine" ? state.samples : undefined);

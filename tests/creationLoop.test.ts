@@ -30,9 +30,70 @@ describe("reading the model's routine", () => {
     const draft = toStagedDraft({ name: "R", description: "", params: [], stages: [stage({ actions: [] })] }, {});
     const errors = errorsForModel(validateRoutine({ params: draft.params, stages: draft.stages! }, apps).errors, draft);
     expect(errors[0]).toMatchObject({ path: "stages[0].actions" });
-    expect(errors[0].message).toContain('Put its action list in the stage\'s "actions" array');
+    expect(errors[0].message).toContain("written as JSON text (a string)");
+    expect(errors[0].message).toContain('"actions": "[{\\"action\\":\\"duplicateNode\\",\\"id\\":\\"label\\",\\"node\\":\\"Label\\"}]"');
+    expect(errors[0].message).not.toContain("array");
     const bad = toStagedDraft({ name: "R", description: "", params: [], stages: [stage({ actions: [{ action: "setText", node: "A" }] })] }, {});
     expect(errorsForModel(validateRoutine({ params: [], stages: bad.stages! }, apps).errors, bad)[0].path).toBe("stages[0].actions[0].text");
+  });
+});
+
+describe("reading a Figma stage's actions text", () => {
+  const list = [
+    { action: "duplicateNode", id: "label", node: "Label" },
+    { action: "setText", node: "$label.#Name", text: "{{item.name}}" },
+  ];
+  const text = JSON.stringify(list);
+  const errorFor = (actionsText: unknown, extra: Record<string, unknown> = {}) => {
+    const draft = toStagedDraft({ name: "R", description: "", params: [], stages: [stage({ actions: actionsText, ...extra })] }, {});
+    const errors = errorsForModel(validateRoutine({ params: draft.params, stages: draft.stages! }, apps).errors, draft);
+    return { draft, message: errors.find((e) => e.path === "stages[0].actions")?.message ?? "" };
+  };
+
+  it("repairs small slips without asking the AI again", () => {
+    const slips = [
+      "```json\n" + text + "\n```",
+      text.replace("}]", "},]"),
+      JSON.stringify(text),
+      JSON.stringify({ actions: list }),
+      JSON.stringify(list.map((a) => JSON.stringify(a))),
+      JSON.stringify(list[0]),
+    ];
+    for (const slip of slips) {
+      const { draft, message } = errorFor(slip);
+      expect(message).toBe("");
+      expect((draft.stages![0].body as { actions: unknown[] }).actions.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("says where a broken list breaks", () => {
+    const broken = text.replace('"node":"Label"', '"node":"Label" "x":1');
+    const { message } = errorFor(broken);
+    expect(message).toContain('Stage "s2" (figma) has no readable actions');
+    expect(message).toMatch(/isn't valid JSON .* at character \d+ of \d+/);
+    expect(message).toContain('right after "…');
+    expect(message).toContain('"node":"Label"');
+  });
+
+  it("says when a list is cut short, with the likely cause", () => {
+    const { message } = errorFor(text.slice(0, 40));
+    expect(message).toContain("isn't a complete JSON list: it is 40 characters long");
+    expect(message).toContain('every " is written \\"');
+    expect(errorFor('[{').message).toContain("it is 2 characters long");
+  });
+
+  it("names empty lists, missing text, other JSON and scripts in place of actions", () => {
+    expect(errorFor("").message).toContain('its "actions" text is missing or empty.');
+    expect(errorFor(undefined).message).toContain('its "actions" text is missing or empty.');
+    expect(errorFor("[]").message).toContain("is an empty list");
+    expect(errorFor('["duplicate the label"]').message).toContain("is a list, but not of actions");
+    expect(errorFor('{"label":"x"}').message).toContain("is JSON, but not a list of actions");
+    expect(errorFor(undefined, { script: "figma.currentPage.selection" }).message).toContain('it has a "script", but Figma stages run an action list');
+  });
+
+  it("doesn't keep the problem with the saved routine", () => {
+    const { draft } = errorFor("[{");
+    expect(JSON.stringify(draft)).not.toContain("characters long");
   });
 });
 
