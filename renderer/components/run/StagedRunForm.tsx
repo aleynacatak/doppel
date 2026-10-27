@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { appLabel } from "@/lib/format";
-import { useAsync } from "@/lib/hooks";
+import { useAsync, useLiveReload } from "@/lib/hooks";
 import { useAiReviewAvailable, useShell } from "@/lib/store";
 import { AiCallCounter } from "../ui/AiCallCounter";
 import { Button } from "../ui/Button";
@@ -34,7 +34,9 @@ export function StagedRunForm({ routine }: { routine: Routine }) {
 
   // Readiness follows the apps: re-check when one connects, disconnects or opens another file.
   const appsKey = apps.map((a) => `${a.id}:${a.status}:${a.detail ?? ""}`).join("|");
-  const { data: readiness, loading } = useAsync(() => doppel().checkReadiness(routine.id, documents), [routine.id, appsKey, JSON.stringify(documents)]);
+  const { data: readiness, loading, reload } = useAsync(() => doppel().checkReadiness(routine.id, documents), [routine.id, appsKey, JSON.stringify(documents)]);
+  // Documents open and close without an app's status changing.
+  useLiveReload(reload, true);
   useEffect(() => {
     if (qcMode === "auto_ai" && !aiReviewAvailable) setQcMode("auto");
   }, [qcMode, aiReviewAvailable]);

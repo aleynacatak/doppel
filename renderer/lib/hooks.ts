@@ -68,7 +68,23 @@ export function useCreation(id: string | null) {
   return state;
 }
 
-/** Open documents of an app; reloads when the app connects or disconnects. */
+/** How often a shown document list is read again (documents open and close without the app's status changing). */
+const DOCUMENTS_REFRESH_MS = 4000;
+
+/** Re-runs `reload` every few seconds while `active`, and when the Doppl window gets focus again. */
+export function useLiveReload(reload: () => void, active: boolean, everyMs = DOCUMENTS_REFRESH_MS) {
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(reload, everyMs);
+    window.addEventListener("focus", reload);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", reload);
+    };
+  }, [reload, active, everyMs]);
+}
+
+/** Open documents of an app; reloads when the app connects or disconnects, and every few seconds while shown. */
 export function useOpenDocuments(appId: string | undefined) {
   const app = useApp(appId);
   const connected = app?.status === "connected";
@@ -76,5 +92,6 @@ export function useOpenDocuments(appId: string | undefined) {
     () => (appId && connected ? doppel().listOpenDocuments(appId) : Promise.resolve([])),
     [appId, connected, app?.detail],
   );
+  useLiveReload(state.reload, connected);
   return { ...state, connected, app };
 }
