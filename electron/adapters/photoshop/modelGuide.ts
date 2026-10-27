@@ -28,6 +28,14 @@ Helper functions (use these; don't call app.open, doc.save, doc.saveAs or doc.cl
 - saveCopy(folder?) -> path: saves a PSD copy named "<name>_doppl.psd" next to the source (or in a folder param).
   Only when the request explicitly asks for a saved PSD.
 - closeWithoutSaving(doc?): closes a document Doppl opened (default: active) without saving.
+- removeWhiteBackground(doc?, tolerance?) -> { removed }: makes a plain white background that touches the image's
+  corners transparent (white inside the subject stays). tolerance 0-255, default 24. Then trimTransparent(doc?).
+- trimTransparent(doc?): crops to the visible content (cuts off transparent edges).
+- dominantColor(docOrPath, { ignoreWhite? }) -> { hex: "#RRGGBB", r, g, b, share }: the most common color,
+  ignoring transparent pixels (and near-white ones with ignoreWhite). The source isn't changed.
+- setSolidColor(layer, "#RRGGBB" or { r, g, b }): sets the color of a Solid Color fill layer.
+Example (cut out a product photo): var img = openDocument(ctx.item.path); removeWhiteBackground(img);
+  trimTransparent(img); exportImage(ctx.join(ctx.workDir, ctx.item.stem + ".png"), "png");
 
 Units are pixels while the script runs. Throw new Error("plain message") when something required is missing.
 Return a small JSON-able summary or nothing.`;

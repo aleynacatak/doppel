@@ -143,6 +143,10 @@ It can use these helpers:
 | `exportImage(path, format, quality)` | Exports PNG, JPG or TIFF, only into picked folders or the stage folder. |
 | `saveCopy(folder?)` | Saves a PSD copy named `_doppl.psd` that never overwrites anything; only when a stage asks to save. |
 | `closeWithoutSaving(doc?)` | Closes a document; only documents Doppl opened. |
+| `removeWhiteBackground(doc?, tolerance?)` | Makes a plain white background that touches the corners transparent; white inside the subject stays. |
+| `trimTransparent(doc?)` | Crops to the visible content. |
+| `dominantColor(docOrPath, { ignoreWhite? })` | The most common color, ignoring transparent pixels: `{ hex, r, g, b, share }`. |
+| `setSolidColor(layer, color)` | Sets a Solid Color fill layer's color (`"#RRGGBB"` or `{ r, g, b }`). |
 
 Documents stay open across a stage's items and are closed without saving when the stage ends. The script check refuses `doc.save`, `saveAs`, `close`, `app.open` and direct file writes, so routines go through these helpers.
 

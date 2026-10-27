@@ -123,15 +123,19 @@ ${body}
 export const END_STAGE = String.raw`function (input) {
   DopplPS.makeContext(input);
   var owned = DopplPS.state.owned.slice(0), closed = 0;
-  var docs = DopplPS.all(app.documents);
   for (var i = 0; i < owned.length; i++) {
+    // Read the open documents again each time: a closed document's object is invalid afterwards.
+    var docs = DopplPS.all(app.documents);
     for (var j = 0; j < docs.length; j++) {
-      var p = DopplPS.pathOf(docs[j]);
-      var same = (owned[i].path && p && owned[i].path === p) || (!owned[i].path && !p && owned[i].name === docs[j].name);
-      if (same) {
-        try { docs[j].close(SaveOptions.DONOTSAVECHANGES); closed++; } catch (e) {}
-        break;
-      }
+      try {
+        var p = DopplPS.pathOf(docs[j]);
+        var same = (owned[i].path && p && owned[i].path === p) || (!owned[i].path && !p && owned[i].name === docs[j].name);
+        if (same) {
+          docs[j].close(SaveOptions.DONOTSAVECHANGES);
+          closed++;
+          break;
+        }
+      } catch (e) {}
     }
   }
   return { closed: closed };
