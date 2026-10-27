@@ -23,8 +23,11 @@ A value that is exactly one placeholder keeps its type (numbers, lists); inside 
 Rules:
 - Never copy literal data from the sample rows or file names into the actions; always use placeholders.
 - Never use absolute paths; image files come from {{item.path}}, {{params.<folder>}} + a name, or earlier stages.
-- setText loads fonts itself. Images: setImageFill with { "folder": "{{params.images}}", "name": "{{item.image}}" }
-  or { "file": "..." }. Barcodes: placeSvg with { "barcode": { "type": "ean13", "value": "{{item.ean}}" } }
+- setText loads fonts itself. Images: setImageFill with { "folder": "{{params.images}}", "name": "{{item.image}}" },
+  { "file": "..." }, or a file from an earlier stage by name: { "files": "{{stage.s1.outputs.files}}", "name": "{{item.image}}" }.
+- Style words from a data column with setTextStyleRanges ranges [{ "matchAny": "{{item.allergens}}", "wholeWord": true }]
+  (split by "," unless you give "separator").
+- Remove a placeholder fill with setProperties { "fills": [] }. Barcodes: placeSvg with { "barcode": { "type": "ean13", "value": "{{item.ean}}" } }
   (EAN-13, EAN-8, UPC-A, Code 128; Doppl checks the check digit).
 - exportNode writes a file into the stage's working folder (default) or a folder param; give "output": "<key>"
   (a fileList output of the stage) so later stages (e.g. Photoshop) get the files.

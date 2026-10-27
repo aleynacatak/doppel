@@ -73,6 +73,22 @@ async function readImage(filePath: string): Promise<{ bytes: string; name: strin
   return { bytes: bytes.toString("base64"), name };
 }
 
+/** A file from a list by name: exact, case-insensitive, or by name without extension (either side). */
+export function pickByName(files: unknown, name: string): string | null {
+  const list = (Array.isArray(files) ? files : [files])
+    .map((f) => (typeof f === "string" ? f : f && typeof f === "object" && "path" in f ? String((f as { path: unknown }).path) : ""))
+    .filter(Boolean);
+  const want = name.trim().normalize("NFC");
+  const stem = (s: string) => s.replace(/\.[^./]+$/, "");
+  const base = (p: string) => path.basename(p).normalize("NFC");
+  return (
+    list.find((p) => base(p) === want) ??
+    list.find((p) => base(p).toLowerCase() === want.toLowerCase()) ??
+    list.find((p) => stem(base(p)).toLowerCase() === stem(want).toLowerCase()) ??
+    null
+  );
+}
+
 function insideAny(target: string, folders: string[]) {
   const t = path.resolve(target);
   return folders.some((f) => {
@@ -94,9 +110,16 @@ export async function prepareActions(actions: Record<string, unknown>[], allowed
     const a = { ...raw };
     const where = `Action ${i + 1} (${String(a.action)})`;
     if (a.action === "setImageFill") {
-      const image = a.image as { file?: string; folder?: string; name?: string } | undefined;
+      const image = a.image as { file?: string; folder?: string; files?: unknown; name?: string } | undefined;
       if (image?.file) {
         a.image = await readImage(String(image.file));
+      } else if (image && image.files !== undefined && image.name !== undefined) {
+        const found = pickByName(image.files, String(image.name));
+        if (!found) {
+          const message = `Image "${image.name}" isn't among the files from the earlier stage`;
+          throw new ItemDataError(message, { type: "file-missing", message });
+        }
+        a.image = await readImage(found);
       } else if (image?.folder && image.name !== undefined) {
         let found: string | null;
         try {

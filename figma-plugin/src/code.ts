@@ -190,7 +190,8 @@ async function inspect(ref: string | undefined, depth: number) {
     return {
       file: info(),
       pages: figma.root.children.map((p) => ({ id: p.id, name: p.name, current: p === page })),
-      selection: page.selection.map(summary),
+      // What the designer selected is usually the template: describe it in full.
+      selection: page.selection.slice(0, 3).map((n) => interpreter.describe(n, 5)),
       page: interpreter.describe(page, Math.min(depth, 3)),
     };
   }

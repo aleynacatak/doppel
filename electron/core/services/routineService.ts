@@ -79,7 +79,11 @@ const MAX_FIXES = 2;
 
 /** Multi-app creation: AI calls per creation (the demo Worker's limit) and model turns in the tool loop. */
 const MAX_CREATION_CALLS = 15;
-const MAX_TURNS = 10;
+const MAX_TURNS = 12;
+/** Inspect answers per creation; the documents' first inspection is already in the task. */
+const MAX_INSPECTIONS = 3;
+/** Layers one inspect answer may look at. */
+const MAX_NODES_PER_INSPECT = 8;
 /** Calls kept for checking the trial result (visual review, key objects). */
 const REVIEW_RESERVE = 3;
 const RESULT_CHARS = 9000;
@@ -101,6 +105,28 @@ const usesStages = (task: Task) => {
   const apps = taskApps(task);
   return apps.length > 1 || apps.some((a) => a.appId !== "indesign" || a.noDocument);
 };
+
+/**
+ * Validation errors in the shape the model writes routines in: a stage's "actions" or "script", not Doppl's
+ * internal "body". (Doppl's paths made the model move its actions to "body.actions", where they weren't read.)
+ */
+export function errorsForModel(errors: ValidationError[], draft: RoutineDraft): ValidationError[] {
+  return errors.map((e) => {
+    const m = e.path.match(/^stages\[(\d+)\]\.body(.*)$/);
+    if (!m) return e;
+    const stage = draft.stages?.[Number(m[1])];
+    if (stage?.kind !== "actions") return { ...e, path: `stages[${m[1]}].script${m[2]}` };
+    const path = `stages[${m[1]}].actions${m[2].replace(/^\.actions/, "")}`;
+    if (m[2] === ".actions" && /too small|>=\s*1/i.test(e.message)) {
+      return {
+        ...e,
+        path,
+        message: `Stage "${stage.id}" (${stage.appId}) has no actions. Put its action list in the stage's "actions" array, e.g. "actions": [{ "action": "duplicateNode", "id": "label", "node": "Label" }, …].`,
+      };
+    }
+    return { ...e, path };
+  });
+}
 
 /** Every "name" in an inspection result (layer and frame names may appear in routines). */
 function namesIn(value: unknown, out = new Set<string>()): Set<string> {
@@ -396,7 +422,8 @@ export class RoutineService {
       },
       isCancelled,
       // Retries of the same creation keep its id; a repair is a new creation with its own id.
-      creationId: state.creation.id,
+      // Each attempt has its own call budget at the demo service ("Try again" starts a new creation there).
+      creationId: state.attempt > 0 ? `${state.creation.id}-r${state.attempt + 1}` : state.creation.id,
       onQuota: (q) => {
         state.creation.quota = q.creations;
         this.deps.access.noteQuota(q.creations, q.samImages);
@@ -621,7 +648,8 @@ export class RoutineService {
       if (!doc) continue;
       if (isCancelled()) throw new CancelledError();
       if (app) app.documentId = doc.id;
-      const inspection = await registry.get(r.appId).inspectForModel(doc.id, { depth: 2 }).catch((err) => ({ error: errorMessage(err) }));
+      // Deep enough that the model rarely needs to inspect again (Figma also details the designer's selection).
+      const inspection = await registry.get(r.appId).inspectForModel(doc.id, { depth: 3 }).catch((err) => ({ error: errorMessage(err) }));
       documents.push({ appId: r.appId, id: doc.id, name: doc.name, inspection });
     }
     c.task.apps = apps;
@@ -845,10 +873,18 @@ export class RoutineService {
         { role: "system", content: stageSystemPrompt(apps.map((id) => ({ adapter: registry.get(id), manifest: registry.get(id).capabilityManifest() })), MAX_TURNS) },
         { role: "user", content: stageTaskMessage(facts) },
       ];
-      const reply = (content: string | ContentPart[]) => messages.push({ role: "user", content });
       let asked = false;
       let lastProblem = "";
-      for (let turn = 1; ; turn++) {
+      let inspections = 0;
+      let turn = 0;
+      // Every reply says how many answers are left, so the model proposes in time.
+      const budget = () => `[${Math.max(0, MAX_TURNS - turn)} of ${MAX_TURNS} answers left]`;
+      const reply = (content: string | ContentPart[]) =>
+        messages.push({
+          role: "user",
+          content: typeof content === "string" ? `${budget()} ${content}` : [{ type: "text", text: budget() }, ...content],
+        });
+      for (turn = 1; ; turn++) {
         if (isCancelled()) throw new CancelledError();
         if (turn > MAX_TURNS || c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE) {
           throw new ExecutionError(
@@ -889,12 +925,20 @@ export class RoutineService {
             reply(`Can't inspect: app must be one of ${apps.join(", ")} with an open document.`);
             continue;
           }
-          this.note(c, `Looked at ${registry.get(appId).name}${t.node ? ` · ${t.node}` : ""}`);
-          const result = await registry
-            .get(appId)
-            .inspectForModel(String(t.document || doc!.documentId), { node: t.node, depth: t.depth })
-            .catch((err) => ({ error: errorMessage(err) }));
-          reply(`Inspection of ${appId}${t.node ? ` node "${t.node}"` : ""}: ${clip(result)}`);
+          if (++inspections > MAX_INSPECTIONS) {
+            reply(`You've used your ${MAX_INSPECTIONS} inspections. Propose the complete routine now with what you know.`);
+            continue;
+          }
+          const nodes: (string | undefined)[] = Array.isArray(t.nodes) && t.nodes.length ? t.nodes.slice(0, MAX_NODES_PER_INSPECT).map(String) : [t.node];
+          this.note(c, `Looked at ${registry.get(appId).name}${nodes[0] ? ` · ${nodes.join(", ")}` : ""}`);
+          const results: Record<string, unknown> = {};
+          for (const node of nodes) {
+            results[node ?? "document"] = await registry
+              .get(appId)
+              .inspectForModel(String(t.document || doc!.documentId), { node, depth: t.depth })
+              .catch((err) => ({ error: errorMessage(err) }));
+          }
+          reply(`Inspection of ${appId} (${inspections} of ${MAX_INSPECTIONS} inspections used): ${clip(results, 14000)}`);
           continue;
         }
 
@@ -908,9 +952,10 @@ export class RoutineService {
         }
         const check = this.validate(draft, t.action === "propose_routine" ? samples : undefined);
         if (!check.ok) {
-          lastProblem = check.errors.map((e) => `${e.path}: ${e.message}`).join(" · ");
-          this.note(c, `${t.action === "propose_routine" ? "Proposal" : "Preview"} had ${plural(check.errors.length, "problem")}; sent back to fix`);
-          reply(`Validation failed. Fix these and send the whole routine again:\n${clip(check.errors as ValidationError[], 6000)}`);
+          const errors = errorsForModel(check.errors, draft);
+          lastProblem = errors.map((e) => `${e.path}: ${e.message}`).join(" · ");
+          this.note(c, `${t.action === "propose_routine" ? "Proposal" : "Preview"} had ${plural(errors.length, "problem")}; sent back to fix`);
+          reply(`Validation failed. Fix these and send the whole routine again:\n${clip(errors, 6000)}`);
           continue;
         }
 

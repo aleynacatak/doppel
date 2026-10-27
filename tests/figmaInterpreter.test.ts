@@ -115,6 +115,14 @@ describe("text", () => {
       [6, 11],
       [27, 32],
     ]);
+    // A list of words from a data cell (e.g. an allergens column).
+    title.rangeCalls = [];
+    const res3 = await run(figma, [{ action: "setTextStyleRanges", node: "Title", ranges: [{ matchAny: "comb, Fresh ,", wholeWord: false }], style: { fontStyle: "Bold" } }]);
+    expect(res3.ok).toBe(true);
+    expect(title.rangeCalls.filter((c) => c.method === "fontName").map((c) => [c.start, c.end])).toEqual([
+      [18, 22],
+      [0, 5],
+    ]);
     figma.missingFonts.add("Inter/Black");
     const res2 = await run(figma, [{ action: "setTextStyleRanges", node: "Title", ranges: [{ start: 0, end: 5 }], style: { fontStyle: "Black" } }]);
     expect(res2.findings.map((f) => f.type)).toContain("font-style-missing");

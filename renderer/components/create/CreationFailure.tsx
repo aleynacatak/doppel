@@ -49,6 +49,7 @@ export function CreationFailure({
     >
       <p>{error?.message}</p>
       {error?.detail && <p className="ui-muted">{error.detail}</p>}
+      {creation.aiCalls > 0 && action !== "start-over" && <p className="ui-small ui-muted">{copy.create.retryHint}</p>}
     </Notice>
   );
 }

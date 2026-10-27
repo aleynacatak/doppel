@@ -396,11 +396,17 @@ export class Interpreter {
         }
         const text = node.characters;
         const spans: [number, number][] = [];
+        const find = (word: string, wholeWord?: boolean, caseSensitive?: boolean) => {
+          const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(wholeWord ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped, `g${caseSensitive ? "" : "i"}u`);
+          for (const m of text.matchAll(re)) spans.push([m.index!, m.index! + m[0].length]);
+        };
         for (const r of a.ranges) {
           if ("match" in r) {
-            const escaped = r.match.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const re = new RegExp(r.wholeWord ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped, `g${r.caseSensitive ? "" : "i"}u`);
-            for (const m of text.matchAll(re)) spans.push([m.index!, m.index! + m[0].length]);
+            find(r.match, r.wholeWord, r.caseSensitive);
+          } else if ("matchAny" in r) {
+            const words = Array.isArray(r.matchAny) ? r.matchAny : r.matchAny.split(r.separator ?? ",");
+            for (const w of words.map((x) => x.trim()).filter(Boolean)) find(w, r.wholeWord, r.caseSensitive);
           } else {
             const start = Math.min(r.start, text.length);
             const end = Math.min(r.end, text.length);

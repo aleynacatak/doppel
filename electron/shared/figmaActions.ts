@@ -64,6 +64,12 @@ function makeCatalog<M extends Mode>(mode: M) {
               folder: z.string().min(1).describe("A folder param, e.g. {{params.images}}"),
               name: z.string().min(1).describe("File name in that folder, with or without extension, e.g. {{item.image}}"),
             }),
+            z
+              .object({
+                files: z.union([z.array(z.string()), placeholder]).describe('A list of files, e.g. "{{stage.s1.outputs.files}}"'),
+                name: z.string().min(1).describe("The file to pick, by name with or without extension, e.g. {{item.image}}"),
+              })
+              .describe("Pick one file by name from a list, e.g. an earlier stage's output files"),
           ])
           .describe("PNG, JPEG or GIF up to 4096 px; Doppl reads the file and sends it to Figma");
   const imageWire = z.object({ bytes: z.string().min(1), name: z.string().optional() });
@@ -144,6 +150,14 @@ function makeCatalog<M extends Mode>(mode: M) {
           z.union([
             z.object({ start: num(z.number().int().min(0)), end: num(z.number().int().min(0)) }),
             z.object({ match: z.string().min(1), wholeWord: bool().optional(), caseSensitive: bool().optional() }),
+            z
+              .object({
+                matchAny: z.union([z.string(), z.array(z.string())]).describe('Several words or phrases, e.g. a data column "{{item.allergens}}"'),
+                separator: z.string().min(1).optional().describe('Splits a text into words (default ",")'),
+                wholeWord: bool().optional(),
+                caseSensitive: bool().optional(),
+              })
+              .describe("Every occurrence of any of these words"),
           ]),
         )
         .min(1),
@@ -206,7 +220,7 @@ function makeCatalog<M extends Mode>(mode: M) {
     action("exportNode", "Exports a node as a file. Result: the file path.", {
       node: ref,
       format: z.enum(EXPORT_FORMATS),
-      scale: num(z.number().min(0.1).max(4)).optional().describe("PNG/JPG only (default 1)"),
+      scale: num(z.number().min(0.1).max(10)).optional().describe("PNG/JPG only (default 1)"),
       fileName: z.string().min(1).optional().describe("Without extension; default: the node's name"),
       folder: z.string().min(1).optional().describe("A folder param ({{params.out}}); default: the stage's working folder"),
     }),

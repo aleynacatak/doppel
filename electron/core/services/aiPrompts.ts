@@ -231,6 +231,7 @@ export const STAGE_TURN_SCHEMA = {
     app: { type: "string" },
     document: { type: "string" },
     node: { type: "string" },
+    nodes: { type: "array", items: { type: "string" }, description: "inspect: several layers at once (names, paths or ids)" },
     depth: { type: "number" },
     stageId: { type: "string" },
     sampleItemIndex: { type: "number" },
@@ -269,7 +270,9 @@ earlier stage. Files a stage hands to later stages go to its working folder and 
 (type "fileList"); final deliverables go into a folder param with role "output".
 
 Answer with ONE JSON object per turn, matching the schema. "action" is one of:
-- "inspect": a deeper look at a document: app, document (id from the list below), optional node and depth.
+- "inspect": a deeper look at a document: app, document (id from the list below), optional "nodes" (several
+  layers at once, by name, path or id) and depth. At most 3 inspections in total: ask for every layer you need
+  in one go. The documents below already include their structure (and, in Figma, the designer's selection).
 - "preview_stage": runs stageId of your draft "routine" on one sample item (sampleItemIndex, 0-based) in a
   scratch copy (Figma: a temporary page that is deleted after; Photoshop: never saved; InDesign: a hidden copy).
   Earlier stages run first on the same item. You get results, errors and a preview image.
@@ -278,8 +281,8 @@ Answer with ONE JSON object per turn, matching the schema. "action" is one of:
   sample item. Problems come back to you as structured errors; fix them and propose again.
 - "ask_question": one clarifying question with 2–4 short options, only when a wrong guess would make the routine
   useless. At most once, and only as your first answer.
-You have at most ${maxTurns} answers in total. Propose a complete routine early (by your 3rd or 4th answer) and
-improve it from the feedback; previews are optional.
+You have at most ${maxTurns} answers in total; every reply from Doppl starts with how many are left. Propose a
+complete routine early (by your 3rd or 4th answer) and improve it from the feedback; previews are optional.
 
 Writing the routine:
 - name: max 6 words; description: one sentence; each stage has 2–5 plain-language steps (no code terms).
@@ -329,7 +332,7 @@ export function stageTaskMessage(f: StageTaskFacts) {
     `House style: ${rules}`,
     "Open documents:",
     ...f.documents.map((d) =>
-      d.id ? `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, 7000)}` : `- ${d.appId}: ${String(d.inspection)}`,
+      d.id ? `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, 14000)}` : `- ${d.appId}: ${String(d.inspection)}`,
     ),
     ...(f.current ? [`Current routine: ${clip(f.current.routine, 12000)}`, `What went wrong: ${f.current.problems.join(" | ")}`, "Fix it and propose the complete corrected routine."] : []),
   ].join("\n");

@@ -3,6 +3,7 @@ import type { RoutineTemplate } from "../../adapters/types";
 import type {
   DocumentSummary,
   EnvironmentCheck,
+  FigmaActionStep,
   ObjectCheckDef,
   ParamDef,
   ParamType,
@@ -119,6 +120,32 @@ export function toDraft(raw: Record<string, any> | undefined, appId: string, app
 }
 
 
+/** A Figma stage's action list, wherever the model put it ("actions", "body.actions", a JSON string…). */
+function stageActions(s: Record<string, any>): FigmaActionStep[] {
+  const candidates: unknown[] = [s.actions, s.body?.actions, s.body, s.script];
+  for (let c of candidates) {
+    if (typeof c === "string") {
+      try {
+        c = JSON.parse(c);
+      } catch {
+        continue;
+      }
+    }
+    if (Array.isArray(c) && c.length) return c as FigmaActionStep[];
+    if (c && typeof c === "object" && Array.isArray((c as { actions?: unknown }).actions) && (c as { actions: unknown[] }).actions.length) {
+      return (c as { actions: FigmaActionStep[] }).actions;
+    }
+  }
+  return [];
+}
+
+/** A script stage's ExtendScript body ("script", or "body" when the model used that name). */
+function stageScript(s: Record<string, any>): string {
+  if (typeof s.script === "string" && s.script.trim()) return s.script.trim();
+  if (typeof s.body === "string") return s.body.trim();
+  return "";
+}
+
 /** Turns the model's multi-app routine JSON into a draft. Structure is checked later by the validator. */
 export function toStagedDraft(raw: Record<string, any> | undefined, appVersions: Record<string, string>): RoutineDraft {
   if (!raw || typeof raw !== "object") throw new AiOutputError("The answer didn't contain a routine.");
@@ -134,7 +161,7 @@ export function toStagedDraft(raw: Record<string, any> | undefined, appVersions:
       name: String(s.name || s.id || "Stage").slice(0, 60),
       appId: String(s.app ?? s.appId ?? ""),
       kind,
-      body: kind === "actions" ? { actions: Array.isArray(s.actions) ? s.actions : [] } : typeof s.script === "string" ? s.script.trim() : "",
+      body: kind === "actions" ? { actions: stageActions(s) } : stageScript(s),
       ...(s.repeat && typeof s.repeat.over === "string" && s.repeat.over.trim() ? { repeat: { over: s.repeat.over.trim() } } : {}),
       inputs: strings(s.inputs, 40),
       outputs: (Array.isArray(s.outputs) ? s.outputs : [])
