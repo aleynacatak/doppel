@@ -8,11 +8,13 @@ import { Notice } from "../ui/Notice";
 export function CreationFailure({
   creation,
   onRetry,
+  onContinue,
   onStartOver,
   onDiscard,
 }: {
   creation: Creation;
   onRetry: () => void;
+  onContinue: () => void;
   onStartOver: () => void;
   onDiscard: () => void;
 }) {
@@ -34,13 +36,18 @@ export function CreationFailure({
               {copy.create.actions[action]}
             </ButtonLink>
           )}
+          {creation.canContinue && (
+            <Button variant="primary" onClick={onContinue}>
+              {copy.create.continue}
+            </Button>
+          )}
           {action === "start-over" ? (
-            <Button variant="primary" onClick={onStartOver}>
+            <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={onStartOver}>
               {copy.create.actions["start-over"]}
             </Button>
           ) : (
-            <Button variant={settingsAction ? "secondary" : "primary"} onClick={onRetry}>
-              {copy.common.tryAgain}
+            <Button variant={settingsAction || creation.canContinue ? "secondary" : "primary"} onClick={onRetry}>
+              {creation.canContinue ? copy.create.startOver : copy.common.tryAgain}
             </Button>
           )}
           <Button onClick={onDiscard}>{copy.common.discard}</Button>
@@ -49,7 +56,11 @@ export function CreationFailure({
     >
       <p>{error?.message}</p>
       {error?.detail && <p className="ui-muted">{error.detail}</p>}
-      {creation.aiCalls > 0 && action !== "start-over" && <p className="ui-small ui-muted">{copy.create.retryHint}</p>}
+      {creation.canContinue ? (
+        <p className="ui-small ui-muted">{copy.create.continueHint}</p>
+      ) : (
+        creation.aiCalls > 0 && action !== "start-over" && <p className="ui-small ui-muted">{copy.create.retryHint}</p>
+      )}
     </Notice>
   );
 }

@@ -23,6 +23,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   answerQuestion: true,
   cancelCreation: true,
   retryCreation: true,
+  continueCreation: true,
   saveRoutine: true,
   discardCreation: true,
   repairRoutine: true,

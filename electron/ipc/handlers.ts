@@ -40,6 +40,7 @@ export function registerIpc(s: Services) {
     answerQuestion: (id, questionId, optionId) => s.routines.answer(id, questionId, optionId),
     cancelCreation: (id) => s.routines.cancel(id),
     retryCreation: (id) => s.routines.retry(id),
+    continueCreation: (id) => s.routines.continue(id),
     saveRoutine: (id, input) => s.routines.save(id, input),
     discardCreation: (id) => s.routines.discard(id),
     repairRoutine: (routineId, runId) => s.routines.repair(routineId, runId),

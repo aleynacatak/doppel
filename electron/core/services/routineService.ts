@@ -50,6 +50,32 @@ const SAMPLE_TEXT = Array.from(
     `Sample paragraph ${i + 1}. Doppl placed this text during a trial run to check that the routine flows copy into your template, adds pages when the text is longer than the frame, and keeps your paragraph styles. Nothing here is saved to your document.`,
 ).join("\n\n");
 
+/** What a multi-app creation has done so far; kept after a failure so it can continue there. */
+interface StagedProgress {
+  /** The whole exchange with the model (instructions, task, answers, Doppl's replies). */
+  messages: ChatMessage[];
+  apps: AppId[];
+  versions: Record<string, string>;
+  previous?: ParamValues;
+  asked: boolean;
+  inspections: number;
+  lastProblem: string;
+}
+
+/** AI errors where continuing can't help until the designer changes something in Settings. */
+const NO_CONTINUE_CODES = new Set([
+  "no_access",
+  "invalid_code",
+  "code_expired",
+  "code_revoked",
+  "quota_exhausted",
+  "demo_paused",
+  "own_key_invalid",
+  "own_key_billing",
+  "own_key_forbidden",
+  "spend_limit",
+]);
+
 interface CreationState {
   creation: Creation;
   cancelled: boolean;
@@ -59,6 +85,8 @@ interface CreationState {
   samples?: ValidationSamples;
   /** Sample data files (attached, or found in attached folders) the trial uses for dataFile params. */
   dataFiles?: string[];
+  /** Multi-app creation: the model exchange so far ("Continue where it left off"). */
+  progress?: StagedProgress;
 }
 
 function freshStages(): CreationStage[] {
@@ -322,7 +350,28 @@ export class RoutineService {
     state.answer?.("");
     state.creation.status = "cancelled";
     state.creation.question = undefined;
+    state.creation.canContinue = !!state.progress;
     this.emit(state.creation);
+  }
+
+  /**
+   * Continues a failed or cancelled multi-app creation where it stopped: the model keeps everything it saw and
+   * wrote, and gets a fresh budget. At the demo service that is a new creation (one more from the code).
+   */
+  async continue(id: string): Promise<Creation> {
+    const state = this.requireState(id);
+    const c = state.creation;
+    if (!state.progress || (c.status !== "failed" && c.status !== "cancelled")) {
+      throw new Error("This routine can't continue where it stopped. Start it again instead.");
+    }
+    state.cancelled = false;
+    state.attempt += 1;
+    state.answer?.("");
+    Object.assign(c, { status: "running", question: undefined, error: undefined, draft: undefined, outputs: [], trialStages: undefined, canContinue: false });
+    c.stages = freshStages();
+    this.emit(c);
+    void this.runStaged(state, true);
+    return c;
   }
 
   async retry(id: string): Promise<Creation> {
@@ -331,7 +380,8 @@ export class RoutineService {
     state.cancelled = false;
     state.attempt += 1;
     state.answer?.("");
-    Object.assign(c, { status: "running", stages: freshStages(), outputs: [], question: undefined, error: undefined, draft: undefined, activity: [], trialStages: undefined });
+    state.progress = undefined;
+    Object.assign(c, { status: "running", stages: freshStages(), outputs: [], question: undefined, error: undefined, draft: undefined, activity: [], trialStages: undefined, canContinue: false });
     this.emit(c);
     const staged = usesStages(c.task) || !!(c.mode === "repair" && (await this.deps.storage.getRoutine(c.routineId!))?.stages?.length);
     void (staged ? this.runStaged(state) : c.mode === "repair" ? this.runRepair(state) : this.runCreate(state));
@@ -534,6 +584,8 @@ export class RoutineService {
         : mapped instanceof ExecutionError
           ? { message: mapped.message, detail: mapped.detail, kind: mapped.kind }
           : { message: "Something went wrong.", detail: errorMessage(err), kind: "generic" };
+    // Once the model has started, the work so far can be kept, unless AI access itself needs fixing first.
+    c.canContinue = !!state.progress && !(mapped instanceof AiError && NO_CONTINUE_CODES.has(mapped.code));
     this.emit(c);
   }
 
@@ -895,39 +947,54 @@ export class RoutineService {
    * inspect documents, preview a stage on one sample item, and propose the routine; Doppl validates proposals
    * and runs a trial on the first sample item, sending problems back until the routine is valid and works.
    */
-  private async runStaged(state: CreationState) {
+  private async runStaged(state: CreationState, resume = false) {
     const c = state.creation;
     const { isCancelled, ai } = this.context(state);
     const stage = { current: "read" as CreationStageKey };
-    const versions: Record<string, string> = {};
+    // Each attempt has its own call budget at the demo service, so count this attempt's calls only.
+    const startCalls = c.aiCalls;
+    const callsUsed = () => c.aiCalls - startCalls;
     try {
       this.setStage(c, "read", "active");
       await this.prepareAi(c);
-      const { facts, samples, apps, dataFiles } = await this.gatherFacts(c, isCancelled);
-      state.samples = samples;
-      state.dataFiles = dataFiles;
-      let previous: ParamValues | undefined;
-      if (c.mode === "repair") {
-        const routine = await this.requireRoutine(c.routineId!);
-        const run = c.failedRunId ? await this.deps.storage.getRun(c.failedRunId) : null;
-        previous = run?.params;
-        const failed = run?.outputs.filter((o) => o.status === "failed").slice(0, 8).map((o) => `${o.itemLabel ?? o.label}: ${o.error ?? ""}`) ?? [];
-        facts.current = { routine: this.routineForModel(routine), problems: [run?.error, run?.errorDetail, ...failed].filter((x): x is string => !!x) };
-        if (facts.current.problems.length === 0) facts.current.problems.push("The designer asked for a repair; check the routine against the documents.");
+      const registry = this.deps.registry;
+      let p = resume ? state.progress : undefined;
+      if (!p) {
+        const { facts, samples, apps, dataFiles } = await this.gatherFacts(c, isCancelled);
+        state.samples = samples;
+        state.dataFiles = dataFiles;
+        let previous: ParamValues | undefined;
+        if (c.mode === "repair") {
+          const routine = await this.requireRoutine(c.routineId!);
+          const run = c.failedRunId ? await this.deps.storage.getRun(c.failedRunId) : null;
+          previous = run?.params;
+          const failed = run?.outputs.filter((o) => o.status === "failed").slice(0, 8).map((o) => `${o.itemLabel ?? o.label}: ${o.error ?? ""}`) ?? [];
+          facts.current = { routine: this.routineForModel(routine), problems: [run?.error, run?.errorDetail, ...failed].filter((x): x is string => !!x) };
+          if (facts.current.problems.length === 0) facts.current.problems.push("The designer asked for a repair; check the routine against the documents.");
+        }
+        const versions: Record<string, string> = {};
+        for (const appId of apps) versions[appId] = (await registry.get(appId).getAppVersion().catch(() => null)) ?? "";
+        this.setStage(c, "read", "done", `${plural(facts.documents.length, "document")} · ${plural(facts.samples.length, "data file")}`);
+        p = state.progress = {
+          messages: [
+            { role: "system", content: stageSystemPrompt(apps.map((id) => ({ adapter: registry.get(id), manifest: registry.get(id).capabilityManifest() })), MAX_TURNS) },
+            { role: "user", content: stageTaskMessage(facts) },
+          ],
+          apps,
+          versions,
+          previous,
+          asked: false,
+          inspections: 0,
+          lastProblem: "",
+        };
+      } else {
+        this.setStage(c, "read", "done", "Kept from before");
       }
-      for (const appId of apps) versions[appId] = (await this.deps.registry.get(appId).getAppVersion().catch(() => null)) ?? "";
-      this.setStage(c, "read", "done", `${plural(facts.documents.length, "document")} · ${plural(facts.samples.length, "data file")}`);
+      const progress = p;
+      const { messages, apps, versions, previous } = progress;
 
       stage.current = "write";
       this.setStage(c, "write", "active");
-      const registry = this.deps.registry;
-      const messages: ChatMessage[] = [
-        { role: "system", content: stageSystemPrompt(apps.map((id) => ({ adapter: registry.get(id), manifest: registry.get(id).capabilityManifest() })), MAX_TURNS) },
-        { role: "user", content: stageTaskMessage(facts) },
-      ];
-      let asked = false;
-      let lastProblem = "";
-      let inspections = 0;
       let turn = 0;
       // Every reply says how many answers are left, so the model proposes in time.
       const budget = () => `[${Math.max(0, MAX_TURNS - turn)} of ${MAX_TURNS} answers left]`;
@@ -939,12 +1006,20 @@ export class RoutineService {
         this.record(c, messages);
       };
       this.record(c, messages);
+      if (resume) {
+        this.note(c, "Continued where it left off, with a fresh AI budget");
+        reply(
+          `Doppl continues where you left off, with a fresh budget of ${MAX_TURNS} answers.` +
+            (progress.lastProblem ? ` The last problem was: ${clip(progress.lastProblem, 4000)}` : "") +
+            " Fix it and propose the complete routine.",
+        );
+      }
       for (turn = 1; ; turn++) {
         if (isCancelled()) throw new CancelledError();
-        if (turn > MAX_TURNS || c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE) {
+        if (turn > MAX_TURNS || callsUsed() >= MAX_CREATION_CALLS - REVIEW_RESERVE) {
           throw new ExecutionError(
             `Doppl couldn't finish this routine within the AI limit for one creation (${MAX_CREATION_CALLS} calls). Try describing it in smaller steps.`,
-            lastProblem || undefined,
+            progress.lastProblem || undefined,
             "validation",
           );
         }
@@ -955,8 +1030,8 @@ export class RoutineService {
         } catch (err) {
           // An answer that was cut off or wasn't JSON: ask for a shorter one while the budget lasts.
           const unusable = err instanceof AiError && (err.code === "ai_output_cut" || err.code === "ai_output");
-          if (!unusable || turn >= MAX_TURNS || c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE) throw err;
-          lastProblem = (err as AiError).message;
+          if (!unusable || turn >= MAX_TURNS || callsUsed() >= MAX_CREATION_CALLS - REVIEW_RESERVE) throw err;
+          progress.lastProblem = (err as AiError).message;
           this.note(c, (err as AiError).code === "ai_output_cut" ? "The AI's answer was too long and got cut off; asked for a shorter one" : "The AI's answer wasn't readable; asked again");
           reply(
             "Your last answer couldn't be used: it was cut off or wasn't complete JSON. Answer again with the complete JSON, " +
@@ -970,11 +1045,11 @@ export class RoutineService {
 
         if (t.action === "ask_question") {
           const options = Array.isArray(t.question?.options) ? t.question.options.slice(0, 4) : [];
-          if (asked || turn > 1 || !t.question?.text || options.length < 2) {
+          if (progress.asked || turn > 1 || !t.question?.text || options.length < 2) {
             reply("Don't ask now. Decide yourself and continue (propose_routine).");
             continue;
           }
-          asked = true;
+          progress.asked = true;
           c.question = { id: `q-${newId()}`, text: String(t.question.text), options: options.map((o: any, i: number) => ({ id: String(o.id ?? i), label: String(o.label ?? o.id) })) };
           c.status = "waiting";
           this.emit(c);
@@ -995,7 +1070,7 @@ export class RoutineService {
             reply(`Can't inspect: app must be one of ${apps.join(", ")} with an open document.`);
             continue;
           }
-          if (++inspections > MAX_INSPECTIONS) {
+          if (++progress.inspections > MAX_INSPECTIONS) {
             reply(`You've used your ${MAX_INSPECTIONS} inspections. Propose the complete routine now with what you know.`);
             continue;
           }
@@ -1008,7 +1083,7 @@ export class RoutineService {
               .inspectForModel(String(t.document || doc!.documentId), { node, depth: t.depth })
               .catch((err) => ({ error: errorMessage(err) }));
           }
-          reply(`Inspection of ${appId} (${inspections} of ${MAX_INSPECTIONS} inspections used): ${clip(results, 14000)}`);
+          reply(`Inspection of ${appId} (${progress.inspections} of ${MAX_INSPECTIONS} inspections used): ${clip(results, 14000)}`);
           continue;
         }
 
@@ -1020,10 +1095,10 @@ export class RoutineService {
           reply(`The routine couldn't be read: ${err instanceof AiOutputError ? err.message : errorMessage(err)} Send the complete routine again.`);
           continue;
         }
-        const check = this.validate(draft, t.action === "propose_routine" ? samples : undefined);
+        const check = this.validate(draft, t.action === "propose_routine" ? state.samples : undefined);
         if (!check.ok) {
           const errors = errorsForModel(check.errors, draft);
-          lastProblem = errors.map((e) => `${e.path}: ${e.message}`).join(" · ");
+          progress.lastProblem = errors.map((e) => `${e.path}: ${e.message}`).join(" · ");
           const shown = errors
             .slice(0, 2)
             .map((e) => `${e.path}: ${e.message}`)
@@ -1061,11 +1136,11 @@ export class RoutineService {
         const stageErrors = res.stages.filter((s) => s.error);
         if (res.status === "cancelled") throw new CancelledError();
         if (scriptProblems.length || stageErrors.length || res.status === "failed") {
-          lastProblem = [...stageErrors.map((s) => `${s.name}: ${s.error}`), ...scriptProblems.map((i) => `${i.label}: ${i.error}`)].join(" · ") || res.error || "";
-          if (c.aiCalls >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS) {
-            throw new ExecutionError("The trial run of the routine failed.", lastProblem, "generic", true);
+          progress.lastProblem = [...stageErrors.map((s) => `${s.name}: ${s.error}`), ...scriptProblems.map((i) => `${i.label}: ${i.error}`)].join(" · ") || res.error || "";
+          if (callsUsed() >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS) {
+            throw new ExecutionError("The trial run of the routine failed.", progress.lastProblem, "generic", true);
           }
-          this.note(c, `The trial run failed, sent back to fix: ${lastProblem.length > 240 ? `${lastProblem.slice(0, 237)}…` : lastProblem}`);
+          this.note(c, `The trial run failed, sent back to fix: ${progress.lastProblem.length > 240 ? `${progress.lastProblem.slice(0, 237)}…` : progress.lastProblem}`);
           this.setStage(c, "run", "pending", "");
           stage.current = "write";
           this.setStage(c, "write", "active", "Fixing problems from the trial run");

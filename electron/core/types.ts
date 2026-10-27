@@ -544,6 +544,8 @@ export interface Creation {
   };
   savedRoutineId?: string;
   nextVersion?: number;
+  /** A failed or cancelled multi-app creation can continue where it stopped (a fresh AI budget). */
+  canContinue?: boolean;
   /** Demo access: routine creations used / available on the access code. */
   quota?: { used: number; max: number };
 }
@@ -671,6 +673,8 @@ export interface DoppelApi {
   answerQuestion(creationId: string, questionId: string, optionId: string): Promise<Creation>;
   cancelCreation(id: string): Promise<void>;
   retryCreation(id: string): Promise<Creation>;
+  /** Continues a failed multi-app creation where it stopped, with a fresh AI budget (one more demo creation). */
+  continueCreation(id: string): Promise<Creation>;
   saveRoutine(creationId: string, input: SaveRoutineInput): Promise<SaveRoutineResult>;
   discardCreation(id: string): Promise<void>;
   repairRoutine(routineId: string, runId?: string): Promise<Creation>;

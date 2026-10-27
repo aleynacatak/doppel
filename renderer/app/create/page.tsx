@@ -102,6 +102,7 @@ function CreateScreen() {
         <CreationFailure
           creation={creation}
           onRetry={async () => setData(await api.retryCreation(creation.id))}
+          onContinue={async () => setData(await api.continueCreation(creation.id))}
           onStartOver={startOver}
           onDiscard={discard}
         />
@@ -112,8 +113,13 @@ function CreateScreen() {
           title={copy.create.cancelled}
           actions={
             <>
-              <Button variant="primary" onClick={async () => setData(await api.retryCreation(creation.id))}>
-                {copy.common.tryAgain}
+              {creation.canContinue && (
+                <Button variant="primary" onClick={async () => setData(await api.continueCreation(creation.id))}>
+                  {copy.create.continue}
+                </Button>
+              )}
+              <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={async () => setData(await api.retryCreation(creation.id))}>
+                {creation.canContinue ? copy.create.startOver : copy.common.tryAgain}
               </Button>
               <ButtonLink href="/">{copy.create.newTask}</ButtonLink>
             </>

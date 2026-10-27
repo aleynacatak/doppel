@@ -172,6 +172,10 @@ export const copy = {
     aiCallsHint: "Creating a routine uses AI. Rerunning it later uses none.",
     aiCallsLimit: (max: number) => `At most ${max} per routine.`,
     retryHint: "Trying again starts over with a fresh AI budget; with a demo code it uses one more creation.",
+    continue: "Continue where it left off",
+    startOver: "Start over",
+    continueHint:
+      "Continue keeps everything the AI has done so far and gives it a fresh AI budget; with a demo code it uses one more creation. Start over begins again from scratch (also one more creation).",
     activityTitle: "What Doppl tried",
     trialTitle: "Trial on the first sample item",
     questionLabel: "Doppl has a question",
