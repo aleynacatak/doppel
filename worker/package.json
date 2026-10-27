@@ -14,6 +14,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply doppl-demo --remote",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "admin:setup": "node scripts/admin.mjs setup",
     "codes:create": "node scripts/admin.mjs create",
     "codes:list": "node scripts/admin.mjs list",
     "codes:revoke": "node scripts/admin.mjs revoke",

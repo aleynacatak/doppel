@@ -89,14 +89,13 @@ Expected answer: `{"ok":true,"demoEnabled":true}`.
 
 ### 5. Create a code for the judges
 
-Create `worker/.env`. It's git-ignored; `.env.example` shows the format:
+First, save your admin token on your Mac (once):
 
-```
-DOPPL_API_URL=https://api.doppl.work
-ADMIN_TOKEN=the-same-admin-token-as-step-3
+```bash
+npm run admin:setup
 ```
 
-Then:
+It asks you to paste the admin token (what you paste isn't shown), checks it with the live Worker, and saves it in `worker/.env`. That file is git-ignored; `.env.example` shows its format. Then:
 
 ```bash
 npm run codes:create -- --label judges --creations 20 --sam 500 --expires 2026-11-20

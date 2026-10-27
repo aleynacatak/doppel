@@ -6,8 +6,10 @@
 //   npm run codes:revoke -- <id>
 //   npm run spend
 //   npm run demo:pause / npm run demo:resume
+//   npm run admin:setup   (asks for the admin token without showing it and saves worker/.env)
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -40,9 +42,38 @@ function fail(message) {
 
 if (typeof fetch !== "function") fail(`This script needs Node 22 or newer (you have ${process.version}). Run: nvm use 22`);
 
+/** Reads a line without echoing it (for pasting the admin token). */
+function askHidden(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    rl._writeToOutput = (text) => {
+      if (text.includes(question)) rl.output.write(text);
+    };
+    rl.question(question, (answer) => {
+      rl.close();
+      process.stdout.write("\n");
+      resolve(answer.trim());
+    });
+  });
+}
+
+const [command, ...rest] = process.argv.slice(2);
 const env = loadEnv();
+
+if (command === "setup") {
+  const url = (env.DOPPL_API_URL || "https://api.doppl.work").replace(/\/$/, "");
+  const token = await askHidden("\n  Paste your ADMIN_TOKEN (it won't be shown), then press Enter: ");
+  if (!token) fail("Nothing was pasted. Run npm run admin:setup again.");
+  const res = await fetch(`${url}/admin/spend`, { headers: { authorization: `Bearer ${token}` } }).catch((err) => fail(`Couldn't reach ${url}: ${err.message}`));
+  if (res.status === 401) fail("Cloudflare didn't accept this token. Check that it matches the ADMIN_TOKEN secret on the Worker, then try again.");
+  if (!res.ok) fail(`The Worker answered with status ${res.status}. Try again in a minute.`);
+  fs.writeFileSync(path.join(root, ".env"), `DOPPL_API_URL=${url}\nADMIN_TOKEN=${token}\n`, { mode: 0o600 });
+  console.log(`\n  Saved. The admin token works with ${url}.\n  Next: npm run codes:create -- --label judges --creations 20 --sam 500 --expires 2026-11-20\n`);
+  process.exit(0);
+}
+
 const base = (env.DOPPL_API_URL || "https://api.doppl.work").replace(/\/$/, "");
-if (!env.ADMIN_TOKEN) fail("ADMIN_TOKEN is missing. Put it in worker/.env (see .env.example).");
+if (!env.ADMIN_TOKEN) fail("ADMIN_TOKEN is missing. Run: npm run admin:setup");
 
 async function api(method, route, body) {
   let res;
@@ -61,7 +92,6 @@ async function api(method, route, body) {
 }
 
 const usd = (n) => `$${Number(n).toFixed(2)}`;
-const [command, ...rest] = process.argv.slice(2);
 const f = flags(rest);
 
 switch (command) {
@@ -114,5 +144,5 @@ switch (command) {
     break;
   }
   default:
-    fail("Commands: create, list, revoke <id>, spend, pause, resume");
+    fail("Commands: setup, create, list, revoke <id>, spend, pause, resume");
 }
