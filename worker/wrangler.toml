@@ -1,6 +1,6 @@
 # Doppl demo access Worker: the desktop app sends AI requests here with an access code;
 # the Worker checks limits and forwards them to Meta's Model API with the real key.
-name = "doppl-demo"
+name = "doppel"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 

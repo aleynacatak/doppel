@@ -53,15 +53,15 @@ npx wrangler secret put META_API_KEY
 npx wrangler secret put ADMIN_TOKEN
 ```
 
-Or in the dashboard: Workers & Pages → doppl-demo → Settings → Variables and Secrets → Add, with type **Secret**. Secrets live only in Cloudflare. They're never in the repo or the app, and they stay in place across deploys.
+Or in the dashboard: Workers & Pages → doppel → Settings → Variables and Secrets → Add, with type **Secret**. Secrets live only in Cloudflare. They're never in the repo or the app, and they stay in place across deploys.
 
 ### 4. Deploy and attach `api.doppl.work`
 
-**With the GitHub repo connected to the Worker (Workers Builds).** Every push to the production branch deploys. In Workers & Pages → doppl-demo → Settings → Build, check these settings:
+**With the GitHub repo connected to the Worker (Workers Builds).** Every push to the production branch deploys. In Workers & Pages → doppel → Settings → Build, check these settings:
 
 | Setting | Value |
 | --- | --- |
-| Worker name | `doppl-demo`. It must match `name` in `wrangler.toml`, or the build fails. |
+| Worker name | `doppel`. It must match `name` in `wrangler.toml`, or the build fails. |
 | Production branch | `main` |
 | Root directory | `worker` (the repo root is the desktop app) |
 | Build command | leave empty |
@@ -77,7 +77,7 @@ Node 22 comes from `worker/.node-version`, and `worker/.npmrc` makes `npm ci` be
 npm run deploy
 ```
 
-`wrangler.toml` already declares `api.doppl.work` as a custom domain, so the deploy creates the DNS record and certificate. This can take a minute or two. If a Git build can't attach the domain, add it once in the dashboard: doppl-demo → Settings → Domains & Routes → Add → Custom domain → `api.doppl.work`. Check it:
+`wrangler.toml` already declares `api.doppl.work` as a custom domain, so the deploy creates the DNS record and certificate. This can take a minute or two. If a Git build can't attach the domain, add it once in the dashboard: doppel → Settings → Domains & Routes → Add → Custom domain → `api.doppl.work`. Check it:
 
 ```bash
 curl https://api.doppl.work/health
