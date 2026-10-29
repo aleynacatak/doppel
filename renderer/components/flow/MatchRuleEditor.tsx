@@ -7,14 +7,19 @@ import { doppel } from "@/lib/doppel";
 import { Field } from "../ui/Field";
 import { Spinner } from "../ui/Progress";
 
-const RULES: MatchRule["by"][] = ["index", "fileNameEqualsColumn", "columnEquals", "sameFileName"];
+/** The two choices a designer sees: by name (Doppl finds how), or in order. */
+type Choice = "name" | "index";
+const choiceOf = (rule: MatchRule | undefined): Choice | "" => (!rule ? "" : rule.by === "index" ? "index" : "name");
 
-/** A rule with sensible empty fields when its kind changes (keeping "items without a partner"). */
-function ruleOf(by: MatchRule["by"], columns: string[], otherColumns: string[], optional?: boolean): MatchRule {
+/** "By name" for these two lists, when Doppl has no suggestion: the file named in a column, similar file names, or equal columns. */
+function byName(iterPort: PortDef, joinedPort: PortDef, rowsColumns: string[], otherColumns: string[], optional?: boolean): MatchRule {
   const keep = optional ? { optional } : {};
-  if (by === "index" || by === "sameFileName") return { by, ...keep };
-  if (by === "fileNameEqualsColumn") return { by, column: columns[0] ?? "", ignoreExtension: true, loose: true, ...keep };
-  return { by, leftColumn: columns[0] ?? "", rightColumn: otherColumns[0] ?? columns[0] ?? "", ...keep };
+  if (iterPort.type === "rows" && joinedPort.type === "rows") {
+    const shared = rowsColumns.find((c) => otherColumns.includes(c));
+    return { by: "columnEquals", leftColumn: shared ?? rowsColumns[0] ?? "", rightColumn: shared ?? otherColumns[0] ?? "", ...keep };
+  }
+  if (iterPort.type === "rows" || joinedPort.type === "rows") return { by: "fileNameEqualsColumn", column: rowsColumns[0] ?? "", ignoreExtension: true, loose: true, ...keep };
+  return { by: "sameFileName", ...keep };
 }
 
 function ColumnSelect({ value, columns, onChange, label, id }: { value: string; columns: string[]; onChange: (v: string) => void; label: string; id: string }) {
@@ -86,25 +91,25 @@ export function MatchRuleEditor({
         <select
           id={`rule-${edgeId}`}
           className="ui-select max-w-xs"
-          value={current?.by ?? ""}
-          onChange={(e) => onChange(ruleOf(e.target.value as MatchRule["by"], rowsColumns, otherColumns, current?.optional))}
+          value={choiceOf(current)}
+          onChange={async (e) => {
+            const optional = current?.optional ? { optional: true } : {};
+            if (e.target.value === "index") return onChange({ by: "index", ...optional });
+            // By name: the way that pairs the most items (Doppl's suggestion), else the plain one for these lists.
+            const suggested = await doppel()
+              .previewMatch(flow, edgeId, null, inputs)
+              .then((p) => p.rule)
+              .catch(() => null);
+            onChange(suggested && suggested.by !== "index" ? { ...suggested, ...optional } : byName(iterPort, joinedPort, rowsColumns, otherColumns, current?.optional));
+          }}
         >
           {!current && <option value="">—</option>}
-          {RULES.map((r) => (
-            <option key={r} value={r}>
-              {copy.match.labels[r]}
-            </option>
-          ))}
+          <option value="name">{copy.match.choices.name}</option>
+          <option value="index">{copy.match.choices.index}</option>
         </select>
       </Field>
       {current?.by === "fileNameEqualsColumn" && (
-        <>
-          <ColumnSelect id={`col-${edgeId}`} label={copy.match.column} value={current.column} columns={rowsColumns} onChange={(column) => onChange({ ...current, column })} />
-          <label className="ui-choice">
-            <input type="checkbox" checked={current.ignoreExtension} onChange={(e) => onChange({ ...current, ignoreExtension: e.target.checked })} />
-            <span>{copy.match.ignoreExtension}</span>
-          </label>
-        </>
+        <ColumnSelect id={`col-${edgeId}`} label={copy.match.column} value={current.column} columns={rowsColumns} onChange={(column) => onChange({ ...current, column, loose: true })} />
       )}
       {current && (
         <label className="ui-choice">
@@ -140,6 +145,12 @@ export function MatchRuleEditor({
               </tbody>
             </table>
             <p className="ui-small ui-muted">{copy.match.previewCount(preview.total, preview.unmatched)}</p>
+            {/* Nothing pairs: say why here, not only on hover. */}
+            {preview.total > 0 && preview.unmatched === preview.total && preview.pairs[0]?.problem && (
+              <p className="ui-small">
+                {copy.match.why} {preview.pairs[0].problem}
+              </p>
+            )}
           </>
         ) : null}
       </div>

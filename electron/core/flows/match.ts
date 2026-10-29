@@ -1,3 +1,4 @@
+import { compactKey, coreKey, nameKey } from "../../shared/names";
 import type { MatchPreview, MatchRule } from "../types";
 import type { ListItem } from "./values";
 
@@ -19,38 +20,52 @@ export const stem = (name: string) => {
   return dot > 0 ? name.slice(0, dot) : name;
 };
 
-/** A name as people mean it: "Strawberry_Vanilla", "strawberry-vanilla" and "Strawberry Vanilla" are the same; so are "Çilek" and "cilek". */
-export function nameKey(value: unknown): string {
-  return String(value ?? "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/ı/g, "i")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-}
+export { nameKey } from "../../shared/names";
 
 const tokens = (key: string) => new Set(key.split(" ").filter(Boolean));
 const within = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every((t) => b.has(t));
 
 /**
- * Each wanted name's partner among the candidates: the same name, or (loose) the only candidate whose name contains
- * it or is contained in it, that no other wanted name has as its own. Null: none (or more than one) fits.
+ * Each wanted name's partner among the candidates, from the surest way to the loosest: the same name; (loose) the
+ * same name written as one word ("strawberryvanilla"); the same name without noise ("mango_v2_final", "Mango (1)");
+ * the only candidate whose words contain the name's words or are contained in them; the only one whose one-word
+ * form contains the other's. A candidate another name already took at a surer level isn't taken again. Null: none,
+ * or more than one, fits.
  */
 export function partnersByName<T extends object>(wanted: string[], candidates: { name: string; item: T }[], loose: boolean): (T | null)[] {
-  const keys = candidates.map((c) => ({ key: nameKey(c.name), item: c.item }));
-  const exact = wanted.map((w) => {
-    const k = nameKey(w);
-    return k ? (keys.find((c) => c.key === k)?.item ?? null) : null;
-  });
-  if (!loose) return exact;
-  const taken = new Set(exact.filter((x): x is T => x !== null));
-  return wanted.map((w, i) => {
-    if (exact[i] !== null) return exact[i];
-    const t = tokens(nameKey(w));
-    const fits = keys.filter((c) => !taken.has(c.item) && (within(t, tokens(c.key)) || within(tokens(c.key), t)));
-    return fits.length === 1 ? fits[0].item : null;
-  });
+  const keys = candidates.map((c) => ({ key: nameKey(c.name), compact: compactKey(c.name), core: coreKey(c.name), item: c.item }));
+  // The same name: the first such candidate, even if another name has it too (two rows of the same product, or
+  // mango.png next to mango.jpg).
+  const found: (T | null)[] = wanted.map((w) => (nameKey(w) ? (keys.find((c) => c.key === nameKey(w))?.item ?? null) : null));
+  const taken = new Set(found.filter((x): x is T => x !== null));
+  const levels: ((w: string, c: (typeof keys)[number]) => boolean)[] = [];
+  if (loose) {
+    levels.push(
+      (w, c) => !!compactKey(w) && c.compact === compactKey(w),
+      (w, c) => !!coreKey(w) && c.core === coreKey(w),
+      (w, c) => {
+        const t = tokens(nameKey(w));
+        return within(t, tokens(c.key)) || within(tokens(c.key), t);
+      },
+      (w, c) => {
+        const a = compactKey(w);
+        return a.length >= 4 && c.compact.length >= 4 && (c.compact.includes(a) || a.includes(c.compact));
+      },
+    );
+  }
+  for (const fits of levels) {
+    const picks = wanted.map((w, i) => {
+      if (found[i] !== null) return null;
+      const all = keys.filter((c) => !taken.has(c.item) && fits(w, c));
+      return all.length === 1 ? all[0].item : null;
+    });
+    // Two names that both want the same candidate at this level: neither gets it.
+    picks.forEach((p, i) => {
+      if (p !== null && picks.filter((q) => q === p).length === 1) found[i] = p;
+    });
+    for (const p of found) if (p !== null) taken.add(p);
+  }
+  return found;
 }
 const fileName = (item: ListItem) => baseName(String(item.value));
 const cell = (item: ListItem, column: string) => {
@@ -159,18 +174,26 @@ export function suggestMatch(
   if (iter.type !== joined.type) {
     const rows = iter.type === "rows" ? iter : joined;
     const files = iter.type === "rows" ? joined : iter;
-    const names = new Set(files.items.map((f) => nameKey(stem(fileName(f)))));
+    const candidates = files.items.map((f) => ({ name: stem(fileName(f)), item: f }));
     const columns = rows.columns?.length ? rows.columns : Object.keys((rows.items[0]?.value as Record<string, unknown>) ?? {});
     let best: { column: string; score: number } | null = null;
     for (const column of columns) {
       const values = rows.items.map((r) => String(cell(r, column) ?? "").trim()).filter(Boolean);
-      const hits = values.filter((v) => names.has(nameKey(stem(baseName(v))))).length;
+      const hits = partnersByName(values.map((v) => stem(baseName(v))), candidates, true).filter(Boolean).length;
       const looksLikeFiles = values.filter((v) => /\.[a-z0-9]{2,5}$/i.test(v)).length;
       const score = hits * 10 + looksLikeFiles * 2 + (FILE_COLUMN.test(column) ? 3 : 0);
       if (score > 0 && (!best || score > best.score)) best = { column, score };
     }
     if (best) return { by: "fileNameEqualsColumn", column: best.column, ignoreExtension: true, loose: true };
     return { by: "index" };
+  }
+  if (iter.type === "fileList") {
+    const found = partnersByName(
+      iter.items.map((i) => stem(fileName(i))),
+      joined.items.map((j) => ({ name: stem(fileName(j)), item: j })),
+      true,
+    );
+    if (found.some(Boolean)) return { by: "sameFileName" };
   }
   if (iter.type === "rows") {
     const left = iter.columns?.length ? iter.columns : Object.keys((iter.items[0]?.value as Record<string, unknown>) ?? {});

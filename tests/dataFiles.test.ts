@@ -8,6 +8,7 @@ import {
   listFolderFiles,
   readDataFile,
   resolveFileInFolder,
+  sniffDelimiter,
 } from "../electron/core/helpers/dataFiles";
 
 let dir: string;
@@ -229,6 +230,57 @@ describe("readDataFile: XLSX", () => {
     await writeXlsxFile([["a", "a"], [1, 2]]).toFile(p);
     expect(await fileError(readDataFile(p))).toMatch(/more than one column called "a"/);
     expect(await fileError(readDataFile(await file("fake.xlsx", "not a zip")))).toMatch(/couldn't be opened as an Excel file/);
+  });
+});
+
+/** Text as an older Turkish Windows program saves it (Windows-1254). */
+const TURKISH: Record<string, number> = { Ş: 0xde, ş: 0xfe, Ğ: 0xd0, ğ: 0xf0, İ: 0xdd, ı: 0xfd, Ç: 0xc7, ç: 0xe7, Ö: 0xd6, ö: 0xf6, Ü: 0xdc, ü: 0xfc };
+const windows1254 = (text: string) => Buffer.from([...text].map((ch) => TURKISH[ch] ?? ch.charCodeAt(0)));
+
+describe("readDataFile: files from other programs", () => {
+  it("reads a Turkish Windows export with semicolons, decimal commas and a comma in a header", async () => {
+    const t = await readDataFile(await file("tr-1254.csv", windows1254("Ürün Adı;Fiyat (TL, KDV dahil)\nŞeftali Reçeli;2,5\nIlık İncir;3,0\n")));
+    expect(t.columns).toEqual(["Ürün Adı", "Fiyat (TL, KDV dahil)"]);
+    expect(t.rows).toEqual([
+      { "Ürün Adı": "Şeftali Reçeli", "Fiyat (TL, KDV dahil)": "2,5" },
+      { "Ürün Adı": "Ilık İncir", "Fiyat (TL, KDV dahil)": "3,0" },
+    ]);
+    expect(t.readAs).toEqual({ encoding: "windows-1254", delimiter: ";" });
+  });
+
+  it("reads UTF-16 in either byte order, with or without a byte-order mark", async () => {
+    const text = "name\tprice\nŞeftali\t2,5\n";
+    const le = Buffer.from(text, "utf16le");
+    const be = Buffer.from(le).swap16();
+    for (const [name, bytes, encoding] of [
+      ["le-bom.txt", Buffer.concat([Buffer.from([0xff, 0xfe]), le]), "utf-16le"],
+      ["be-bom.txt", Buffer.concat([Buffer.from([0xfe, 0xff]), be]), "utf-16be"],
+      ["le.txt", le, "utf-16le"],
+      ["be.txt", be, "utf-16be"],
+    ] as const) {
+      const t = await readDataFile(await file(name, bytes));
+      expect([name, t.rows[0], t.readAs?.encoding]).toEqual([name, { name: "Şeftali", price: "2,5" }, encoding]);
+    }
+  });
+
+  it("reads columns under the names the routine expects, whatever their case or spelling", async () => {
+    const t = await readDataFile(await file("headers.csv", "FLAVOR ,urun_adi,Price\nMango,Mango Reçeli,4\n"), { requiredColumns: ["Flavor", "Ürün Adı"] });
+    expect(t.columns).toEqual(["Flavor", "Ürün Adı", "Price"]);
+    expect(t.rows[0]).toEqual({ Flavor: "Mango", "Ürün Adı": "Mango Reçeli", Price: "4" });
+    expect(t.readAs?.renamed).toEqual({ Flavor: "FLAVOR", "Ürün Adı": "urun_adi" });
+    const empty = await readDataFile(await file("headers-empty.csv", "flavor\nMango\n\n,\n"), { requiredColumns: ["Flavor"] });
+    expect(empty.rows).toEqual([{ Flavor: "Mango" }]);
+    expect(await fileError(readDataFile(await file("headers-two.csv", "FLAVOR,flavor\nA,B\n"), { requiredColumns: ["Flavor"] }))).toBe(
+      'headers-two.csv has more than one column like "Flavor": "FLAVOR", "flavor". Keep one of them.',
+    );
+  });
+
+  it("guesses the delimiter whose columns line up", () => {
+    expect(sniffDelimiter("Ad;Fiyat (TL, KDV dahil)\nMango;2,5\n")).toBe(";");
+    expect(sniffDelimiter("name,note\nFig,sweet; dried\nPlum,tart\n")).toBe(",");
+    expect(sniffDelimiter('name,price\n"Fig, dried",2.5\n')).toBe(",");
+    expect(sniffDelimiter("a\tb\n1\t2\n")).toBe("\t");
+    expect(sniffDelimiter("Flavor\nMango\n")).toBe(",");
   });
 });
 

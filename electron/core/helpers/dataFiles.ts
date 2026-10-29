@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Papa from "papaparse";
 import readXlsxFile from "read-excel-file/node";
+import { nameKey } from "../../shared/names";
 import { extensionOf, normalizeExtensions as foldExtensions } from "../../shared/ports";
 
 // Reads the spreadsheets and data files a routine runs on (CSV/TSV, JSON, Excel) into plain rows,
@@ -29,6 +30,16 @@ export interface DataTable {
   /** The 1-based data row number of each entry in `rows` (blank rows are skipped but counted), to match `errors`. */
   rowNumbers: number[];
   errors: DataRowError[];
+  /** How the file was read, for telling the designer what Doppl handled (encoding, delimiter, renamed columns). */
+  readAs?: ReadAs;
+}
+
+export interface ReadAs {
+  /** "utf-8", "utf-16le", "utf-16be", "windows-1254" (Turkish), "windows-1252" (Western). */
+  encoding?: string;
+  delimiter?: string;
+  /** Columns read under the name the routine expects: expected name → the name in the file ("Flavor" → "FLAVOR "). */
+  renamed?: Record<string, string>;
 }
 
 /** A problem with the whole file. The message is a plain-language sentence that names the file. */
@@ -88,10 +99,13 @@ export async function readDataFile(filePath: string, options: ReadDataOptions = 
     format,
     required: options.requiredColumns ?? [],
     maxRows: options.maxRows && options.maxRows > 0 ? Math.max(1, Math.floor(options.maxRows)) : DEFAULT_MAX_ROWS,
+    readAs: {},
   };
-  if (format === "json") return readJson(ctx, decodeText(data));
   if (format === "xlsx") return readXlsx(ctx, data, options.sheet);
-  return readCsv(ctx, decodeText(data), ext === "tsv" ? "\t" : "");
+  const { text, encoding } = decodeText(data);
+  ctx.readAs.encoding = encoding;
+  if (format === "json") return readJson(ctx, text);
+  return readCsv(ctx, text, ext === "tsv" ? "\t" : "");
 }
 
 interface Context {
@@ -99,6 +113,7 @@ interface Context {
   format: DataTable["format"];
   required: string[];
   maxRows: number;
+  readAs: ReadAs;
 }
 
 interface Entry {
@@ -110,7 +125,8 @@ interface Entry {
 
 function readCsv(ctx: Context, text: string, delimiter: string): DataTable {
   // Guess the delimiter with blank lines ignored, then parse everything so row numbers match the file.
-  const sep = delimiter || Papa.parse<string[]>(text, { preview: 1, skipEmptyLines: "greedy" }).meta.delimiter;
+  const sep = delimiter || sniffDelimiter(text);
+  ctx.readAs.delimiter = sep;
   const parsed = Papa.parse<string[]>(text, { delimiter: sep, header: false, skipEmptyLines: false, dynamicTyping: false });
   const grid = parsed.data.map((record) => record.map(cleanValue));
   const headerIndex = grid.findIndex((record) => !isEmptyRecord(record));
@@ -130,22 +146,46 @@ function readCsv(ctx: Context, text: string, delimiter: string): DataTable {
   return fromGrid(ctx, grid, errors, true);
 }
 
-/** Excel's "Unicode Text" is UTF-16; older "CSV" exports are Windows-1252. Everything else is UTF-8. */
-function decodeText(data: Buffer): string {
-  let text: string;
-  if (data[0] === 0xff && data[1] === 0xfe) text = data.subarray(2).toString("utf16le");
-  else {
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(data);
-    } catch {
-      try {
-        text = new TextDecoder("windows-1252").decode(data);
-      } catch {
-        text = data.toString("latin1");
-      }
-    }
+/**
+ * The delimiter whose columns line up: the header and (nearly) every row have the same number of fields, at least
+ * two. Tab, then semicolon, then comma, then pipe: a value often holds a comma ("2,5", "TL, KDV dahil"), rarely a
+ * semicolon, almost never a tab. Without a clear one, Papa's own guess.
+ */
+export function sniffDelimiter(text: string): string {
+  for (const sep of ["\t", ";", ",", "|"]) {
+    if (!text.includes(sep)) continue;
+    const rows = Papa.parse<string[]>(text, { delimiter: sep, preview: 50, skipEmptyLines: "greedy" }).data;
+    if (rows.length === 0) continue;
+    const width = rows[0].length;
+    if (width < 2) continue;
+    const same = rows.filter((r) => r.length === width).length;
+    if (rows.length === 1 || same / rows.length >= 0.8) return sep;
   }
-  return text.replace(/^﻿/, "");
+  return Papa.parse<string[]>(text, { preview: 50, skipEmptyLines: "greedy" }).meta.delimiter || ",";
+}
+
+/**
+ * The text of a CSV or JSON file, whatever saved it: UTF-8 (with or without a BOM), UTF-16 (Excel's "Unicode
+ * Text", with or without a BOM, either byte order), or an older 8-bit export: Turkish Windows when it has Turkish
+ * letters (ğ ı ş İ Ş Ğ sit where Western Windows has ð ý þ Ý Þ Ð), Western Windows otherwise.
+ */
+function decodeText(data: Buffer): { text: string; encoding: string } {
+  const decode = (encoding: string, bytes: Buffer = data) => ({ text: new TextDecoder(encoding).decode(bytes).replace(/^\uFEFF/, ""), encoding });
+  if (data[0] === 0xff && data[1] === 0xfe) return decode("utf-16le", data.subarray(2));
+  if (data[0] === 0xfe && data[1] === 0xff) return decode("utf-16be", data.subarray(2));
+  // UTF-16 without a BOM: every other byte of plain text is 0.
+  const head = data.subarray(0, Math.min(data.length, 2000));
+  let evenZeros = 0;
+  let oddZeros = 0;
+  for (let i = 0; i < head.length; i++) if (head[i] === 0) i % 2 ? oddZeros++ : evenZeros++;
+  if (head.length >= 4 && oddZeros > head.length * 0.3) return decode("utf-16le");
+  if (head.length >= 4 && evenZeros > head.length * 0.3) return decode("utf-16be");
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(data).replace(/^\uFEFF/, ""), encoding: "utf-8" };
+  } catch {
+    const turkish = data.some((b) => b === 0xd0 || b === 0xdd || b === 0xde || b === 0xf0 || b === 0xfd || b === 0xfe);
+    return decode(turkish ? "windows-1254" : "windows-1252");
+  }
 }
 
 // ---- XLSX ----
@@ -290,7 +330,20 @@ function fromGrid(ctx: Context, grid: DataValue[][], errors: DataRowError[], csv
   return finish(ctx, header, entries, errors);
 }
 
-function finish(ctx: Context, columns: string[], entries: Entry[], errors: DataRowError[]): DataTable {
+function finish(ctx: Context, fileColumns: string[], entries: Entry[], errors: DataRowError[]): DataTable {
+  // A column the routine expects under another case, spacing or spelling of letters ("FLAVOR ", "ürün adı" for
+  // "Ürün Adı") is read under the expected name; two columns that both look like it are a problem to fix.
+  const columns = [...fileColumns];
+  const renamed: Record<string, string> = {};
+  for (const name of ctx.required) {
+    if (columns.includes(name)) continue;
+    const like = columns.filter((c) => !ctx.required.includes(c) && nameKey(c) === nameKey(name));
+    if (like.length > 1) throw new DataFileError(`${ctx.fileName} has more than one column like "${name}": ${like.map((c) => `"${c}"`).join(", ")}. Keep one of them.`);
+    if (like.length === 1) {
+      columns[columns.indexOf(like[0])] = name;
+      renamed[name] = like[0];
+    }
+  }
   const missing = ctx.required.filter((name) => !columns.includes(name));
   if (missing.length) {
     const list = missing.map((name) => `"${name}"`);
@@ -301,12 +354,13 @@ function finish(ctx: Context, columns: string[], entries: Entry[], errors: DataR
 
   const rows = entries.map(({ row, values }) => {
     for (const name of ctx.required) {
-      if (isEmpty(values[name])) errors.push({ row, column: name, message: `"${name}" is empty.` });
+      if (isEmpty(values[renamed[name] ?? name])) errors.push({ row, column: name, message: `"${name}" is empty.` });
     }
-    return Object.fromEntries(columns.map((name) => [name, values[name] ?? null]));
+    return Object.fromEntries(columns.map((name, i) => [name, values[fileColumns[i]] ?? null]));
   });
   errors.sort((a, b) => a.row - b.row);
-  return { fileName: ctx.fileName, format: ctx.format, columns, rows, rowNumbers: entries.map((e) => e.row), errors };
+  const readAs: ReadAs = { ...ctx.readAs, ...(Object.keys(renamed).length ? { renamed } : {}) };
+  return { fileName: ctx.fileName, format: ctx.format, columns, rows, rowNumbers: entries.map((e) => e.row), errors, ...(Object.keys(readAs).length ? { readAs } : {}) };
 }
 
 function limitError(ctx: Context, row: number): DataRowError {

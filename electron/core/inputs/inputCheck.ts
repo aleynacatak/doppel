@@ -48,6 +48,32 @@ export interface Relation {
 export interface InputAnalysis {
   sources: InputSource[];
   relations: Relation[];
+  /** Values that should be unique but aren't: in an ID-like column (SKU, code, barcode), or the column items pair by. */
+  duplicates: Duplicate[];
+}
+
+export interface Duplicate {
+  source: string;
+  column: string;
+  value: string;
+  /** The rows that share it ("Row 2", "Row 5"). */
+  rows: string[];
+}
+
+/** Columns that name one item each: an ID, SKU, code or barcode. */
+const ID_COLUMN = /^(id|sku|code|kod|ean|barcode|barkod|gtin|upc|key|ref|slug)$|(^|[^a-z])(sku|barcode|barkod|ean|gtin)([^a-z]|$)/i;
+
+/** Rows of a data file that share a value in a column (compared the way people mean names: "Mango" is "MANGO "). */
+export function duplicatesIn(source: InputSource, column: string): Duplicate[] {
+  const byKey = new Map<string, { value: string; rows: string[] }>();
+  for (const item of source.items) {
+    const value = String((item.value as Record<string, unknown> | null)?.[column] ?? "").trim();
+    if (!value) continue;
+    const entry = byKey.get(nameKey(value)) ?? { value, rows: [] };
+    entry.rows.push(item.label.replace(/ · .*$/, ""));
+    byKey.set(nameKey(value), entry);
+  }
+  return [...byKey.values()].filter((e) => e.rows.length > 1).map((e) => ({ source: source.label, column, value: e.value, rows: e.rows }));
 }
 
 /** What was decided for a relation: by the designer, or Doppl's sure guess. */
@@ -174,7 +200,16 @@ function mainOf(sources: InputSource[]): InputSource | null {
 export function analyzeInputs(sources: InputSource[]): InputAnalysis {
   const main = mainOf(sources);
   const relations = main ? sources.filter((s) => s !== main && s.items.length > 0).map((s) => relate(main, s)) : [];
-  return { sources, relations };
+  // The columns that should be unique: ID-like ones, and the ones items pair by.
+  const keyed = new Map<InputSource, Set<string>>();
+  for (const s of sources.filter((x) => x.kind === "rows")) keyed.set(s, new Set((s.columns ?? []).filter((c) => ID_COLUMN.test(c))));
+  for (const r of relations) {
+    const rule = r.best.rule;
+    if (rule?.by === "fileNameEqualsColumn") keyed.get(r.main)?.add(rule.column);
+    if (rule?.by === "columnEquals") keyed.get(r.main)?.add(rule.leftColumn);
+  }
+  const duplicates = [...keyed].flatMap(([s, columns]) => [...columns].flatMap((c) => duplicatesIn(s, c)));
+  return { sources, relations, duplicates };
 }
 
 /** A question for the designer: plain, a few options, the best first. */
@@ -263,6 +298,9 @@ export function inputFacts(analysis: InputAnalysis, decisions: InputDecision[]):
       }
       if (o.unused.length) lines.push(`Not used by any ${each} (left out): ${shortList(o.unused, 5)}.`);
     }
+  }
+  for (const d of analysis.duplicates.slice(0, 5)) {
+    lines.push(`"${d.value}" appears in ${d.rows.length} rows of ${d.source} (${shortList(d.rows, 4)}) in "${d.column}": they get the same partner; don't treat it as an error.`);
   }
   return lines;
 }

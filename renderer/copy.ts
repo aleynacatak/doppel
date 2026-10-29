@@ -549,12 +549,6 @@ export const copy = {
   },
 
   match: {
-    labels: {
-      index: "Same item (by position or the row it came from)",
-      fileNameEqualsColumn: "File name = a column",
-      columnEquals: "Column = column",
-      sameFileName: "Files with similar names",
-    } satisfies Record<MatchRule["by"], string>,
     short: (rule: MatchRule) =>
       rule.by === "index" ? "same item" : rule.by === "fileNameEqualsColumn" ? `by “${rule.column}”` : rule.by === "sameFileName" ? "by file name" : `“${rule.leftColumn}” = “${rule.rightColumn}”`,
     describe: (rule: MatchRule) =>
@@ -566,9 +560,10 @@ export const copy = {
             ? "the file with a similar name"
             : `“${rule.leftColumn}” = “${rule.rightColumn}”`,
     optional: "Items without a partner are still made (without it)",
+    choices: { name: "By name", index: "In order (the first with the first)" },
+    why: "Why:",
     rule: "Pair by",
-    column: "Column with the file names",
-    ignoreExtension: "Ignore the file extension",
+    column: "Column with the names",
     leftColumn: "Column of the iterated rows",
     rightColumn: "Column of these rows",
     preview: "First pairs",

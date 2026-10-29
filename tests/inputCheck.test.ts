@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   analyzeInputs,
   decidedRule,
+  duplicatesIn,
   inputFacts,
   type InputSource,
   missingQuestion,
@@ -78,6 +79,28 @@ describe("input check", () => {
     const unrelated = relate(photos, files("/t/other", ["a.png", "b.png", "c.png"]));
     expect(unrelated).toMatchObject({ sure: false, best: { id: "order", matched: 3 } });
     expect(pairingQuestion(unrelated).text).toBe("How should each image in photos find its image in other?");
+  });
+
+  it("notices values that should be unique but repeat: IDs, and the names items pair by", () => {
+    const products: InputSource = {
+      id: "/t/p.csv",
+      label: "p.csv",
+      kind: "rows",
+      columns: ["SKU", "Flavor", "Price"],
+      items: [
+        ["JAD-1", "Mango", "4"],
+        ["JAD-2", "Fig", "5"],
+        ["jad-1 ", "MANGO", "4"],
+        ["JAD-3", "Plum", "4"],
+      ].map(([sku, flavor, price], i) => ({ key: `row-${i + 1}`, label: `Row ${i + 1} · ${sku}`, value: { SKU: sku, Flavor: flavor, Price: price } })),
+    };
+    expect(duplicatesIn(products, "Price")).toEqual([{ source: "p.csv", column: "Price", value: "4", rows: ["Row 1", "Row 3", "Row 4"] }]);
+    const a = analyzeInputs([products, files("/t/img", ["mango.png", "fig.png", "plum.png"])]);
+    expect(a.duplicates.map((d) => [d.column, d.value, d.rows.join("+")])).toEqual([
+      ["SKU", "JAD-1", "Row 1+Row 3"],
+      ["Flavor", "Mango", "Row 1+Row 3"],
+    ]);
+    expect(inputFacts(a, [])).toContain('"JAD-1" appears in 2 rows of p.csv (Row 1, Row 3) in "SKU": they get the same partner; don\'t treat it as an error.');
   });
 
   it("makes the biggest data file the main input", () => {

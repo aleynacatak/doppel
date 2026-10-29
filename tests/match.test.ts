@@ -94,6 +94,29 @@ describe("match rules", () => {
     expect(partnersByName(["Berry"], [{ name: "blue berry", item: { n: 1 } }, { name: "berry mix", item: { n: 2 } }], true)).toEqual([null]);
   });
 
+  it("matches names written as one word, in camel case, or with a version or copy suffix, only when one fits", () => {
+    const rows = ["Strawberry Vanilla", "Fig & Walnut", "Apricot Ginger", "Blackberry Lavender", "Salted Caramel Pear", "Mango", "Peach"];
+    const files = ["strawberryvanilla.png", "FigWalnut.jpg", "apricot_ginger_v2_final.PNG", "Blackberry-Lavender (1).jpeg", "salted-caramel-pear-label.png", "mango.png", "mango.jpg", "peach-1.png", "peach-2.png"];
+    const found = partnersByName(
+      rows,
+      files.map((f) => ({ name: f.replace(/\.[^.]+$/, ""), item: { f } })),
+      true,
+    );
+    expect(found.map((x) => x?.f ?? null)).toEqual([
+      "strawberryvanilla.png",
+      "FigWalnut.jpg",
+      "apricot_ginger_v2_final.PNG",
+      "Blackberry-Lavender (1).jpeg",
+      "salted-caramel-pear-label.png",
+      // The same name twice (a PNG and a JPG): the first.
+      "mango.png",
+      // Two files fit as well as each other: Doppl doesn't guess.
+      null,
+    ]);
+    // Without "loose", only the same name.
+    expect(partnersByName(["Strawberry Vanilla"], [{ name: "strawberryvanilla", item: { f: 1 } }], false)).toEqual([null]);
+  });
+
   it("pairs files with files of a similar name, and lets items without a partner run when optional", () => {
     const photos: ListItem[] = [
       { key: "p1", label: "Jar 01.jpg", value: "/p/Jar 01.jpg" },
