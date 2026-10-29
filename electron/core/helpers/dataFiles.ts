@@ -59,6 +59,8 @@ export interface ReadDataOptions {
   sheet?: string | number;
   /** Columns the designer picked for required ones Doppl couldn't find: required name → the column in the file. */
   aliases?: Record<string, string>;
+  /** Other columns a routine reads: found under any case or spelling like required ones, but may be missing or empty. */
+  knownColumns?: string[];
 }
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -100,6 +102,7 @@ export async function readDataFile(filePath: string, options: ReadDataOptions = 
     fileName,
     format,
     required: options.requiredColumns ?? [],
+    known: options.knownColumns ?? [],
     aliases: options.aliases ?? {},
     maxRows: options.maxRows && options.maxRows > 0 ? Math.max(1, Math.floor(options.maxRows)) : DEFAULT_MAX_ROWS,
     readAs: {},
@@ -115,6 +118,7 @@ interface Context {
   fileName: string;
   format: DataTable["format"];
   required: string[];
+  known: string[];
   aliases: Record<string, string>;
   maxRows: number;
   readAs: ReadAs;
@@ -339,10 +343,11 @@ function finish(ctx: Context, fileColumns: string[], entries: Entry[], errors: D
   // "Ürün Adı") is read under the expected name; two columns that both look like it are a problem to fix.
   const columns = [...fileColumns];
   const renamed: Record<string, string> = {};
-  for (const name of ctx.required) {
+  const expected = [...ctx.required, ...ctx.known.filter((k) => !ctx.required.includes(k))];
+  for (const name of expected) {
     if (columns.includes(name)) continue;
     const picked = ctx.aliases[name];
-    const like = columns.filter((c) => !ctx.required.includes(c) && (picked !== undefined ? nameKey(c) === nameKey(picked) : nameKey(c) === nameKey(name)));
+    const like = columns.filter((c) => !expected.includes(c) && (picked !== undefined ? nameKey(c) === nameKey(picked) : nameKey(c) === nameKey(name)));
     if (like.length > 1) throw new DataFileError(`${ctx.fileName} has more than one column like "${name}": ${like.map((c) => `"${c}"`).join(", ")}. Keep one of them.`);
     if (like.length === 1) {
       columns[columns.indexOf(like[0])] = name;

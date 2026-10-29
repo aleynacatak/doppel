@@ -183,6 +183,8 @@ export interface PortDef {
   extensions?: string[];
   /** rows: columns every row has. */
   columns?: string[];
+  /** rows: other columns the routine reads (found by Doppl in its code); matched by name like `columns`, but may be empty or missing. */
+  uses?: string[];
 }
 
 /** Options that are set, not connected: export scale, quality, a naming pattern. */

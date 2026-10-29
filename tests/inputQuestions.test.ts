@@ -11,7 +11,7 @@ import type { ChatMessage } from "../electron/core/services/aiTransport";
 import { FlowService } from "../electron/core/services/flowService";
 import { LibraryService } from "../electron/core/services/libraryService";
 import { QcService } from "../electron/core/services/qcService";
-import { RoutineService } from "../electron/core/services/routineService";
+import { RoutineService, usedColumns } from "../electron/core/services/routineService";
 import { StarterService } from "../electron/core/services/starterService";
 import { JsonStorage } from "../electron/core/services/storage";
 import type { Creation } from "../electron/core/types";
@@ -144,6 +144,9 @@ describe("the input check in a creation", () => {
     expect(ready.draft!.matches).toEqual({ images: { by: "fileNameEqualsColumn", column: "Flavor", ignoreExtension: true, loose: true, optional: true } });
     // The folder has a JPG: the input takes it too.
     expect(ready.draft!.inputs.find((p) => p.key === "images")!.extensions).toEqual(["png", "jpg"]);
+    // Price is read nowhere; Flavor is declared already: nothing else to record.
+    expect(ready.draft!.inputs.find((p) => p.key === "products")!.uses).toBeUndefined();
+    expect(usedColumns('{"text":"{{item.Price}}"} ctx.item.Weight ctx.item["Ürün Adı"] ctx.item.Flavors', ["Price", "Weight", "Ürün Adı", "Flavor"])).toEqual(["Price", "Weight", "Ürün Adı"]);
   });
 
   it("stops before the AI when the designer wants to add the missing files", async () => {

@@ -22,6 +22,8 @@ export interface ProfileSummary {
   costPerPass: number | null;
   avgContextChars: number;
   failures: Record<string, number>;
+  /** Messy versions the saved routines handled without AI, of those tried. */
+  variants: { passed: number; total: number };
 }
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -47,6 +49,7 @@ export function summarize(results: AttemptResult[]): ProfileSummary[] {
       costPerPass: ok.length ? round(avg(ok.map((r) => r.costUsd)), 4) : null,
       avgContextChars: Math.round(avg(rs.map((r) => r.contextChars))),
       failures,
+      variants: { passed: rs.flatMap((r) => r.variants ?? []).filter((v) => v.passed).length, total: rs.flatMap((r) => r.variants ?? []).length },
     };
   });
 }
@@ -57,11 +60,11 @@ const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 function summaryTable(summaries: ProfileSummary[]) {
   return [
-    "| Profile | Passed | Pass rate | Created | AI calls (avg) | Calls per pass | Tokens per pass | Cost per pass (USD) | Capability context (chars ≈ tokens) | Wall time (avg s) | Failures |",
-    "|---|---|---|---|---|---|---|---|---|---|---|",
+    "| Profile | Passed | Pass rate | Created | AI calls (avg) | Calls per pass | Tokens per pass | Cost per pass (USD) | Capability context (chars ≈ tokens) | Wall time (avg s) | Messy versions | Failures |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...summaries.map(
       (s) =>
-        `| ${s.profile} | ${s.passed}/${s.attempts} | ${pct(s.passRate)} | ${s.created}/${s.attempts} | ${s.avgCalls} | ${orDash(s.callsPerPass)} | ${orDash(s.tokensPerPass)} | ${orDash(s.costPerPass, (n) => n.toFixed(4))} | ${s.avgContextChars} ≈ ${Math.round(s.avgContextChars / 4)} | ${s.avgWallSec} | ${Object.entries(s.failures).map(([k, v]) => `${k} ${v}`).join(", ") || "–"} |`,
+        `| ${s.profile} | ${s.passed}/${s.attempts} | ${pct(s.passRate)} | ${s.created}/${s.attempts} | ${s.avgCalls} | ${orDash(s.callsPerPass)} | ${orDash(s.tokensPerPass)} | ${orDash(s.costPerPass, (n) => n.toFixed(4))} | ${s.avgContextChars} ≈ ${Math.round(s.avgContextChars / 4)} | ${s.avgWallSec} | ${s.variants.total ? `${s.variants.passed}/${s.variants.total}` : "–"} | ${Object.entries(s.failures).map(([k, v]) => `${k} ${v}`).join(", ") || "–"} |`,
     ),
   ].join("\n");
 }
@@ -79,6 +82,18 @@ export function markdownReport(results: AttemptResult[], meta: { date: string; p
     "",
     ...(summaries.length === 2 ? ["## Before / after", "", compareSummaries(summaries[0], summaries[1]), ""] : []),
     ...(meta.notes?.length ? ["## Notes", "", ...meta.notes.map((n) => `- ${n}`), ""] : []),
+    ...(results.some((r) => r.variants?.length)
+      ? [
+          "## Messy versions",
+          "",
+          "Each routine that passed, rerun on messy versions of its fixtures (no AI): the same files renamed, saved by other programs, with extra files. They should give the same results.",
+          "",
+          "| Task | Profile | # | Version | Result | Details |",
+          "|---|---|---|---|---|---|",
+          ...results.flatMap((r) => (r.variants ?? []).map((v) => `| ${r.task} | ${r.profile} | ${r.repeat} | ${v.id} | ${v.passed ? "pass" : "fail"} | ${cell((v.error ?? "").slice(0, 300)) || "–"} |`)),
+          "",
+        ]
+      : []),
     "## Attempts",
     "",
     "| Task | Profile | # | Result | Category | AI calls | Previews | Proposals | Questions | In tokens | Out tokens | Cost (USD) | Wall (s) | Rerun AI calls | Details |",
@@ -103,9 +118,9 @@ const csvCell = (v: unknown) => {
 };
 
 export function csvReport(results: AttemptResult[]): string {
-  const head = ["task", "profile", "repeat", "created", "passed", "category", "aiCalls", "previews", "proposals", "questions", "inputTokens", "cachedTokens", "outputTokens", "costUsd", "wallSec", "contextChars", "rerunAiCalls", "error", "checks", "questionLog"];
+  const head = ["task", "profile", "repeat", "created", "passed", "category", "aiCalls", "previews", "proposals", "questions", "inputTokens", "cachedTokens", "outputTokens", "costUsd", "wallSec", "contextChars", "rerunAiCalls", "error", "checks", "questionLog", "variants"];
   const rows = results.map((r) =>
-    [r.task, r.profile, r.repeat, r.created, r.passed, r.category ?? "", r.aiCalls, r.previews, r.proposals, r.questions, r.inputTokens, r.cachedTokens, r.outputTokens, r.costUsd, r.wallSec, r.contextChars, r.rerunAiCalls, r.error ?? "", r.checks.map((c) => `${c.passed ? "ok" : "FAIL"} ${c.check.type}: ${c.detail}`).join("; "), (r.questionLog ?? []).map((q) => JSON.stringify(q)).join("\n")].map(csvCell).join(","),
+    [r.task, r.profile, r.repeat, r.created, r.passed, r.category ?? "", r.aiCalls, r.previews, r.proposals, r.questions, r.inputTokens, r.cachedTokens, r.outputTokens, r.costUsd, r.wallSec, r.contextChars, r.rerunAiCalls, r.error ?? "", r.checks.map((c) => `${c.passed ? "ok" : "FAIL"} ${c.check.type}: ${c.detail}`).join("; "), (r.questionLog ?? []).map((q) => JSON.stringify(q)).join("\n"), (r.variants ?? []).map((v) => JSON.stringify(v)).join("\n")].map(csvCell).join(","),
   );
   return [head.join(","), ...rows].join("\n") + "\n";
 }
@@ -213,5 +228,6 @@ export function parseCsvReport(text: string): AttemptResult[] {
         .filter((m): m is RegExpExecArray => !!m)
         .map((m): CheckResult => ({ check: { type: m[2] } as CheckDef, passed: m[1] === "ok", detail: m[3] })),
       ...(r[idx("questionLog")] ? { questionLog: r[idx("questionLog")].split("\n").map((l) => JSON.parse(l)) } : {}),
+      ...(r[idx("variants")] ? { variants: r[idx("variants")].split("\n").map((l) => JSON.parse(l)) } : {}),
     }));
 }

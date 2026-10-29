@@ -20,6 +20,8 @@ import { decodePng, encodePng, jpegSize, readImage } from "../electron/evals/ima
 import { compareSummaries, csvReport, markdownReport, parseCsvReport, summarize, writeReports } from "../electron/evals/report";
 import { type AttemptResult, type EvalEnv, type Meter, chooseAnswer, runEval } from "../electron/evals/runner";
 import { type EvalTask, loadTasks, parseTask, selectTasks } from "../electron/evals/tasks";
+import { VARIANTS, makeVariant, selectVariants } from "../electron/evals/variants";
+import { readDataFile } from "../electron/core/helpers/dataFiles";
 
 // The eval harness on synthetic tasks: task files, deterministic checks, reports, and whole attempts through the real
 // creation loop with a scripted AI and a fake Photoshop.
@@ -54,6 +56,28 @@ const cutoutTask = {
   ],
   tags: ["photoshop", "masking"],
 };
+
+describe("messy versions of fixtures", () => {
+  it("renames files, saves data the way Excel in Turkish does, and adds files that aren't inputs", async () => {
+    const src = path.join(dir, "variant-src");
+    await fs.mkdir(path.join(src, "pics"), { recursive: true });
+    for (const f of ["Strawberry_Vanilla.png", "mango-label.jpg"]) await fs.writeFile(path.join(src, "pics", f), "x");
+    await fs.writeFile(path.join(src, "jams.csv"), "Flavor,Price\nStrawberry Vanilla,4.5\n\"Fig; dried\",5\n");
+    const atts = { pics: { path: path.join(src, "pics"), isFolder: true }, jams: { path: path.join(src, "jams.csv"), isFolder: false } };
+    const [squashed] = selectVariants("squashed");
+    const s = await makeVariant(squashed, atts, path.join(dir, "variant-squashed"));
+    expect(s.pics.files.map((f) => path.basename(f))).toEqual(["mangolabel.jpg", "strawberryvanilla_final.png"]);
+    const all = await makeVariant(VARIANTS.find((v) => v.id === "everything")!, atts, path.join(dir, "variant-all"));
+    expect((await fs.readdir(all.pics.path)).sort()).toEqual([".DS_Store", "Thumbs.db", "mangolabel.JPG", "notes.txt", "strawberryvanilla_final.PNG"]);
+    const table = await readDataFile(all.jams.path, { requiredColumns: ["Flavor", "Price"] });
+    expect(table.rows).toEqual([
+      { Flavor: "Strawberry Vanilla", Price: "4.5" },
+      { Flavor: "Fig; dried", Price: "5" },
+    ]);
+    expect(table.readAs).toMatchObject({ encoding: "utf-16le", delimiter: ";", renamed: { Flavor: "FLAVOR", Price: "PRICE" } });
+    expect(() => selectVariants("names,odd")).toThrow("Unknown variant odd. Known: names, squashed, spreadsheet, stray, everything, all.");
+  });
+});
 
 describe("tasks", () => {
   it("parses every task in evals/tasks, and answers questions the way a task says", async () => {
@@ -389,6 +413,25 @@ describe("running tasks through the creation loop", () => {
     ]);
     expect(results[0].checks.every((c) => c.passed)).toBe(true);
     expect(results[0].contextChars).toBeGreaterThan(1000);
+  });
+
+  it("reruns a routine that passed on messy versions of its fixtures, without AI", async () => {
+    const t = await task();
+    const [result] = await runEval(env({ transparent: true, answer: () => ({ action: "propose_routine", reason: "Cut out", routine }) }), [t], [{ id: "p" }], 1, {
+      workDir: path.join(dir, "wv"),
+      variants: VARIANTS,
+    });
+    expect(result.passed).toBe(true);
+    expect(result.variants!.map((v) => [v.id, v.passed, v.rerunAiCalls])).toEqual([
+      ["names", true, 0],
+      ["squashed", true, 0],
+      ["spreadsheet", true, 0],
+      ["stray", true, 0],
+      ["everything", true, 0],
+    ]);
+    const [summary] = summarize([result]);
+    expect(summary.variants).toEqual({ passed: 5, total: 5 });
+    expect(markdownReport([result], { date: "2026-10-30", profiles: ["p"], tasks: [t.id], repeat: 1 })).toContain("| ps-cutout | p | 1 | squashed | pass | – |");
   });
 
   it("reports a rerun whose outputs fail the checks, and a creation that runs out of AI calls", async () => {

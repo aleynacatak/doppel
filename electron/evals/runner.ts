@@ -9,6 +9,7 @@ import type { Creation, InputValue, ParamValue, PortDef, Routine, Run } from "..
 import { nameFit } from "../core/inputs/inputCheck";
 import { type CheckResult, type CheckSubject, runChecks } from "./checks";
 import { type EvalTask, resolveAttachment } from "./tasks";
+import { type Variant, makeVariant } from "./variants";
 
 // Runs eval tasks through the real creation loop: create, answer questions with the first option, save, rerun the
 // saved routine on the task's fixtures (no AI), check the outputs. Metrics come from a meter the AI layer feeds.
@@ -93,6 +94,8 @@ export interface AttemptResult {
   checks: CheckResult[];
   /** The questions asked during the creation, and how the designer (the task) answered. */
   questionLog?: { kind: string; text: string; answer: string }[];
+  /** The saved routine rerun on messy versions of the fixtures (see variants.ts). */
+  variants?: { id: string; passed: boolean; error?: string; rerunAiCalls: number }[];
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -157,6 +160,8 @@ export interface RunnerOptions {
   log?: (line: string) => void;
   /** Wait after the AI service rate limits an attempt, before trying it again. */
   rateLimitWaitMs?: number;
+  /** Messy versions of the fixtures to rerun the saved routine on, after it passes. */
+  variants?: Variant[];
 }
 
 export async function runAttempt(env: EvalEnv, task: EvalTask, profile: EvalProfile, repeat: number, opts: RunnerOptions): Promise<AttemptResult> {
@@ -246,68 +251,89 @@ export async function runAttempt(env: EvalEnv, task: EvalTask, profile: EvalProf
     if (!saved.saved) saved = await services.routines.save(c.id, { name: c.draft.name, acceptPortabilityIssues: true });
     const routine = saved.routine as Routine;
     result.created = true;
-    const callsBeforeRerun = meter.calls;
 
-    // 2. Rerun the saved routine on the fixtures, each file output into its own folder.
-    const inputs: Record<string, InputValue> = {};
-    const missing: string[] = [];
-    for (const port of routine.inputs) {
-      if (port.type === "document") {
-        if (services.documentId) inputs[`input-${port.key}`] = services.documentId;
-        continue;
+    // 2. Rerun the saved routine on some inputs, each file output into its own folder, and 3. check the outputs.
+    const rerunOn = async (atts: typeof attachments, outDir: string, label: string) => {
+      const inputs: Record<string, InputValue> = {};
+      const missing: string[] = [];
+      for (const port of routine.inputs) {
+        if (port.type === "document") {
+          if (services.documentId) inputs[`input-${port.key}`] = services.documentId;
+          continue;
+        }
+        const name = attachmentFor(port, atts);
+        if (!name) {
+          if (port.required) missing.push(port.label);
+          continue;
+        }
+        const a = atts[name];
+        inputs[`input-${port.key}`] = port.type === "fileList" ? (a.isFolder ? a.path : [a.path]) : port.type === "file" && a.isFolder ? a.files[0] : a.path;
       }
-      const name = attachmentFor(port, attachments);
-      if (!name) {
-        if (port.required) missing.push(port.label);
-        continue;
+      if (missing.length) return { missing: `No fixture fits the routine's inputs: ${missing.join(", ")}` };
+      const outputFolders: Record<string, string> = {};
+      for (const port of routine.outputs) if (port.type === "file" || port.type === "fileList") outputFolders[`output-${port.key}`] = path.join(outDir, port.key);
+      const settings: Record<string, ParamValue> = Object.fromEntries(routine.settings.map((s) => [s.key, (s.default ?? null) as ParamValue]));
+      log(`  rerunning on ${label}`);
+      const before = meter.calls;
+      let run: Run = await services.runs.start(
+        { kind: "routine", id: routine.id },
+        { inputs, outputFolders, settings, qcMode: "manual", options: { target: "copy" } },
+        task.mode === "simulated" ? { dev: { mocked: true, failNodes: [], failItems: {} } } : {},
+      );
+      run = (await waitForStored(services.runs, run.id, deadline)) ?? run;
+      const files: Record<string, string[]> = {};
+      for (const port of routine.outputs) files[port.key] = run.outputs.filter((o) => o.node === `output-${port.key}` && o.status === "done" && o.filePath).map((o) => o.filePath!);
+      const texts = run.outputs.filter((o) => o.node === "routine").flatMap((o) => [o.label, ...(o.details ?? []).map((d) => `${d.label} ${d.value ?? ""}`)]);
+      const counts: CheckSubject["inputs"] = {};
+      for (const [name, a] of Object.entries(atts)) {
+        const data = !a.isFolder && DATA_EXT.has(path.extname(a.path).toLowerCase());
+        counts[name] = { files: a.files, rows: data ? (await readDataFile(a.path).catch(() => ({ rows: [] }))).rows.length : 0 };
       }
-      const a = attachments[name];
-      inputs[`input-${port.key}`] = port.type === "fileList" ? (a.isFolder ? a.path : [a.path]) : port.type === "file" && a.isFolder ? a.files[0] : a.path;
-    }
-    if (missing.length) {
+      const errors = [...(run.error ? [run.error] : []), ...run.outputs.filter((o) => o.status === "failed").map((o) => `${o.label}: ${o.error ?? "failed"}`)];
+      const checks = await runChecks(task.checks, {
+        ports: routine.outputs,
+        files,
+        texts: Object.fromEntries(routine.outputs.map((p) => [p.key, texts])),
+        inputs: counts,
+        run: { status: run.status, errors },
+        questions: (result.questionLog ?? []).map((q) => ({ kind: q.kind, text: q.text })),
+        outputs: run.outputs.filter((o) => o.node === "routine" && o.status === "done").map((o) => ({ label: o.label, details: (o.details ?? []).map((d) => `${d.label} ${d.value ?? ""}`) })),
+      });
+      const passed = checks.every((r) => r.passed);
+      return {
+        checks,
+        passed,
+        aiCalls: meter.calls - before,
+        failedRun: run.status === "failed" || errors.length > 0,
+        error: passed ? undefined : checks.filter((r) => !r.passed).map((r) => `${r.check.type}: ${r.detail}`).join(" | "),
+      };
+    };
+
+    const first = await rerunOn(attachments, path.join(dataDir, "outputs"), "the fixtures");
+    if ("missing" in first) {
       result.category = "needs-input";
-      result.error = `No fixture fits the routine's inputs: ${missing.join(", ")}`;
+      result.error = first.missing;
       return finish();
     }
-    const outDir = path.join(dataDir, "outputs");
-    const outputFolders: Record<string, string> = {};
-    for (const port of routine.outputs) if (port.type === "file" || port.type === "fileList") outputFolders[`output-${port.key}`] = path.join(outDir, port.key);
-    const settings: Record<string, ParamValue> = Object.fromEntries(routine.settings.map((s) => [s.key, (s.default ?? null) as ParamValue]));
-    log(`  rerunning on the fixtures`);
-    let run: Run = await services.runs.start(
-      { kind: "routine", id: routine.id },
-      { inputs, outputFolders, settings, qcMode: "manual", options: { target: "copy" } },
-      task.mode === "simulated" ? { dev: { mocked: true, failNodes: [], failItems: {} } } : {},
-    );
-    run = (await waitForStored(services.runs, run.id, deadline)) ?? run;
-    result.rerunAiCalls = meter.calls - callsBeforeRerun;
-
-    // 3. Check.
-    const files: Record<string, string[]> = {};
-    for (const port of routine.outputs) files[port.key] = run.outputs.filter((o) => o.node === `output-${port.key}` && o.status === "done" && o.filePath).map((o) => o.filePath!);
-    const texts = run.outputs.filter((o) => o.node === "routine").flatMap((o) => [o.label, ...(o.details ?? []).map((d) => `${d.label} ${d.value ?? ""}`)]);
-    const counts: CheckSubject["inputs"] = {};
-    for (const [name, a] of Object.entries(attachments)) {
-      const data = !a.isFolder && DATA_EXT.has(path.extname(a.path).toLowerCase());
-      counts[name] = { files: a.files, rows: data ? (await readDataFile(a.path).catch(() => ({ rows: [] }))).rows.length : 0 };
-    }
-    const errors = [
-      ...(run.error ? [run.error] : []),
-      ...run.outputs.filter((o) => o.status === "failed").map((o) => `${o.label}: ${o.error ?? "failed"}`),
-    ];
-    result.checks = await runChecks(task.checks, {
-      ports: routine.outputs,
-      files,
-      texts: Object.fromEntries(routine.outputs.map((p) => [p.key, texts])),
-      inputs: counts,
-      run: { status: run.status, errors },
-      questions: (result.questionLog ?? []).map((q) => ({ kind: q.kind, text: q.text })),
-      outputs: run.outputs.filter((o) => o.node === "routine" && o.status === "done").map((o) => ({ label: o.label, details: (o.details ?? []).map((d) => `${d.label} ${d.value ?? ""}`) })),
-    });
-    result.passed = result.checks.every((r) => r.passed);
-    if (!result.passed) result.category = run.status === "failed" || errors.length ? "script-error" : "check-failed";
-    if (!result.passed) result.error = result.checks.filter((r) => !r.passed).map((r) => `${r.check.type}: ${r.detail}`).join(" | ");
+    result.rerunAiCalls = first.aiCalls;
+    result.checks = first.checks;
+    result.passed = first.passed;
+    if (!result.passed) result.category = first.failedRun ? "script-error" : "check-failed";
+    if (!result.passed) result.error = first.error;
     log(`  ${result.passed ? "PASSED" : `failed: ${result.error}`}`);
+
+    // 4. The same routine on messy versions of the fixtures (renamed files, other formats, extra files): no AI.
+    if (result.passed && opts.variants?.length) {
+      result.variants = [];
+      for (const variant of opts.variants) {
+        const dir = path.join(dataDir, "variants", variant.id);
+        const atts = await makeVariant(variant, attachments, path.join(dir, "inputs"));
+        const r = await rerunOn(atts, path.join(dir, "outputs"), `the “${variant.id}” version`);
+        const entry = "missing" in r ? { id: variant.id, passed: false, error: r.missing, rerunAiCalls: 0 } : { id: variant.id, passed: r.passed, error: r.error, rerunAiCalls: r.aiCalls };
+        result.variants.push(entry);
+        log(`    ${variant.id}: ${entry.passed ? "passed" : `failed: ${entry.error}`}`);
+      }
+    }
     return finish();
   } catch (err) {
     result.category = (err as { timeout?: boolean }).timeout ? "timeout" : "other";

@@ -240,6 +240,14 @@ const clip = (value: unknown, max = RESULT_CHARS) => {
 const copyItems = (n: number) => plural(n, "test item");
 const withProvenance = (p: Provenance | undefined) => (p ? { provenance: p } : {});
 
+/** Columns of the sample data the routine's code reads from its rows: item.Flavor, item["Ürün Adı"], {{item.Price}}. */
+export function usedColumns(code: string, columns: string[]): string[] {
+  return columns.filter((c) => {
+    const e = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`item\\.${e}(?![\\w$])|item\\[\\s*["']${e}["']\\s*\\]|\\{\\{\\s*item\\.${e}\\s*\\}\\}`).test(code);
+  });
+}
+
 /** Every app a task uses, with its document. */
 const taskApps = (task: Task): TaskApp[] => (task.apps?.length ? task.apps : [{ appId: task.appId, documentId: task.documentId }]);
 
@@ -1559,6 +1567,15 @@ export class RoutineService {
       if (state.repair && !state.refine) return { skipped: `Doppl needs sample ${missing.map((m) => `“${m.label}”`).join(", ")} to try this routine. It wasn't tried.` };
       // Missing samples are quick to fix: ask for them, then go on with the same routine.
       if (!(await this.waitForSamples(state, missing))) throw new CancelledError();
+    }
+    // The columns the routine's code reads become part of its inputs, so a later file with "FLAVOR " or "flavor"
+    // for "Flavor" is still read under the right name.
+    const code = draft.kind === "actions" ? JSON.stringify(draft.actions ?? []) : draft.script;
+    for (const port of draft.inputs) {
+      const value = inputs[port.key];
+      if (port.type !== "rows" || value?.kind !== "list" || !value.columns?.length) continue;
+      const used = usedColumns(code, value.columns).filter((c) => !(port.columns ?? []).includes(c));
+      if (used.length) port.uses = [...new Set([...(port.uses ?? []), ...used])];
     }
     // A second list pairs with the iterated items: the plan's rule, or the one that fits the samples best.
     const joins: Record<string, MatchRule> = {};

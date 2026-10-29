@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nameKey } from "../core/flows/match";
+import { compactKey } from "../shared/names";
 import type { PortDef } from "../core/types";
 import { type DecodedImage, readImage } from "./images";
 import type { CheckDef } from "./tasks";
@@ -123,7 +124,9 @@ export async function runChecks(checks: CheckDef[], s: CheckSubject, read: (file
         const out = outputFor(name, outs, (o) => o.label, names);
         if (want === null) return out ? [`${name} was made (expected skipped)`] : [];
         if (!out) return [`no output for ${name}`];
-        return out.details.some((d) => nameKey(d).includes(nameKey(want))) ? [] : [`${name} paired with ${out.details.join(", ") || "nothing"}, expected ${want}`];
+        // Compared as one word without its extension, so a renamed copy ("strawberryvanilla (1).png") is the same partner.
+        const core = compactKey(want.replace(/\.[^.]+$/, ""));
+        return out.details.some((d) => compactKey(d).includes(core)) ? [] : [`${name} paired with ${out.details.join(", ") || "nothing"}, expected ${want}`];
       });
       result(wrong.length === 0, wrong.length ? wrong.slice(0, 3).join(" | ") : `${names.length} items paired as expected`);
       continue;

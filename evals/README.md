@@ -16,6 +16,16 @@ npm run eval -- --profile spark-current,spark-fixed --tasks all --repeat 3
 - `--tasks`: `all`, or a comma list of task ids and tags.
 - `--repeat`: attempts per task and profile.
 - `--note "…"`: a line for the report's notes.
+- `--variants all` (or ids: `names`, `squashed`, `spreadsheet`, `stray`, `everything`): after a routine passes, rerun
+  it on messy versions of its fixtures (no AI): the same files renamed (other case and separators, one-word names,
+  copy and version suffixes), data saved the way Excel in Turkish saves it (semicolons, UTF-16, uppercase headers,
+  blank rows), extra files in the folders. The report adds a "Messy versions" column and section.
+
+A messy copy of your own files, to try Doppl on them (for example in a demo), without running an eval:
+
+```bash
+npm run eval -- --messy path/to/products.csv --messy "path/to/flavor pics" --variant everything --out ~/Desktop/messy
+```
 
 AI access is the one saved in Doppl (Settings → AI access). The first run asks macOS to allow access to "Doppl Safe
 Storage" and to control the apps: allow both. To skip the Keychain, set `DOPPL_EVAL_ACCESS_CODE` (demo code) or

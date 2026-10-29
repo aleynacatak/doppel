@@ -25,12 +25,12 @@ const DELIMITERS: Record<string, string> = { ";": "semicolons", "\t": "tabs", "|
 const isEmpty = (v: InputValue | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 const list = (names: string[], n = 3) => (names.length > n ? `${names.slice(0, n).join(", ")} and ${names.length - n} more` : names.join(", "));
 
-/** The columns the routines fed by an input node need. */
-function neededColumns(flow: Flow, info: FlowRoutines, node: Input): string[] {
-  const columns = new Set(node.port.columns ?? []);
+/** The columns the routines fed by an input node need (every row has them), and the others they read. */
+function neededColumns(flow: Flow, info: FlowRoutines, node: Input, which: "columns" | "uses" = "columns"): string[] {
+  const columns = new Set(node.port[which] ?? []);
   for (const e of flow.edges.filter((x) => x.from.nodeId === node.id)) {
     const port = routineOf(info, e.to.nodeId)?.inputs.find((p) => p.key === e.to.port);
-    if (port?.type === "rows") for (const c of port.columns ?? []) columns.add(c);
+    if (port?.type === "rows") for (const c of port[which] ?? []) columns.add(c);
   }
   return [...columns];
 }
@@ -65,7 +65,7 @@ export async function preflight(flow: Flow, info: FlowRoutines, inputs: Record<s
       if (missing.length) continue;
       let resolved;
       try {
-        resolved = await resolveInput({ ...node.port, columns: needed }, raw, { aliases: picked });
+        resolved = await resolveInput({ ...node.port, columns: needed, uses: neededColumns(flow, info, node, "uses") }, raw, { aliases: picked });
       } catch (err) {
         needs.push({ kind: "file", id: `file:${node.id}`, inputNodeId: node.id, text: err instanceof InputValueError ? err.message : `${file} couldn't be read.` });
         continue;

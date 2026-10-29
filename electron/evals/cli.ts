@@ -23,6 +23,7 @@ import { SettingsService } from "../core/services/settingsService";
 import { StarterService } from "../core/services/starterService";
 import { JsonStorage } from "../core/services/storage";
 import { EXAMPLE_ROUTINES } from "../core/templates";
+import { makeVariant, selectVariants } from "./variants";
 import { writeReports } from "./report";
 import { type EvalEnv, type EvalProfile, type Meter, runEval } from "./runner";
 import { type EvalTask, loadTasks, selectTasks } from "./tasks";
@@ -40,6 +41,12 @@ export interface CliArgs {
   profilesFile: string;
   notes: string[];
   timeoutMin: number;
+  /** Messy versions to rerun saved routines on: ids or "all" (see variants.ts). */
+  variants?: string;
+  /** --messy <file or folder> (repeatable) --variant <id> --out <folder>: only writes a messy copy, no eval. */
+  messy: string[];
+  variant: string;
+  out?: string;
 }
 
 export function parseArgs(argv: string[], cwd: string): CliArgs {
@@ -58,6 +65,10 @@ export function parseArgs(argv: string[], cwd: string): CliArgs {
     profilesFile: path.resolve(cwd, get("profiles-file") ?? "evals/profiles.json"),
     notes: all("note"),
     timeoutMin: Number(get("timeout-min") ?? 20) || 20,
+    variants: get("variants"),
+    messy: all("messy").map((p) => path.resolve(cwd, p)),
+    variant: get("variant") ?? "everything",
+    out: get("out") ? path.resolve(cwd, get("out")!) : undefined,
   };
 }
 
@@ -119,6 +130,18 @@ function simulatedFor(real: DesignAppAdapter, sim: DesignAppAdapter, inspection:
 
 export async function runEvalCli(argv: string[], paths: { userData: string; temp: string }, workerUrl: string, log = (s: string) => console.log(s)): Promise<number> {
   const args = parseArgs(argv, process.cwd());
+  // A messy copy of the designer's own files, for trying Doppl on them (a demo): no AI, no eval.
+  if (args.messy.length) {
+    const [variant] = selectVariants(args.variant);
+    const out = args.out ?? path.join(process.cwd(), `messy-${variant.id}`);
+    const attachments: Record<string, { path: string; isFolder: boolean }> = {};
+    for (const p of args.messy) attachments[path.basename(p)] = { path: p, isFolder: (await fs.stat(p)).isDirectory() };
+    const made = await makeVariant(variant, attachments, out);
+    log(`Messy copy (${variant.label}) in ${out}:`);
+    for (const a of Object.values(made)) log(`  ${path.relative(out, a.path)}${a.isFolder ? ` (${a.files.length} files)` : ""}`);
+    return 0;
+  }
+  const variants = selectVariants(args.variants);
   const tasks = selectTasks(await loadTasks(args.tasksDir), args.tasks);
   const profiles = await loadProfiles(args.profilesFile, args.profiles);
   log(`Doppl eval: ${tasks.length} task(s) × ${profiles.length} profile(s) × ${args.repeat}`);
@@ -198,7 +221,7 @@ export async function runEvalCli(argv: string[], paths: { userData: string; temp
     },
   };
 
-  const results = await runEval(env, tasks, profiles, args.repeat, { workDir, timeoutMs: args.timeoutMin * 60 * 1000, log });
+  const results = await runEval(env, tasks, profiles, args.repeat, { workDir, timeoutMs: args.timeoutMin * 60 * 1000, log, variants });
   const now = new Date();
   const files = await writeReports(args.reportsDir, results, {
     date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,

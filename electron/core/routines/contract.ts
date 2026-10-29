@@ -271,7 +271,9 @@ export function cleanPort(raw: Record<string, any>): PortDef | null {
   const type = raw?.type as PortDef["type"];
   if (!key || !PORT_TYPES.includes(type)) return null;
   const extensions = normalizeExtensions(raw.extensions);
-  const columns = Array.isArray(raw.columns) ? raw.columns.filter((c: unknown): c is string => typeof c === "string" && !!c.trim()).map((c: string) => c.trim()) : [];
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((c: unknown): c is string => typeof c === "string" && !!c.trim()).map((c: string) => c.trim()) : []);
+  const columns = strings(raw.columns);
+  const uses = strings(raw.uses);
   return {
     key,
     label: String(raw.label || key).slice(0, 80),
@@ -280,5 +282,6 @@ export function cleanPort(raw: Record<string, any>): PortDef | null {
     ...(typeof raw.description === "string" && raw.description.trim() ? { description: raw.description.trim().slice(0, 200) } : {}),
     ...((type === "file" || type === "fileList") && extensions.length ? { extensions } : {}),
     ...(type === "rows" && columns.length ? { columns } : {}),
+    ...(type === "rows" && uses.length ? { uses } : {}),
   };
 }

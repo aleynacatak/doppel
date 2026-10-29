@@ -72,7 +72,7 @@ export async function resolveInput(
       if (typeof raw !== "string") throw new InputValueError(`${port.label}: pick a CSV, JSON or Excel file.`);
       let table;
       try {
-        table = await readDataFile(raw, { requiredColumns: port.columns, aliases: options.aliases });
+        table = await readDataFile(raw, { requiredColumns: port.columns, knownColumns: port.uses, aliases: options.aliases });
       } catch (err) {
         throw new InputValueError(err instanceof DataFileError ? err.message : `${path.basename(raw)} couldn't be read: ${errorMessage(err)}`);
       }

@@ -274,13 +274,17 @@ export class FlowRunner {
   ) {
     // Data rows must have the columns every routine they feed relies on.
     const columns = new Set(node.port.columns ?? []);
+    const uses = new Set(node.port.uses ?? []);
     for (const e of spec.flow.edges.filter((x) => x.from.nodeId === node.id)) {
       const port = routineOf(spec.info, e.to.nodeId)?.inputs.find((p) => p.key === e.to.port);
-      if (port?.type === "rows") for (const c of port.columns ?? []) columns.add(c);
+      if (port?.type === "rows") {
+        for (const c of port.columns ?? []) columns.add(c);
+        for (const c of port.uses ?? []) uses.add(c);
+      }
     }
     let resolved;
     try {
-      resolved = await resolveInput(node.port.type === "rows" ? { ...node.port, columns: [...columns] } : node.port, spec.inputs[node.id], { aliases: spec.columns?.[node.id] });
+      resolved = await resolveInput(node.port.type === "rows" ? { ...node.port, columns: [...columns], uses: [...uses] } : node.port, spec.inputs[node.id], { aliases: spec.columns?.[node.id] });
     } catch (err) {
       sp.status = "failed";
       sp.error = err instanceof InputValueError ? err.message : errorMessage(err);

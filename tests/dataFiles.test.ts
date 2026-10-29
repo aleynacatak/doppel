@@ -275,6 +275,16 @@ describe("readDataFile: files from other programs", () => {
     );
   });
 
+  it("finds other columns a routine reads under any case, without requiring them", async () => {
+    const t = await readDataFile(await file("known.csv", "FLAVOR,price\nMango,\nFig,5\n"), { requiredColumns: ["Flavor"], knownColumns: ["Price", "Weight"] });
+    expect(t.columns).toEqual(["Flavor", "Price"]);
+    expect(t.rows).toEqual([
+      { Flavor: "Mango", Price: null },
+      { Flavor: "Fig", Price: "5" },
+    ]);
+    expect(t.errors).toEqual([]);
+  });
+
   it("guesses the delimiter whose columns line up", () => {
     expect(sniffDelimiter("Ad;Fiyat (TL, KDV dahil)\nMango;2,5\n")).toBe(";");
     expect(sniffDelimiter("name,note\nFig,sweet; dried\nPlum,tart\n")).toBe(",");

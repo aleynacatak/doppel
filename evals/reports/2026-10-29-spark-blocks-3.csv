@@ -1,0 +1,17 @@
+task,profile,repeat,created,passed,category,aiCalls,previews,proposals,questions,inputTokens,cachedTokens,outputTokens,costUsd,wallSec,contextChars,rerunAiCalls,error,checks,questionLog,variants
+figma-flavor-labels-clean-sim,spark-blocks,1,true,true,,2,0,1,0,22527,0,1894,0.0362,20.1,36869,0,,"ok noQuestions: no questions; ok pairedWith: 3 items paired as expected; ok outputCount: 3 files in ""labels"", expected 3; ok noRunErrors: run succeeded",,"{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
+figma-flavor-labels-sim,spark-blocks,1,true,true,,2,0,1,2,22645,0,2651,0.0396,22,36869,0,,"ok askedAbout: asked: How should each row in jams.csv find its image in flavor pics?; ok askedAbout: asked: 1 of 4 rows has no image in flavor pics: Fig. What should Doppl do with it?; ok pairedWith: 4 items paired as expected; ok outputCount: 3 files in ""labels"", expected 3; ok noRunErrors: run partial (1 expected)","{""kind"":""inputs"",""text"":""How should each row in jams.csv find its image in flavor pics?"",""answer"":""By “Flavor”""}
+{""kind"":""inputs"",""text"":""1 of 4 rows has no image in flavor pics: Fig. What should Doppl do with it?"",""answer"":""Skip it""}","{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
+figma-label-fill-sim,spark-blocks,1,true,true,,2,0,1,0,22066,10225,1867,0.0243,16.6,36869,0,,"ok outputCount: 3 files in ""labels"", expected 3; ok fileExtension: all .png; ok noRunErrors: run succeeded",,"{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
