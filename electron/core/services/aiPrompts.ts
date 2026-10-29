@@ -285,10 +285,12 @@ const CREATE_ACTIONS = (maxTurns: number, planKey?: string, tools = false) => `"
 - "preview_routine": runs your draft "routine" once on one sample item (sampleItemIndex, 0-based) in a scratch copy
   (Figma: a temporary page; Photoshop: never saved; InDesign: a hidden copy). You get results, errors and a preview.
 - "propose_routine": the complete "routine". Doppl validates it (contract, action schemas or script checks, no
-  absolute paths, no values copied from the sample data) and runs it once on the first sample item. Problems come
-  back to you; fix them and propose again.
-- "ask_question": one "question" with 2–4 short options, only when a wrong guess would make the routine useless, and
-  only as your first answer.
+  absolute paths, no values copied from the sample data) and runs it once on a sample item (one that has its
+  partners). Problems come back to you; fix them and propose again.
+- "ask_question": one "question" with 2–4 short options, the best first, only when a wrong guess would make the
+  routine useless, and only as your first answer. Designers aren't technical and often leave out something that
+  matters (which file belongs to which row, what to do when something is missing, the size or format they need):
+  ask about that in plain words, without jargon. Don't ask what "Inputs Doppl checked" already settles.
 Examples of answers:
 {${planKey ? `"${planKey}":"See which layers the card has.",` : ""}"action":"inspect","app":"<app>","depth":3,"document":"<document id>","nodes":["Card"],"reason":"Look at the card template"}
 {${planKey ? `"${planKey}":"Duplicates the card per row, fills title and photo with the helpers, exports PNG; rows without a photo fail with a clear error.",` : ""}"action":"propose_routine","reason":"Propose the routine","routine":{…}}
@@ -407,7 +409,10 @@ The plan:
   An iterating routine's outputs are lists (a file per item becomes a fileList). When an iterating routine gets a
   second list, its connection needs "match": {"by":"index"} (the same item, e.g. the same data row),
   {"by":"fileNameEqualsColumn","column":"<column>","ignoreExtension":true} (the file named in that column), or
-  {"by":"columnEquals","leftColumn":"<column of the iterated rows>","rightColumn":"<column of the other rows>"}.
+  {"by":"columnEquals","leftColumn":"<column of the iterated rows>","rightColumn":"<column of the other rows>"}, or
+  {"by":"sameFileName"} (files with files of a similar name, e.g. photo.jpg with photo_mask.png). Add
+  "optional":true when an item without a partner should still be made (without it). Names match loosely (case,
+  spaces, dashes, accents). Follow the pairing in "Inputs Doppl checked" when there is one.
 
 ${answerFormat(["action", "app", "depth", "document", "nodes", "plan", "question", "reason"])}
 "action" is "inspect" (a deeper look at a document: app, document, nodes, depth; at most 3), "propose_plan" (with the
@@ -468,6 +473,8 @@ export interface TaskFacts {
   samples: { file: string; columns: string[]; rows: Record<string, unknown>[]; totalRows: number; errors: string[] }[];
   documents: { appId: string; id: string; name: string; inspection: unknown }[];
   style: StyleProfile | null;
+  /** The input check: what was attached, how it pairs and what the designer decided (see inputs/inputCheck). */
+  inputs?: string[];
 }
 
 const clip = (value: unknown, max: number) => {
@@ -485,6 +492,7 @@ function factLines(f: TaskFacts, inspectionChars: number) {
         `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")})${s.rows.length ? `. First rows: ${clip(s.rows, 3000)}` : " (in a folder: only its columns are shared)"}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`,
     ),
     ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
+    ...(f.inputs?.length ? ["Inputs Doppl checked (follow these; the designer confirmed the choices marked so):", ...f.inputs.map((l) => `- ${l}`)] : []),
     `House style: ${rules}`,
     "Open documents:",
     ...(f.documents.length

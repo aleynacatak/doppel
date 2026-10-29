@@ -237,20 +237,22 @@ describe("listFolderFiles", () => {
 
   beforeAll(async () => {
     folder = path.join(dir, "assets");
-    for (const name of ["b.CSV", "a.csv", "img10.png", "img2.png", ".DS_Store", "notes.txt", "sub/inner.csv"]) {
+    for (const name of ["b.CSV", "a.csv", "img10.png", "img2.png", "photo.JPEG", ".DS_Store", "notes.txt", "sub/inner.csv"]) {
       await file(path.join("assets", name), "x");
     }
   });
 
   it("lists files sorted by name, without dotfiles or folders", async () => {
     const files = await listFolderFiles(folder);
-    expect(files.map((f) => f.name)).toEqual(["a.csv", "b.CSV", "img2.png", "img10.png", "notes.txt"]);
+    expect(files.map((f) => f.name)).toEqual(["a.csv", "b.CSV", "img2.png", "img10.png", "notes.txt", "photo.JPEG"]);
     expect(files[1]).toEqual({ name: "b.CSV", path: path.join(folder, "b.CSV"), stem: "b", ext: "csv" });
   });
 
   it("filters by extension, ignoring case and dots", async () => {
     expect((await listFolderFiles(folder, { extensions: ["csv"] })).map((f) => f.name)).toEqual(["a.csv", "b.CSV"]);
     expect((await listFolderFiles(folder, { extensions: [".PNG"] })).map((f) => f.name)).toEqual(["img2.png", "img10.png"]);
+    // JPEG and JPG are one format.
+    expect((await listFolderFiles(folder, { extensions: ["jpg", "png"] })).map((f) => f.name)).toEqual(["img2.png", "img10.png", "photo.JPEG"]);
   });
 
   it("explains a missing folder", async () => {

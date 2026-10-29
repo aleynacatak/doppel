@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { nameKey } from "../core/flows/match";
 import type { PortDef } from "../core/types";
 import { type DecodedImage, readImage } from "./images";
 import type { CheckDef } from "./tasks";
@@ -17,6 +18,20 @@ export interface CheckSubject {
   /** The task's attachments: their files, and data rows for data files. */
   inputs: Record<string, { files: string[]; rows: number }>;
   run: { status: string; errors: string[] };
+  /** Questions asked during the creation (Doppl's own about the inputs, or the AI's). */
+  questions?: { kind: string; text: string }[];
+  /** The routine's outputs with what the app reported about them ("Paired photos: apricot.png"). */
+  outputs?: { label: string; details: string[] }[];
+}
+
+/** The output whose file name contains the name (loosely), the most specific first ("Vanilla" isn't "Strawberry Vanilla"). */
+function outputFor<T>(name: string, all: T[], label: (t: T) => string, names: string[]): T | undefined {
+  const key = nameKey(name);
+  const longer = names.map(nameKey).filter((k) => k !== key && k.includes(key));
+  return all.find((o) => {
+    const l = nameKey(label(o));
+    return ` ${l} `.includes(` ${key} `) && !longer.some((k) => ` ${l} `.includes(` ${k} `));
+  });
 }
 
 export interface CheckResult {
@@ -84,7 +99,33 @@ export async function runChecks(checks: CheckDef[], s: CheckSubject, read: (file
   for (const check of checks) {
     const result = (passed: boolean, detail: string) => results.push({ check, passed, detail });
     if (check.type === "noRunErrors") {
-      result(s.run.status === "succeeded" && s.run.errors.length === 0, s.run.errors.length ? s.run.errors.slice(0, 3).join(" | ") : `run ${s.run.status}`);
+      const allowed = check.allow ? new RegExp(check.allow, "i") : null;
+      const errors = s.run.errors.filter((e) => !allowed?.test(e));
+      const ok = errors.length === 0 && (s.run.status === "succeeded" || (!!allowed && s.run.errors.length > 0));
+      result(ok, errors.length ? errors.slice(0, 3).join(" | ") : `run ${s.run.status}${s.run.errors.length ? ` (${s.run.errors.length} expected)` : ""}`);
+      continue;
+    }
+    if (check.type === "askedAbout" || check.type === "noQuestions") {
+      const asked = (s.questions ?? []).filter((q) => !check.kind || q.kind === check.kind);
+      if (check.type === "noQuestions") result(asked.length === 0, asked.length ? `asked: ${asked.map((q) => q.text).join(" | ")}` : "no questions");
+      else {
+        const re = new RegExp(check.pattern, "i");
+        const hit = asked.find((q) => re.test(q.text));
+        result(!!hit, hit ? `asked: ${hit.text}` : `nothing asked about /${check.pattern}/ (${asked.length} question(s))`);
+      }
+      continue;
+    }
+    if (check.type === "pairedWith") {
+      const outs = s.outputs ?? [];
+      const names = Object.keys(check.pairs);
+      const wrong = names.flatMap((name) => {
+        const want = check.pairs[name];
+        const out = outputFor(name, outs, (o) => o.label, names);
+        if (want === null) return out ? [`${name} was made (expected skipped)`] : [];
+        if (!out) return [`no output for ${name}`];
+        return out.details.some((d) => nameKey(d).includes(nameKey(want))) ? [] : [`${name} paired with ${out.details.join(", ") || "nothing"}, expected ${want}`];
+      });
+      result(wrong.length === 0, wrong.length ? wrong.slice(0, 3).join(" | ") : `${names.length} items paired as expected`);
       continue;
     }
     if (check.type === "textContains") {
@@ -105,6 +146,37 @@ export async function runChecks(checks: CheckDef[], s: CheckSubject, read: (file
     }
     const files = s.files[key] ?? [];
     switch (check.type) {
+      case "colorAt": {
+        const tol = check.tolerance ?? 40;
+        const names = Object.keys(check.expect);
+        const problems: string[] = [];
+        for (const name of names) {
+          const file = outputFor(name, files, (f) => path.basename(f, path.extname(f)), names);
+          if (!file) {
+            problems.push(`no output for ${name}`);
+            continue;
+          }
+          const img = await (read === readImage ? readImage(file, { pixels: true }) : read(file)).catch(() => null);
+          if (!img?.pixel) {
+            problems.push(`${path.basename(file)}: can't read its pixels`);
+            continue;
+          }
+          const [r, g, b] = img.pixel(Math.min(img.width - 1, Math.floor(check.x * img.width)), Math.min(img.height - 1, Math.floor(check.y * img.height)));
+          const [er, eg, eb] = check.expect[name];
+          if (Math.abs(r - er) > tol || Math.abs(g - eg) > tol || Math.abs(b - eb) > tol) problems.push(`${path.basename(file)} is ${r},${g},${b} there, expected ${er},${eg},${eb} (${name})`);
+        }
+        result(problems.length === 0, problems.length ? problems.slice(0, 3).join(" | ") : `${names.length} outputs have the right color`);
+        break;
+      }
+      case "outputNames": {
+        const missing = check.names.filter((n) => !outputFor(n, files, (f) => path.basename(f), check.names));
+        const extra = check.only ? files.filter((f) => !check.names.some((n) => outputFor(n, [f], (x) => path.basename(x), check.names))) : [];
+        result(
+          missing.length === 0 && extra.length === 0,
+          [missing.length ? `missing: ${missing.join(", ")}` : "", extra.length ? `not expected: ${extra.map((f) => path.basename(f)).join(", ")}` : ""].filter(Boolean).join(" · ") || `${check.names.length} outputs named as expected`,
+        );
+        break;
+      }
       case "outputCount": {
         const want = expected(check.equals, s.inputs);
         result(want !== null && files.length === want, `${files.length} files in "${key}", expected ${want ?? check.equals}`);

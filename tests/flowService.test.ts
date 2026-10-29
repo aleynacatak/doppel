@@ -181,7 +181,7 @@ describe("joins in the editor", () => {
     const photos = [path.join(dir, "Apricot.png"), path.join(dir, "fig.png")];
     for (const p of photos) await fs.writeFile(p, "png");
     const preview = await flows.previewMatch(f, "e3", null, { "in-data": csv, "in-photos": photos });
-    expect(preview.rule).toEqual({ by: "fileNameEqualsColumn", column: "photo", ignoreExtension: true });
+    expect(preview.rule).toEqual({ by: "fileNameEqualsColumn", column: "photo", ignoreExtension: true, loose: true });
     expect(preview.pairs).toEqual([
       { item: "Row 1 · Apricot", match: "Apricot.png", problem: undefined },
       { item: "Row 2 · Fig", match: "fig.png", problem: undefined },

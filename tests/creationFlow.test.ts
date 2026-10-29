@@ -246,7 +246,7 @@ describe("creating with the AI", () => {
     const flow = (await flows.get(saved.savedFlowId!))!;
     expect(flow).toMatchObject({ name: "Product labels", createdWithAiCalls: 4, version: 1 });
     expect(flow.nodes.map((n) => n.id)).toEqual(["input-products", "input-photos", "node-cutouts", "node-labels", "output-labels"]);
-    expect(flow.edges.find((e) => e.to.port === "cutouts")!.match).toEqual({ by: "fileNameEqualsColumn", column: "photo", ignoreExtension: true });
+    expect(flow.edges.find((e) => e.to.port === "cutouts")!.match).toEqual({ by: "fileNameEqualsColumn", column: "photo", ignoreExtension: true, loose: true });
     const ctx = await flows.context(flow);
     expect(ctx.validation).toEqual({ ok: true, issues: [] });
     const routines = await library.list();

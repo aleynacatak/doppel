@@ -1,0 +1,19 @@
+{
+  "id": "ps-flavor-cards",
+  "app": "photoshop",
+  "request": "Make a 400×400 PNG card for each flavor with its picture in the middle on white, named after the flavor.",
+  "attachments": { "inputs": { "flavors": "fixtures/flavors.csv", "flavor pics": "fixtures/flavor pics" } },
+  "answers": [
+    { "question": "find its", "choose": "Flavor" },
+    { "question": "ha(s|ve) no", "choose": "^Skip" }
+  ],
+  "checks": [
+    { "type": "askedAbout", "kind": "inputs", "pattern": "find its image" },
+    { "type": "outputCount", "port": "cards", "equals": 3 },
+    { "type": "imageSize", "port": "cards", "width": 400, "height": 400 },
+    { "type": "colorAt", "port": "cards", "x": 0.5, "y": 0.5, "expect": { "Strawberry Vanilla": [220, 60, 90], "Mango": [245, 170, 30], "Blueberry": [70, 80, 190] } },
+    { "type": "outputNames", "port": "cards", "names": ["Strawberry Vanilla", "Mango", "Blueberry"], "only": true },
+    { "type": "noRunErrors", "allow": "Fig" }
+  ],
+  "tags": ["photoshop", "inputs", "pairing"]
+}

@@ -1,4 +1,8 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import zlib from "node:zlib";
 
 // Reads output images for eval checks without Electron: PNG fully (pixels, for transparency checks), JPEG only its
@@ -104,11 +108,25 @@ export function jpegSize(data: Buffer): { width: number; height: number } {
   throw new Error("The JPEG has no size marker.");
 }
 
-/** PNG (with pixels) or JPEG (size only). */
-export async function readImage(file: string): Promise<DecodedImage> {
+/** PNG (with pixels) or JPEG (size only; with pixels, converted to PNG by macOS's sips, when asked). */
+export async function readImage(file: string, options: { pixels?: boolean } = {}): Promise<DecodedImage> {
   const data = await fs.readFile(file);
   if (data.subarray(0, 8).equals(PNG_SIGNATURE)) return decodePng(data);
-  if (data[0] === 0xff && data[1] === 0xd8) return { ...jpegSize(data), alpha: false };
+  if (data[0] === 0xff && data[1] === 0xd8) {
+    if (options.pixels) {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-eval-jpeg-"));
+      try {
+        const png = path.join(dir, "image.png");
+        await promisify(execFile)("sips", ["-s", "format", "png", file, "--out", png]);
+        return decodePng(await fs.readFile(png));
+      } catch {
+        // No sips (not a Mac): size only.
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    }
+    return { ...jpegSize(data), alpha: false };
+  }
   throw new Error("Only PNG and JPEG images can be checked.");
 }
 

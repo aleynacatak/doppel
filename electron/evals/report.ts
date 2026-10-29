@@ -85,12 +85,17 @@ export function markdownReport(results: AttemptResult[], meta: { date: string; p
     "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...results.map(
       (r) =>
-        `| ${r.task} | ${r.profile} | ${r.repeat} | ${r.passed ? "pass" : r.created ? "fail (rerun)" : "fail (creation)"} | ${r.category ?? "–"} | ${r.aiCalls} | ${r.previews} | ${r.proposals} | ${r.questions} | ${r.inputTokens} | ${r.outputTokens} | ${r.costUsd.toFixed(4)} | ${r.wallSec} | ${r.rerunAiCalls} | ${cell((r.error ?? r.checks.map((c) => `${c.check.type}: ${c.detail}`).join("; ")).slice(0, 400))} |`,
+        `| ${r.task} | ${r.profile} | ${r.repeat} | ${r.passed ? "pass" : r.created ? "fail (rerun)" : "fail (creation)"} | ${r.category ?? "–"} | ${r.aiCalls} | ${r.previews} | ${r.proposals} | ${r.questions} | ${r.inputTokens} | ${r.outputTokens} | ${r.costUsd.toFixed(4)} | ${r.wallSec} | ${r.rerunAiCalls} | ${cell(
+          [questionText(r), (r.error ?? r.checks.map((c) => `${c.check.type}: ${c.detail}`).join("; ")).slice(0, 400)].filter(Boolean).join(" · "),
+        )} |`,
     ),
     "",
   ];
   return lines.join("\n");
 }
+
+/** "Asked (inputs): How should… → By “Flavor”": the questions of an attempt and the answers. */
+const questionText = (r: AttemptResult) => (r.questionLog?.length ? `Asked ${r.questionLog.map((q) => `(${q.kind}) ${q.text} → ${q.answer}`).join("; ")}` : "");
 
 const csvCell = (v: unknown) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -98,9 +103,9 @@ const csvCell = (v: unknown) => {
 };
 
 export function csvReport(results: AttemptResult[]): string {
-  const head = ["task", "profile", "repeat", "created", "passed", "category", "aiCalls", "previews", "proposals", "questions", "inputTokens", "cachedTokens", "outputTokens", "costUsd", "wallSec", "contextChars", "rerunAiCalls", "error", "checks"];
+  const head = ["task", "profile", "repeat", "created", "passed", "category", "aiCalls", "previews", "proposals", "questions", "inputTokens", "cachedTokens", "outputTokens", "costUsd", "wallSec", "contextChars", "rerunAiCalls", "error", "checks", "questionLog"];
   const rows = results.map((r) =>
-    [r.task, r.profile, r.repeat, r.created, r.passed, r.category ?? "", r.aiCalls, r.previews, r.proposals, r.questions, r.inputTokens, r.cachedTokens, r.outputTokens, r.costUsd, r.wallSec, r.contextChars, r.rerunAiCalls, r.error ?? "", r.checks.map((c) => `${c.passed ? "ok" : "FAIL"} ${c.check.type}: ${c.detail}`).join("; ")].map(csvCell).join(","),
+    [r.task, r.profile, r.repeat, r.created, r.passed, r.category ?? "", r.aiCalls, r.previews, r.proposals, r.questions, r.inputTokens, r.cachedTokens, r.outputTokens, r.costUsd, r.wallSec, r.contextChars, r.rerunAiCalls, r.error ?? "", r.checks.map((c) => `${c.passed ? "ok" : "FAIL"} ${c.check.type}: ${c.detail}`).join("; "), (r.questionLog ?? []).map((q) => JSON.stringify(q)).join("\n")].map(csvCell).join(","),
   );
   return [head.join(","), ...rows].join("\n") + "\n";
 }
@@ -207,5 +212,6 @@ export function parseCsvReport(text: string): AttemptResult[] {
         .map((c) => /^(ok|FAIL) (\w+): ([\s\S]*)$/.exec(c))
         .filter((m): m is RegExpExecArray => !!m)
         .map((m): CheckResult => ({ check: { type: m[2] } as CheckDef, passed: m[1] === "ok", detail: m[3] })),
+      ...(r[idx("questionLog")] ? { questionLog: r[idx("questionLog")].split("\n").map((l) => JSON.parse(l)) } : {}),
     }));
 }

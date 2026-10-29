@@ -1,5 +1,7 @@
 // Regenerates the synthetic eval fixtures (plain PNGs drawn in code): node evals/make-fixtures.mjs
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 
@@ -34,6 +36,14 @@ function png(file, w, h, color) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
 }
+/** A JPEG, drawn as a PNG and converted by macOS's sips. */
+function jpg(file, w, h, color) {
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "doppl-fixture-")), "image.png");
+  png(tmp, w, h, color);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  execFileSync("sips", ["-s", "format", "jpeg", tmp, "--out", file], { stdio: "ignore" });
+  fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+}
 const WHITE = [255, 255, 255];
 const d = (x, y, cx, cy) => Math.hypot(x - cx, y - cy);
 
@@ -47,4 +57,26 @@ png(path.join(cut, "ring.png"), 360, 240, (x, y) => (d(x, y, 180, 120) >= 35 && 
 const rs = path.join(here, "tasks/ps-resize-jpg/fixtures/images");
 png(path.join(rs, "gradient.png"), 600, 400, (x, y) => [Math.round((x / 600) * 255), Math.round((y / 400) * 255), 140]);
 png(path.join(rs, "stripes.png"), 900, 300, (x) => (Math.floor(x / 30) % 2 ? [200, 60, 60] : [250, 230, 210]));
+// Flavor pictures named the way designers name files: different case, spaces, dashes, mixed formats, a stray file.
+// Each is a colored circle on white, so an output's color shows which picture it got. Fig has no picture.
+const FLAVORS = { "Strawberry Vanilla": [220, 60, 90], Mango: [245, 170, 30], Blueberry: [70, 80, 190] };
+const circle = (rgb) => (x, y) => (d(x, y, 150, 150) <= 110 ? rgb : WHITE);
+for (const task of ["ps-flavor-cards", "figma-flavor-labels-sim"]) {
+  const pics = path.join(here, `tasks/${task}/fixtures/flavor pics`);
+  fs.rmSync(pics, { recursive: true, force: true });
+  png(path.join(pics, "Strawberry_Vanilla.PNG"), 300, 300, circle(FLAVORS["Strawberry Vanilla"]));
+  jpg(path.join(pics, "mango-label.jpg"), 300, 300, circle(FLAVORS.Mango));
+  jpg(path.join(pics, "BLUEBERRY.jpeg"), 300, 300, circle(FLAVORS.Blueberry));
+  png(path.join(pics, "old-test.png"), 300, 300, circle([128, 128, 128]));
+}
+// The same pictures named exactly as the list says.
+const clean = path.join(here, "tasks/figma-flavor-labels-clean-sim/fixtures/images");
+fs.rmSync(clean, { recursive: true, force: true });
+for (const [name, rgb] of Object.entries(FLAVORS)) png(path.join(clean, `${name.toLowerCase().replace(/ /g, "-")}.png`), 300, 300, circle(rgb));
+
+// Product photos and, in another folder, the brand logo.
+const photos = path.join(here, "tasks/ps-logo-two-folders/fixtures/photos");
+fs.rmSync(photos, { recursive: true, force: true });
+for (const [name, rgb] of Object.entries({ apricot: [240, 180, 120], fig: [120, 80, 110], plum: [100, 60, 130] })) jpg(path.join(photos, `${name}.jpg`), 400, 300, () => rgb);
+png(path.join(here, "tasks/ps-logo-two-folders/fixtures/brand/logo.png"), 120, 120, () => [220, 30, 30]);
 console.log("fixtures written");

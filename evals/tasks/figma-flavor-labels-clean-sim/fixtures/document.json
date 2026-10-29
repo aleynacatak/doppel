@@ -1,0 +1,30 @@
+{
+  "file": { "name": "Jam labels" },
+  "pages": [{ "id": "0:1", "name": "Page 1", "current": true }],
+  "selection": [],
+  "page": {
+    "id": "0:1",
+    "name": "Page 1",
+    "type": "PAGE",
+    "childCount": 1,
+    "children": [
+      {
+        "id": "1:2",
+        "name": "Label",
+        "type": "FRAME",
+        "x": 0,
+        "y": 0,
+        "width": 600,
+        "height": 300,
+        "fills": ["#F2F2F2"],
+        "childCount": 4,
+        "children": [
+          { "id": "1:3", "name": "Brand", "type": "TEXT", "x": 24, "y": 20, "width": 300, "height": 36, "text": "Jam-a-dox", "fonts": ["Inter Bold"], "fontSize": 28, "textAutoResize": "HEIGHT" },
+          { "id": "1:4", "name": "Flavor", "type": "TEXT", "x": 24, "y": 70, "width": 300, "height": 80, "text": "Flavor name", "fonts": ["Inter Bold"], "fontSize": 40, "textAutoResize": "HEIGHT" },
+          { "id": "1:5", "name": "Weight", "type": "TEXT", "x": 24, "y": 250, "width": 120, "height": 24, "text": "250g", "fonts": ["Inter Regular"], "fontSize": 16, "textAutoResize": "HEIGHT" },
+          { "id": "1:6", "name": "Photo", "type": "RECTANGLE", "x": 340, "y": 40, "width": 220, "height": 220, "fills": ["IMAGE"], "text": "Img here" }
+        ]
+      }
+    ]
+  }
+}

@@ -309,11 +309,14 @@ function planRoutine(raw: Record<string, any>, i: number): FlowPlanRoutine {
 
 function toMatch(raw: any): MatchRule | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  if (raw.by === "index") return { by: "index" };
-  if (raw.by === "fileNameEqualsColumn" && typeof raw.column === "string") return { by: "fileNameEqualsColumn", column: raw.column, ignoreExtension: raw.ignoreExtension !== false };
+  const optional = raw.optional === true ? { optional: true } : {};
+  if (raw.by === "index") return { by: "index", ...optional };
+  // Names in designers' files are rarely exact: the model's rules match loosely.
+  if (raw.by === "fileNameEqualsColumn" && typeof raw.column === "string") return { by: "fileNameEqualsColumn", column: raw.column, ignoreExtension: raw.ignoreExtension !== false, loose: true, ...optional };
   if (raw.by === "columnEquals" && typeof raw.leftColumn === "string" && typeof raw.rightColumn === "string") {
-    return { by: "columnEquals", leftColumn: raw.leftColumn, rightColumn: raw.rightColumn };
+    return { by: "columnEquals", leftColumn: raw.leftColumn, rightColumn: raw.rightColumn, ...optional };
   }
+  if (raw.by === "sameFileName") return { by: "sameFileName", ...optional };
   return undefined;
 }
 
@@ -407,7 +410,7 @@ export function planProblems(plan: FlowPlan, apps: AppId[]): string[] {
     const fit = compatible(fromSpec, inputSpec(port, r.appId));
     if (!fit.ok) problems.push(`${at}: ${fit.reason}`);
     const join = r.iterate && r.iterate.input !== port.key && isListType(port.type);
-    if (join && !c.match) problems.push(`${at}: "${r.id}" iterates over "${r.iterate!.input}", so this second list needs a "match" rule (index, fileNameEqualsColumn or columnEquals).`);
+    if (join && !c.match) problems.push(`${at}: "${r.id}" iterates over "${r.iterate!.input}", so this second list needs a "match" rule (index, fileNameEqualsColumn, columnEquals or sameFileName).`);
     if (join && c.match) {
       const iterPort = r.inputs.find((p) => p.key === r.iterate!.input)!;
       const bad = ruleProblem(c.match, iterPort.type as "rows" | "fileList", port.type as "rows" | "fileList");

@@ -14,10 +14,44 @@ export interface Pairing {
 
 const fold = (s: unknown) => String(s ?? "").normalize("NFC").trim().toLowerCase();
 const baseName = (p: string) => p.split("/").pop() ?? p;
-const stem = (name: string) => {
+export const stem = (name: string) => {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;
 };
+
+/** A name as people mean it: "Strawberry_Vanilla", "strawberry-vanilla" and "Strawberry Vanilla" are the same; so are "Çilek" and "cilek". */
+export function nameKey(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+const tokens = (key: string) => new Set(key.split(" ").filter(Boolean));
+const within = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every((t) => b.has(t));
+
+/**
+ * Each wanted name's partner among the candidates: the same name, or (loose) the only candidate whose name contains
+ * it or is contained in it, that no other wanted name has as its own. Null: none (or more than one) fits.
+ */
+export function partnersByName<T extends object>(wanted: string[], candidates: { name: string; item: T }[], loose: boolean): (T | null)[] {
+  const keys = candidates.map((c) => ({ key: nameKey(c.name), item: c.item }));
+  const exact = wanted.map((w) => {
+    const k = nameKey(w);
+    return k ? (keys.find((c) => c.key === k)?.item ?? null) : null;
+  });
+  if (!loose) return exact;
+  const taken = new Set(exact.filter((x): x is T => x !== null));
+  return wanted.map((w, i) => {
+    if (exact[i] !== null) return exact[i];
+    const t = tokens(nameKey(w));
+    const fits = keys.filter((c) => !taken.has(c.item) && (within(t, tokens(c.key)) || within(tokens(c.key), t)));
+    return fits.length === 1 ? fits[0].item : null;
+  });
+}
 const fileName = (item: ListItem) => baseName(String(item.value));
 const cell = (item: ListItem, column: string) => {
   const row = item.value as Record<string, unknown> | null;
@@ -34,6 +68,7 @@ export function singular(label: string): string {
 
 /** Whether the rule fits the two lists (e.g. "file name = column" needs rows on one side and files on the other). */
 export function ruleProblem(rule: MatchRule, iterType: ListType, joinType: ListType): string | null {
+  if (rule.by === "sameFileName" && (iterType !== "fileList" || joinType !== "fileList")) return "“Same file name” pairs files with files.";
   if (rule.by === "fileNameEqualsColumn" && iterType === joinType) return "“File name = column” pairs data rows with files.";
   if (rule.by === "fileNameEqualsColumn" && !rule.column) return "Pick the column that holds the file names.";
   if (rule.by === "columnEquals" && (iterType !== "rows" || joinType !== "rows")) return "“Column = column” pairs data rows with data rows.";
@@ -65,22 +100,35 @@ export function pairItems(
       return out;
     }
     case "fileNameEqualsColumn": {
-      const same = (a: string, b: string) => (rule.ignoreExtension ? fold(stem(a)) === fold(stem(b)) : fold(a) === fold(b));
-      for (const item of iter.items) {
-        if (iter.type === "rows") {
-          const wanted = String(cell(item, rule.column) ?? "").trim();
-          if (!wanted) {
-            out.set(item.key, { matched: null, problem: `No ${what} for ${item.label}: its "${rule.column}" is empty.` });
-            continue;
-          }
-          const matched = joined.items.find((j) => same(fileName(j), baseName(wanted)));
-          out.set(item.key, matched ? { matched } : { matched: null, problem: `No ${what} for ${item.label}: ${baseName(wanted)} not found.` });
-        } else {
-          const name = fileName(item);
-          const matched = joined.items.find((j) => same(name, baseName(String(cell(j, rule.column) ?? ""))));
-          out.set(item.key, matched ? { matched } : { matched: null, problem: `No ${what} for ${item.label}: no row has "${name}" in "${rule.column}".` });
-        }
+      const name = (v: string) => (rule.ignoreExtension ? stem(baseName(v)) : baseName(v));
+      const exactly = (a: string, b: string) => (rule.ignoreExtension ? fold(stem(a)) === fold(stem(b)) : fold(a) === fold(b));
+      if (iter.type === "rows") {
+        const wanted = iter.items.map((item) => String(cell(item, rule.column) ?? "").trim());
+        const found = rule.loose
+          ? partnersByName(wanted.map(name), joined.items.map((j) => ({ name: name(fileName(j)), item: j })), true)
+          : wanted.map((w) => joined.items.find((j) => exactly(fileName(j), baseName(w))) ?? null);
+        iter.items.forEach((item, i) => {
+          if (!wanted[i]) out.set(item.key, { matched: null, problem: `No ${what} for ${item.label}: its "${rule.column}" is empty.` });
+          else out.set(item.key, found[i] ? { matched: found[i] } : { matched: null, problem: `No ${what} for ${item.label}: ${baseName(wanted[i])} not found.` });
+        });
+      } else {
+        const rowsWithName = joined.items.map((j) => ({ name: name(String(cell(j, rule.column) ?? "")), item: j })).filter((r) => r.name);
+        const found = rule.loose
+          ? partnersByName(iter.items.map((item) => name(fileName(item))), rowsWithName, true)
+          : iter.items.map((item) => joined.items.find((j) => exactly(fileName(item), baseName(String(cell(j, rule.column) ?? "")))) ?? null);
+        iter.items.forEach((item, i) =>
+          out.set(item.key, found[i] ? { matched: found[i] } : { matched: null, problem: `No ${what} for ${item.label}: no row has "${fileName(item)}" in "${rule.column}".` }),
+        );
       }
+      return out;
+    }
+    case "sameFileName": {
+      const found = partnersByName(
+        iter.items.map((item) => stem(fileName(item))),
+        joined.items.map((j) => ({ name: stem(fileName(j)), item: j })),
+        true,
+      );
+      iter.items.forEach((item, i) => out.set(item.key, found[i] ? { matched: found[i] } : { matched: null, problem: `No ${what} for ${item.label}: no file with a name like it.` }));
       return out;
     }
     case "columnEquals": {
@@ -111,17 +159,17 @@ export function suggestMatch(
   if (iter.type !== joined.type) {
     const rows = iter.type === "rows" ? iter : joined;
     const files = iter.type === "rows" ? joined : iter;
-    const names = new Set(files.items.map((f) => fold(stem(fileName(f)))));
+    const names = new Set(files.items.map((f) => nameKey(stem(fileName(f)))));
     const columns = rows.columns?.length ? rows.columns : Object.keys((rows.items[0]?.value as Record<string, unknown>) ?? {});
     let best: { column: string; score: number } | null = null;
     for (const column of columns) {
       const values = rows.items.map((r) => String(cell(r, column) ?? "").trim()).filter(Boolean);
-      const hits = values.filter((v) => names.has(fold(stem(baseName(v))))).length;
+      const hits = values.filter((v) => names.has(nameKey(stem(baseName(v))))).length;
       const looksLikeFiles = values.filter((v) => /\.[a-z0-9]{2,5}$/i.test(v)).length;
       const score = hits * 10 + looksLikeFiles * 2 + (FILE_COLUMN.test(column) ? 3 : 0);
       if (score > 0 && (!best || score > best.score)) best = { column, score };
     }
-    if (best) return { by: "fileNameEqualsColumn", column: best.column, ignoreExtension: true };
+    if (best) return { by: "fileNameEqualsColumn", column: best.column, ignoreExtension: true, loose: true };
     return { by: "index" };
   }
   if (iter.type === "rows") {

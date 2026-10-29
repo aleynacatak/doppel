@@ -193,10 +193,17 @@ export interface SettingDef extends Omit<ParamDef, "type" | "extensions" | "colu
 }
 
 /** How items from two lists pair up for an iterating routine (a data row and its image). */
-export type MatchRule =
+export type MatchRule = (
   | { by: "index" }
-  | { by: "fileNameEqualsColumn"; column: string; ignoreExtension: boolean }
-  | { by: "columnEquals"; leftColumn: string; rightColumn: string };
+  /** loose: case, spaces, dashes, underscores and accents don't count, and a name may contain the other ("Strawberry Vanilla" → strawberry_vanilla-label.png) when only one fits. */
+  | { by: "fileNameEqualsColumn"; column: string; ignoreExtension: boolean; loose?: boolean }
+  | { by: "columnEquals"; leftColumn: string; rightColumn: string }
+  /** Files with files by name (photo.jpg with photo_mask.png), loosely. */
+  | { by: "sameFileName" }
+) & {
+  /** Items without a partner still run (without it) instead of failing. */
+  optional?: boolean;
+};
 
 /**
  * A value picked for an input at run time: a path (file, folder, data file, or a folder whose files make a file
@@ -746,8 +753,13 @@ export interface CreationStage {
 
 export interface ClarifyingQuestion {
   id: string;
+  /** "inputs": Doppl's own question about the attached files, before the AI starts; otherwise the AI's. */
+  kind?: "inputs" | "ai";
   text: string;
-  options: { id: string; label: string }[];
+  /** A line under the question ("4 rows · 4 images (PNG, JPG)"). */
+  detail?: string;
+  /** The first option is the recommended one. */
+  options: { id: string; label: string; detail?: string }[];
 }
 
 /** A routine before it is saved: what the AI proposed (or a repair), validated and tried once. */

@@ -5,7 +5,23 @@ import type { RoutineTemplate } from "../../adapters/types";
 import { layoutLeftToRight, topoOrder } from "../../shared/flowGraph";
 import { compatible, describeSpec, inputSpec, isListType, outputSpec, typeTag } from "../../shared/ports";
 import { DataFileError, listFolderFiles, readDataFile } from "../helpers/dataFiles";
-import { suggestMatch } from "../flows/match";
+import { pairItems, suggestMatch } from "../flows/match";
+import {
+  IMAGE_EXTENSIONS,
+  type InputAnalysis,
+  type InputDecision,
+  type InputQuestion,
+  analyzeInputs,
+  decidedRule,
+  fileExtension,
+  inputFacts,
+  missingQuestion,
+  nameFit,
+  nounOf,
+  pairingQuestion,
+  readInputSources,
+  sourceOf,
+} from "../inputs/inputCheck";
 import { NodeRunner, type NodeRunResult } from "../flows/nodeRunner";
 import { checkReadiness } from "../flows/readiness";
 import { edgeIssues, routineOf } from "../flows/validateFlow";
@@ -108,6 +124,8 @@ const REVISION_ACTIONS = ["ask_question", "decline", "inspect", "preview_routine
 const MAX_REFINE_IMAGES = 3;
 const MAX_TEST_ITEMS = 3;
 const PLAN_ACTIONS = ["ask_question", "inspect", "propose_plan"];
+/** The input check asks at most this many questions; past them, Doppl's best guesses stand (and are told to the AI). */
+const MAX_INPUT_QUESTIONS = 3;
 
 /** AI errors where continuing can't help until the designer changes something in Settings. */
 const NO_CONTINUE_CODES = new Set([
@@ -193,6 +211,8 @@ interface CreationState {
   trialDirs: string[];
   /** Earlier loops of this creation (the plan, earlier routines), for the dev panel. */
   pastMessages: ChatMessage[];
+  /** The input check: what was attached, how it pairs, and what the designer decided. */
+  inputs?: { analysis: InputAnalysis; decisions: InputDecision[] };
 }
 
 function freshStages(): CreationStage[] {
@@ -839,6 +859,7 @@ export class RoutineService {
     state.loop = undefined;
     state.flow = undefined;
     state.gathered = undefined;
+    state.inputs = undefined;
     state.pastMessages = [];
     await this.cleanTrials(state);
     Object.assign(c, {
@@ -1003,6 +1024,59 @@ export class RoutineService {
   private note(c: Creation, text: string) {
     c.activity = [...(c.activity ?? []), text];
     this.emit(c);
+  }
+
+  /**
+   * The input check, before the AI starts: how the attached inputs pair (which image is a row's), what's missing,
+   * which formats are mixed. Doppl asks only what it isn't sure of, its best guess first; the answers and the
+   * facts go to the AI and decide how the trial pairs the samples.
+   */
+  private async checkInputs(state: CreationState) {
+    const c = state.creation;
+    const analysis = analyzeInputs(await readInputSources(c.task));
+    const decisions: InputDecision[] = [];
+    let asked = 0;
+    for (const r of analysis.relations) {
+      let option = r.best;
+      let confirmed = false;
+      if (!r.sure && asked < MAX_INPUT_QUESTIONS) {
+        asked++;
+        const id = await this.askAboutInputs(state, pairingQuestion(r));
+        option = r.options.find((o) => o.id === id) ?? r.best;
+        confirmed = true;
+      }
+      let missing: InputDecision["missing"];
+      if (option.rule && option.missing.length) {
+        if (asked < MAX_INPUT_QUESTIONS) {
+          asked++;
+          const id = await this.askAboutInputs(state, missingQuestion(r, option));
+          if (id === "stop") {
+            throw new ExecutionError(`Add the missing ${nounOf(r.other)} to ${r.other.label}, then try again. Nothing was sent to the AI yet.`, undefined, "generic");
+          }
+          missing = id === "without" ? "without" : "skip";
+        } else missing = "skip";
+      }
+      decisions.push({ mainId: r.main.id, otherId: r.other.id, option, missing, confirmed });
+      if (!confirmed && r.sure) this.note(c, option.kind === "same" ? `${r.other.items[0].label} is used for every item` : `Paired ${r.main.label} with ${r.other.label}: ${option.label.toLowerCase()} (${option.matched} of ${r.main.items.length})`);
+    }
+    state.inputs = { analysis, decisions };
+    const g = state.gathered!;
+    g.facts = { ...g.facts, inputs: inputFacts(analysis, decisions) };
+  }
+
+  /** One input-check question; the option the designer picked. */
+  private async askAboutInputs(state: CreationState, q: InputQuestion): Promise<string> {
+    const c = state.creation;
+    c.question = { id: `inputs-${newId()}`, kind: "inputs", text: q.text, ...(q.detail ? { detail: q.detail } : {}), options: q.options };
+    c.status = "waiting";
+    this.setStage(state, "read", "active", "Waiting for your answer");
+    const optionId = await this.waitForAnswer(state);
+    if (state.cancelled) throw new CancelledError();
+    const label = c.question.options.find((o) => o.id === optionId)?.label ?? optionId;
+    c.question = undefined;
+    c.status = "running";
+    this.note(c, `Answer: ${label}`);
+    return optionId;
   }
 
   private waitForAnswer(state: CreationState): Promise<string> {
@@ -1197,6 +1271,17 @@ export class RoutineService {
     task.references = [...new Set([...task.references, ...added.files])];
     task.folders = [...new Set([...(task.folders ?? []), ...added.folders])];
     const read = await this.readSamples(task);
+    if (state.inputs) {
+      // The input check reads the new files too; what was decided stays, new pairs take Doppl's best guess.
+      const analysis = analyzeInputs(await readInputSources(task));
+      const decisions = [...state.inputs.decisions];
+      for (const r of analysis.relations) {
+        if (!decisions.some((d) => d.mainId === r.main.id && d.otherId === r.other.id)) {
+          decisions.push({ mainId: r.main.id, otherId: r.other.id, option: r.best, missing: r.best.missing.length ? "skip" : undefined, confirmed: false });
+        }
+      }
+      state.inputs = { analysis, decisions };
+    }
     const g = state.gathered!;
     state.gathered = {
       ...g,
@@ -1236,6 +1321,7 @@ export class RoutineService {
       this.setStage(state, "read", "active");
       await this.prepareAi(c);
       if (!state.gathered) state.gathered = await this.gather(c, isCancelled);
+      if (!state.inputs && !state.repair) await this.checkInputs(state);
       const g = state.gathered;
       this.setStage(state, "read", "done", resume ? "Kept from before" : `${plural(g.facts.documents.filter((d) => d.id).length, "document")} · ${plural(g.facts.samples.length, "data file")}`);
       const { draft, workDir } = await this.routineLoop(state, { appId: c.task.appId, budget, resume });
@@ -1271,7 +1357,9 @@ export class RoutineService {
     switch (port.type) {
       case "rows": {
         let firstProblem: string | null = null;
-        for (const file of g.dataFiles) {
+        // The data file whose name fits the input best first ("prices" → prices.csv).
+        const fit = (file: string) => nameFit(port, { id: file, label: path.basename(file), kind: "rows", items: [] });
+        for (const file of [...g.dataFiles].sort((a, b) => fit(b) - fit(a))) {
           try {
             const { value } = await resolveInput(port, file);
             if (value) return value;
@@ -1283,11 +1371,13 @@ export class RoutineService {
         return null;
       }
       case "fileList": {
-        const files = [...task.references.filter(wanted), ...(await folderFiles()).filter(wanted)];
+        const checked = this.sampleFiles(state, port);
+        const files = checked ?? [...task.references.filter(wanted), ...(await folderFiles()).filter(wanted)];
         return files.length ? fileList(files) : null;
       }
       case "file": {
-        const file = [...task.references, ...(await folderFiles())].find(wanted);
+        const checked = this.sampleFiles(state, port, true);
+        const file = checked ? checked[0] : [...task.references, ...(await folderFiles())].find(wanted);
         return file ? { kind: "value", type: "file", value: file } : null;
       }
       case "folder": {
@@ -1303,6 +1393,48 @@ export class RoutineService {
       case "document":
         return null;
     }
+  }
+
+  /**
+   * Sample files for a file input from what the input check read: from the one attached folder (or the attached
+   * files) that fits the input best (by name, then by how many of its files fit), never mixed from several. A
+   * folder with formats the input leaves out (JPGs next to PNGs) widens the input to them. Null: no input check.
+   */
+  private sampleFiles(state: CreationState, port: PortDef, single = false): string[] | null {
+    const sources = state.inputs?.analysis.sources.filter((s) => s.kind === "files");
+    if (!sources) return null;
+    const allowed = port.extensions?.length ? port.extensions.map((e) => (e.toLowerCase() === "jpeg" ? "jpg" : e.toLowerCase())) : null;
+    const family = (ext: string) => (IMAGE_EXTENSIONS.includes(ext) ? "image" : ext);
+    const fits = (f: string) => (allowed ? allowed.includes(fileExtension(f)) : !DATA_EXTENSIONS.includes(fileExtension(f)));
+    const kin = (f: string) => (allowed ? allowed.some((a) => family(a) === family(fileExtension(f))) : fits(f));
+    const ranked = sources
+      .map((s) => {
+        const related = s.items.map((i) => String(i.value)).filter(kin);
+        return { s, related, score: nameFit(port, s) * 1000 + (single && s.items.length === 1 ? 500 : 0) + related.length };
+      })
+      .filter((x) => x.related.length)
+      .sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best) return [];
+    const extra = [...new Set(best.related.filter((f) => !fits(f)).map(fileExtension))];
+    if (allowed && extra.length) {
+      port.extensions = [...port.extensions!, ...extra];
+      this.note(state.creation, `${port.label} also takes ${extra.map((e) => e.toUpperCase()).join(", ")} files, like the ones in ${best.s.label}`);
+    }
+    return best.related;
+  }
+
+  /** How two sample lists pair, as the input check decided (either way round), or null. */
+  private decidedJoin(state: CreationState, iter: PortValue | undefined, joined: PortValue | undefined): MatchRule | null {
+    if (!state.inputs) return null;
+    const { analysis, decisions } = state.inputs;
+    const a = sourceOf(analysis.sources, iter as never);
+    const b = sourceOf(analysis.sources, joined as never);
+    if (!a || !b) return null;
+    const rule = decidedRule(decisions, a.id, b.id);
+    if (rule) return rule;
+    const back = decidedRule(decisions, b.id, a.id);
+    return back?.by === "columnEquals" ? { ...back, leftColumn: back.rightColumn, rightColumn: back.leftColumn } : back;
   }
 
   /**
@@ -1351,11 +1483,30 @@ export class RoutineService {
       if (!draft.iterate || port.key === draft.iterate.input || !isListType(port.type)) continue;
       const joined = inputs[port.key];
       const planned = spec.planned?.joins[port.key];
+      const decided = planned ? null : this.decidedJoin(state, iterValue, joined);
       if (planned) joins[port.key] = planned;
+      else if (decided) joins[port.key] = decided;
       else if (iterValue?.kind === "list" && joined?.kind === "list") joins[port.key] = suggestMatch(iterValue, joined);
       else joins[port.key] = { by: "index" };
     }
     if (Object.keys(joins).length) draft.matches = joins;
+    // Try an item that has its partners (row 1 may have no image while row 3 has one).
+    let index = sampleIndex;
+    if (index === 0 && !onlyItems?.size && iterValue?.kind === "list" && Object.keys(joins).length) {
+      const pairs = Object.entries(joins).flatMap(([key, rule]) => {
+        const j = inputs[key];
+        const p = draft.inputs.find((x) => x.key === key);
+        return j?.kind === "list" && p ? [pairItems(rule, { type: iterValue.type, items: iterValue.items }, { type: j.type, items: j.items, label: p.label })] : [];
+      });
+      const complete = (k: number) => pairs.every((p) => !!p.get(iterValue.items[k].key)?.matched);
+      if (iterValue.items.length && !complete(0)) {
+        const k = iterValue.items.findIndex((_, i) => complete(i));
+        if (k > 0) {
+          index = k;
+          this.note(c, `Tried on ${iterValue.items[k].label}: the first item has no partner`);
+        }
+      }
+    }
     await fs.mkdir(workDir, { recursive: true });
     const adapter = this.deps.registry.get(spec.appId);
     const settings: Record<string, ParamValue> = Object.fromEntries(draft.settings.map((s) => [s.key, (s.default ?? (s.type === "boolean" ? false : null)) as ParamValue]));
@@ -1377,7 +1528,7 @@ export class RoutineService {
           allowedFolders: draft.inputs.filter((p) => p.type === "folder" && inputs[p.key]?.kind === "value").map((p) => String((inputs[p.key] as { value: unknown }).value)),
           isCancelled: ai.isCancelled,
           failed: new Map(),
-          ...(onlyItems?.size ? { onlyItems } : { sampleIndex }),
+          ...(onlyItems?.size ? { onlyItems } : { sampleIndex: index }),
         },
         {
           onProgress: (p, phase) => {
@@ -1648,7 +1799,7 @@ export class RoutineService {
       if (proposal) {
         c.draft = draft;
         this.setStage(state, "write", "done", `${plural(draft.inputs.length, "input")} · ${plural(draft.outputs.length, "output")} · ${plural(draft.settings.length, "setting")}`);
-        this.setStage(state, "run", "active", "Trial on the first sample item");
+        this.setStage(state, "run", "active", "Trial on a sample item");
       } else {
         this.note(c, `Previewed the routine on sample item ${index + 1}`);
       }
@@ -1691,7 +1842,7 @@ export class RoutineService {
         this.note(c, `The trial run failed, sent back to fix: ${progress.lastProblem.length > 240 ? `${progress.lastProblem.slice(0, 237)}…` : progress.lastProblem}`);
         this.setStage(state, "run", "pending", "");
         this.setStage(state, "write", "active", "Fixing problems from the trial run");
-        reply(this.describeTrial(res, "The trial run on the first sample item failed. Fix the routine and propose it again:"));
+        reply(this.describeTrial(res, "The trial run on a sample item failed. Fix the routine and propose it again:"));
         continue;
       }
       this.setStage(state, "run", "done", `${plural(res.outputs.length, "output")} from ${spec.revision ? copyItems(res.progress.total) : "1 sample item"}`);
@@ -1785,6 +1936,7 @@ export class RoutineService {
       this.setStage(state, "read", "active");
       await this.prepareAi(c);
       if (!state.gathered) state.gathered = await this.gather(c, isCancelled);
+      if (!state.inputs) await this.checkInputs(state);
       this.setStage(state, "read", "done", resume ? "Kept from before" : `${plural(state.gathered.facts.documents.filter((d) => d.id).length, "document")} · ${plural(state.gathered.facts.samples.length, "data file")}`);
 
       if (!state.flow) {

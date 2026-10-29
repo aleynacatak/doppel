@@ -58,8 +58,26 @@ Checks: `outputCount` (`equals`: a number or `"inputCount:<input>"`: files in th
 `scale`), `hasTransparency`, `cornerPixelsTransparent` (only for subjects that don't fill their trimmed canvas),
 `outerWhiteRemoved` (`maxShare`, default 0.01: the rough work of a cutout, white around the subject gone; white
 enclosed by it may stay), `noOpaqueWhite` (`maxShare`, default 0.02: stricter, white left anywhere, also inside enclosed
-areas), `textContains` (`text`, in output details or text files),
-`fileNamePattern` (`pattern` regex and/or `stemsFrom: "<input>"`), `noRunErrors`.
+areas), `colorAt` (`x`, `y` as fractions, `expect`: output name → RGB, `tolerance`: each output named after an item
+has its color there, e.g. the right picture; JPEGs are read through macOS's sips), `outputNames` (`names`, `only`),
+`textContains` (`text`, in output details or text files),
+`fileNamePattern` (`pattern` regex and/or `stemsFrom: "<input>"`), `noRunErrors` (`allow`: a regex for expected
+errors, like items the designer chose to skip).
+
+Checks on the creation itself: `askedAbout` (`pattern`, `kind`: `"inputs"` for Doppl's own questions about the
+attached files, `"ai"` for the AI's), `noQuestions` (`kind`: the inputs were clear, so nothing should be asked), and
+`pairedWith` (`pairs`: item name → the partner file it should get, or null when it should be skipped; simulated apps
+report each output's partner).
+
+`answers` says how the designer answers: `[{ "question": "<regex>", "choose": "<regex for the option's label or
+id>" }]`. Without a matching rule, the recommended (first) option is picked. The report lists every question and
+answer.
+
+The tasks cover different setups on purpose, from clear to error-prone: a list and pictures named loosely, in mixed
+formats, with a row that has no picture and a stray picture (`figma-flavor-labels-sim`, `ps-flavor-cards`); the same
+named exactly, where nothing should be asked (`figma-flavor-labels-clean-sim`); two folders, photos and a logo
+(`ps-logo-two-folders`); cutouts, resizing and text fills. Add tasks for setups designers get wrong: they're cheap as
+`"mode": "simulated"`.
 
 `node evals/make-fixtures.mjs` redraws the synthetic fixtures of the sample tasks.
 

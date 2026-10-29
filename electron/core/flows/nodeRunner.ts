@@ -367,11 +367,12 @@ export class NodeRunner {
       const joinedPort = routine.inputs.find((p) => p.key === key);
       const joined = spec.inputs[key];
       if (!joinedPort || !joined || joined.kind !== "list") continue;
-      const pairs = pairItems(rule, { type: list.type, items: source }, { type: joined.type, items: joined.items, label: joinedPort.label });
+      // Over the whole list: an item's partner doesn't change when only some items run (a trial, a refine).
+      const pairs = pairItems(rule, { type: list.type, items: list.items }, { type: joined.type, items: joined.items, label: joinedPort.label });
       for (const p of prepared) {
         const pair = pairs.get(p.key);
         if (pair?.matched) p.matched[key] = itemValue(joined.type, pair.matched);
-        else if (!p.preError) {
+        else if (!p.preError && !rule.optional) {
           const failedPartner = spec.failed.get(p.key);
           p.preError = failedPartner && rule.by === "index" ? `${pair?.problem ?? "No match."} It failed in ${failedPartner.node}.` : (pair?.problem ?? "No match.");
         }

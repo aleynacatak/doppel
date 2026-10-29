@@ -21,7 +21,18 @@ export type CheckDef =
   | { type: "textContains"; port?: string; text: string }
   /** Every file name matches the regex; with stemsFrom, each name (without extension) is an input file's name. */
   | { type: "fileNamePattern"; port: string; pattern?: string; stemsFrom?: string }
-  | { type: "noRunErrors" };
+  /** allow: a regex for errors that are expected (items the designer chose to skip). */
+  | { type: "noRunErrors"; allow?: string }
+  /** Doppl (kind "inputs") or the AI asked a question matching the regex. */
+  | { type: "askedAbout"; pattern: string; kind?: "inputs" | "ai" }
+  /** No question was asked (of that kind): the inputs were clear enough. */
+  | { type: "noQuestions"; kind?: "inputs" | "ai" }
+  /** Each item (by name) was made with this partner file (by name); null: the item was skipped. Needs output details (simulated apps report them). */
+  | { type: "pairedWith"; pairs: Record<string, string | null> }
+  /** Each output named after a key has that color at (x, y) (fractions of its size); every key needs an output. */
+  | { type: "colorAt"; port: string; x: number; y: number; expect: Record<string, [number, number, number]>; tolerance?: number }
+  /** Every name has an output whose file name contains it (loosely); only: no other outputs. */
+  | { type: "outputNames"; port: string; names: string[]; only?: boolean };
 
 export interface EvalTask {
   id: string;
@@ -36,12 +47,31 @@ export interface EvalTask {
     inspection?: string;
   };
   checks: CheckDef[];
+  /** How the designer answers Doppl's questions: the first option whose label or id matches "choose", for a question matching "question". Otherwise the recommended (first) option. */
+  answers: { question: string; choose: string }[];
   tags: string[];
   /** The task's folder (absolute). */
   dir: string;
 }
 
-const CHECK_TYPES = new Set(["outputCount", "fileExtension", "imageSize", "hasTransparency", "cornerPixelsTransparent", "noOpaqueWhite", "outerWhiteRemoved", "textContains", "fileNamePattern", "noRunErrors"]);
+const CHECK_TYPES = new Set([
+  "outputCount",
+  "fileExtension",
+  "imageSize",
+  "hasTransparency",
+  "cornerPixelsTransparent",
+  "noOpaqueWhite",
+  "outerWhiteRemoved",
+  "textContains",
+  "fileNamePattern",
+  "noRunErrors",
+  "askedAbout",
+  "noQuestions",
+  "pairedWith",
+  "colorAt",
+  "outputNames",
+]);
+const NO_PORT = new Set(["noRunErrors", "textContains", "askedAbout", "noQuestions", "pairedWith"]);
 const APPS = new Set(["photoshop", "indesign", "figma"]);
 
 /** Reads and checks one task.json; throws with what's wrong. */
@@ -55,7 +85,11 @@ export function parseTask(raw: unknown, dir: string): EvalTask {
   if (!Array.isArray(t.checks) || t.checks.length === 0) throw new Error(`${where}: give at least one check.`);
   for (const [i, c] of t.checks.entries()) {
     if (!c || !CHECK_TYPES.has(c.type)) throw new Error(`${where}: check ${i + 1} has an unknown type "${c?.type}".`);
-    if (c.type !== "noRunErrors" && c.type !== "textContains" && typeof c.port !== "string") throw new Error(`${where}: check ${i + 1} (${c.type}) needs a "port".`);
+    if (!NO_PORT.has(c.type) && typeof c.port !== "string") throw new Error(`${where}: check ${i + 1} (${c.type}) needs a "port".`);
+  }
+  const answers = t.answers ?? [];
+  if (!Array.isArray(answers) || answers.some((a: any) => typeof a?.question !== "string" || typeof a?.choose !== "string")) {
+    throw new Error(`${where}: "answers" is a list of { "question": "<regex>", "choose": "<regex for the option>" }.`);
   }
   const inputs = t.attachments?.inputs ?? {};
   if (typeof inputs !== "object" || Object.values(inputs).some((v) => typeof v !== "string")) throw new Error(`${where}: attachments.inputs maps names to paths.`);
@@ -66,6 +100,7 @@ export function parseTask(raw: unknown, dir: string): EvalTask {
     mode: t.mode === "simulated" ? "simulated" : "real",
     attachments: { inputs, ...(typeof t.attachments?.inspection === "string" ? { inspection: t.attachments.inspection } : {}) },
     checks: t.checks,
+    answers,
     tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
     dir,
   };

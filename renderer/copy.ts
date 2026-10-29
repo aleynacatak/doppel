@@ -186,7 +186,7 @@ export const copy = {
     continueHint:
       "Continue keeps everything the AI has done so far and gives it a fresh AI budget; with a demo code it uses one more creation. Start over begins again from scratch (also one more creation).",
     activityTitle: "What Doppl tried",
-    trialTitle: "Trial on the first sample item",
+    trialTitle: "Trial on a sample item",
     titleFlow: "Creating your flow",
     needsSamplesTitle: "Doppl needs sample files to try the routine",
     attachFiles: "Attach files…",
@@ -194,7 +194,7 @@ export const copy = {
     needsTypes: (exts: string[]) => `File types: ${exts.map((e) => e.toUpperCase()).join(", ")}`,
     needsHint: "Doppl tries the routine on the first one, on this Mac; the files aren't sent to the AI. This uses no extra AI calls.",
     planTitle: "Proposed flow",
-    planHint: "Doppl will create these routines one after another, try each on the first sample item, then connect them into a flow. Nothing is created until you confirm.",
+    planHint: "Doppl will create these routines one after another, try each on a sample item, then connect them into a flow. Nothing is created until you confirm.",
     planInputs: "Asked for when the flow runs",
     planOutputs: "Saved to a folder you pick",
     planRoutines: "Routines",
@@ -209,13 +209,15 @@ export const copy = {
     compatSaved: "Save as a new version",
     backToFlow: "Back to flow",
     questionLabel: "Doppl has a question",
+    inputsQuestionLabel: "About your files",
+    recommended: "Recommended",
     waitingHint: "Creation continues after you answer.",
     cancelled: "Creation cancelled.",
     newTask: "New task",
     resultTitle: "Result of the trial run",
     resultHint: (n: number) => `Doppl ran the routine once on a temporary copy: ${plural(n, "output")}. Your document wasn't changed.`,
     resultHintStaged: (n: number) =>
-      `Doppl ran every stage once, on the first sample item, in scratch copies (deleted afterwards): ${plural(n, "output")}. Your files weren't changed.`,
+      `Doppl ran every stage once, on a sample item, in scratch copies (deleted afterwards): ${plural(n, "output")}. Your files weren't changed.`,
     proposedTitle: "Proposed routine",
     nameLabel: "Routine name",
     stepsTitle: "Steps",
@@ -551,14 +553,19 @@ export const copy = {
       index: "Same item (by position or the row it came from)",
       fileNameEqualsColumn: "File name = a column",
       columnEquals: "Column = column",
+      sameFileName: "Files with similar names",
     } satisfies Record<MatchRule["by"], string>,
-    short: (rule: MatchRule) => (rule.by === "index" ? "same item" : rule.by === "fileNameEqualsColumn" ? `by “${rule.column}”` : `“${rule.leftColumn}” = “${rule.rightColumn}”`),
+    short: (rule: MatchRule) =>
+      rule.by === "index" ? "same item" : rule.by === "fileNameEqualsColumn" ? `by “${rule.column}”` : rule.by === "sameFileName" ? "by file name" : `“${rule.leftColumn}” = “${rule.rightColumn}”`,
     describe: (rule: MatchRule) =>
       rule.by === "index"
         ? "the same item"
         : rule.by === "fileNameEqualsColumn"
           ? `the file named in “${rule.column}”${rule.ignoreExtension ? " (any extension)" : ""}`
-          : `“${rule.leftColumn}” = “${rule.rightColumn}”`,
+          : rule.by === "sameFileName"
+            ? "the file with a similar name"
+            : `“${rule.leftColumn}” = “${rule.rightColumn}”`,
+    optional: "Items without a partner are still made (without it)",
     rule: "Pair by",
     column: "Column with the file names",
     ignoreExtension: "Ignore the file extension",

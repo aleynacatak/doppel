@@ -6,6 +6,7 @@ import type { LibraryService } from "../core/services/libraryService";
 import type { RoutineService } from "../core/services/routineService";
 import type { RunService } from "../core/services/runService";
 import type { Creation, InputValue, ParamValue, PortDef, Routine, Run } from "../core/types";
+import { nameFit } from "../core/inputs/inputCheck";
 import { type CheckResult, type CheckSubject, runChecks } from "./checks";
 import { type EvalTask, resolveAttachment } from "./tasks";
 
@@ -90,6 +91,8 @@ export interface AttemptResult {
   /** AI calls made by the rerun (must be 0). */
   rerunAiCalls: number;
   checks: CheckResult[];
+  /** The questions asked during the creation, and how the designer (the task) answered. */
+  questionLog?: { kind: string; text: string; answer: string }[];
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -115,10 +118,25 @@ function attachmentFor(port: PortDef, attachments: Record<string, { path: string
   const byName = names.find((n) => norm(n) === norm(port.key) || norm(n) === norm(port.label));
   if (byName) return byName;
   const isData = (n: string) => !attachments[n].isFolder && DATA_EXT.has(path.extname(attachments[n].path).toLowerCase());
-  if (port.type === "rows") return names.find(isData) ?? null;
-  if (port.type === "fileList" || port.type === "folder") return names.find((n) => attachments[n].isFolder) ?? names.find((n) => !isData(n)) ?? null;
-  if (port.type === "file") return names.find((n) => !attachments[n].isFolder && !isData(n)) ?? null;
+  // What a designer would pick: the attachment of the right kind whose name shares the most words with the input.
+  const fit = (n: string) => nameFit(port, { id: n, label: n, kind: "files", items: [] });
+  const best = (candidates: string[]) => [...candidates].sort((a, b) => fit(b) - fit(a))[0] ?? null;
+  if (port.type === "rows") return best(names.filter(isData));
+  if (port.type === "fileList" || port.type === "folder") return best(names.filter((n) => attachments[n].isFolder)) ?? best(names.filter((n) => !isData(n)));
+  // A file: one attached file, or a folder with just one file in it.
+  if (port.type === "file") return best(names.filter((n) => (!attachments[n].isFolder && !isData(n)) || (attachments[n].isFolder && attachments[n].files.length === 1)));
   return null;
+}
+
+/** The option the task's designer picks: its "answers" rule for the question, else the recommended (first) one. */
+export function chooseAnswer(task: Pick<EvalTask, "answers">, q: { text: string; options: { id: string; label: string }[] }) {
+  for (const a of task.answers) {
+    if (!new RegExp(a.question, "i").test(q.text)) continue;
+    const re = new RegExp(a.choose, "i");
+    const option = q.options.find((o) => re.test(o.label) || re.test(o.id));
+    if (option) return option;
+  }
+  return q.options[0];
 }
 
 async function waitFor<T>(get: () => T | null, done: (v: T) => boolean, timeoutMs: number): Promise<T> {
@@ -208,8 +226,10 @@ export async function runAttempt(env: EvalEnv, task: EvalTask, profile: EvalProf
       );
       if (c.status === "waiting" && c.question) {
         result.questions++;
-        log(`  question: ${c.question.text} → ${c.question.options[0]?.label}`);
-        await services.routines.answer(c.id, c.question.id, c.question.options[0].id);
+        const option = chooseAnswer(task, c.question);
+        (result.questionLog ??= []).push({ kind: c.question.kind ?? "ai", text: c.question.text, answer: option.label });
+        log(`  question: ${c.question.text} → ${option.label}`);
+        await services.routines.answer(c.id, c.question.id, option.id);
         await sleep(300);
         continue;
       }
@@ -242,7 +262,7 @@ export async function runAttempt(env: EvalEnv, task: EvalTask, profile: EvalProf
         continue;
       }
       const a = attachments[name];
-      inputs[`input-${port.key}`] = port.type === "fileList" ? (a.isFolder ? a.path : [a.path]) : a.path;
+      inputs[`input-${port.key}`] = port.type === "fileList" ? (a.isFolder ? a.path : [a.path]) : port.type === "file" && a.isFolder ? a.files[0] : a.path;
     }
     if (missing.length) {
       result.category = "needs-input";
@@ -281,6 +301,8 @@ export async function runAttempt(env: EvalEnv, task: EvalTask, profile: EvalProf
       texts: Object.fromEntries(routine.outputs.map((p) => [p.key, texts])),
       inputs: counts,
       run: { status: run.status, errors },
+      questions: (result.questionLog ?? []).map((q) => ({ kind: q.kind, text: q.text })),
+      outputs: run.outputs.filter((o) => o.node === "routine" && o.status === "done").map((o) => ({ label: o.label, details: (o.details ?? []).map((d) => `${d.label} ${d.value ?? ""}`) })),
     });
     result.passed = result.checks.every((r) => r.passed);
     if (!result.passed) result.category = run.status === "failed" || errors.length ? "script-error" : "check-failed";

@@ -1,0 +1,15 @@
+{
+  "id": "ps-logo-two-folders",
+  "app": "photoshop",
+  "request": "Put our logo at its original size in the bottom right corner of every product photo, with a small margin, and save them as JPGs.",
+  "attachments": { "inputs": { "photos": "fixtures/photos", "logo": "fixtures/brand" } },
+  "checks": [
+    { "type": "noQuestions", "kind": "inputs" },
+    { "type": "outputCount", "port": "photos", "equals": "inputCount:photos" },
+    { "type": "fileExtension", "port": "photos", "is": "jpg" },
+    { "type": "colorAt", "port": "photos", "x": 0.85, "y": 0.8, "expect": { "apricot": [220, 30, 30], "fig": [220, 30, 30], "plum": [220, 30, 30] } },
+    { "type": "colorAt", "port": "photos", "x": 0.3, "y": 0.4, "expect": { "apricot": [240, 180, 120], "fig": [120, 80, 110], "plum": [100, 60, 130] } },
+    { "type": "noRunErrors" }
+  ],
+  "tags": ["photoshop", "inputs", "two-folders"]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "figma-flavor-labels-sim",
+  "app": "figma",
+  "mode": "simulated",
+  "request": "Make a label for every jam in the list with its flavor picture, and export each one as a PNG.",
+  "attachments": { "inputs": { "jams": "fixtures/jams.csv", "flavor pics": "fixtures/flavor pics" }, "inspection": "fixtures/document.json" },
+  "answers": [
+    { "question": "find its", "choose": "Flavor" },
+    { "question": "ha(s|ve) no", "choose": "^Skip" }
+  ],
+  "checks": [
+    { "type": "askedAbout", "kind": "inputs", "pattern": "find its image" },
+    { "type": "askedAbout", "kind": "inputs", "pattern": "no image" },
+    { "type": "pairedWith", "pairs": { "Strawberry Vanilla": "Strawberry_Vanilla.PNG", "Mango": "mango-label.jpg", "Blueberry": "BLUEBERRY.jpeg", "Fig": null } },
+    { "type": "outputCount", "port": "labels", "equals": 3 },
+    { "type": "noRunErrors", "allow": "Fig" }
+  ],
+  "tags": ["figma", "inputs", "pairing", "simulated"]
+}

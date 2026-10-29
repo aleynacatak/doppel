@@ -20,6 +20,14 @@ function preview(label: string, app: string): PreviewImage {
   return { kind: "image", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, width: 320, height: 200, label };
 }
 
+/** A matched partner's name: a file's name, or a row's first value. */
+function partnerName(v: unknown): string {
+  if (typeof v === "string") return path.basename(v);
+  const o = v as Record<string, unknown> | null;
+  if (o && typeof o.path === "string") return path.basename(o.path);
+  return String(Object.values(o ?? {})[0] ?? "");
+}
+
 const safe = (s: string) => s.replace(/[/\\:*?"<>|·]/g, "-").replace(/\s+/g, " ").trim().slice(0, 60) || "item";
 
 async function freePath(dir: string, stem: string, ext: string) {
@@ -74,7 +82,9 @@ function simulate(real: DesignAppAdapter, delayMs: number): DesignAppAdapter {
           const file = await freePath(ctx.workDir, safe(input.label).replace(/\.[a-z0-9]{1,5}$/i, ""), ext);
           await fs.writeFile(file, ext === "png" ? TINY_PNG : `Simulated ${o.label ?? o.key} for ${input.label}\n`);
           values[o.key] = [file];
-          outputs.push({ key: `${input.key}-${o.key}`, label: path.basename(file), filePath: file, preview: preview(path.basename(file), short), profile: "web" });
+          // What each item was paired with, so a flow's (or an eval's) pairing can be checked.
+          const details = Object.entries(input.matched ?? {}).map(([k, v]) => ({ label: `Paired ${k}`, value: partnerName(v) }));
+          outputs.push({ key: `${input.key}-${o.key}`, label: path.basename(file), filePath: file, preview: preview(path.basename(file), short), profile: "web", ...(details.length ? { details } : {}) });
         } else {
           const base = input.item && typeof input.item === "object" && !Array.isArray(input.item) ? (input.item as Record<string, unknown>) : { item: input.label };
           values[o.key] = [{ ...base, [o.key]: `simulated ${o.key}` }];

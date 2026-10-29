@@ -16,9 +16,9 @@ import { RunService } from "../electron/core/services/runService";
 import { StarterService } from "../electron/core/services/starterService";
 import { JsonStorage } from "../electron/core/services/storage";
 import { resolvePort, runChecks } from "../electron/evals/checks";
-import { decodePng, encodePng, jpegSize } from "../electron/evals/images";
+import { decodePng, encodePng, jpegSize, readImage } from "../electron/evals/images";
 import { compareSummaries, csvReport, markdownReport, parseCsvReport, summarize, writeReports } from "../electron/evals/report";
-import { type AttemptResult, type EvalEnv, type Meter, runEval } from "../electron/evals/runner";
+import { type AttemptResult, type EvalEnv, type Meter, chooseAnswer, runEval } from "../electron/evals/runner";
 import { type EvalTask, loadTasks, parseTask, selectTasks } from "../electron/evals/tasks";
 
 // The eval harness on synthetic tasks: task files, deterministic checks, reports, and whole attempts through the real
@@ -56,6 +56,27 @@ const cutoutTask = {
 };
 
 describe("tasks", () => {
+  it("parses every task in evals/tasks, and answers questions the way a task says", async () => {
+    const tasks = await loadTasks(path.join(process.cwd(), "evals/tasks"));
+    expect(tasks.map((t) => t.id)).toEqual([
+      "figma-flavor-labels-clean-sim",
+      "figma-flavor-labels-sim",
+      "figma-label-fill-sim",
+      "ps-cutout-white-bg",
+      "ps-flavor-cards",
+      "ps-logo-two-folders",
+      "ps-resize-jpg",
+    ]);
+    const flavors = tasks.find((t) => t.id === "figma-flavor-labels-sim")!;
+    const options = [
+      { id: "column:Price", label: "By “Price”" },
+      { id: "column:Flavor", label: "By “Flavor”" },
+      { id: "order", label: "In order" },
+    ];
+    expect(chooseAnswer(flavors, { text: "How should each row in jams.csv find its image in flavor pics?", options }).id).toBe("column:Flavor");
+    expect(chooseAnswer(flavors, { text: "Which size do you need?", options }).id).toBe("column:Price");
+  });
+
   it("reads task files and selects them by id or tag", async () => {
     await writeTask("ps-cutout", cutoutTask);
     await writeTask("fg-text", { ...cutoutTask, app: "figma", mode: "simulated", tags: ["figma"] });
@@ -97,6 +118,59 @@ describe("checks", () => {
     expect(resolvePort("pngs", ports)).toBe("cutouts");
     expect(resolvePort("images", ports, "png")).toBe("cutouts");
     expect(resolvePort("labels", ports)).toBeNull();
+  });
+
+  it("checks questions, pairing, colors and names of outputs", async () => {
+    const out = path.join(dir, "named");
+    await fs.mkdir(out, { recursive: true });
+    const solid = (rgb: [number, number, number]) => encodePng(20, 20, () => [...rgb, 255]);
+    await fs.writeFile(path.join(out, "Strawberry Vanilla.png"), solid([220, 60, 90]));
+    await fs.writeFile(path.join(out, "Vanilla.png"), solid([245, 170, 30]));
+    const ports = [{ key: "cards", label: "Cards", type: "fileList" as const, required: true, extensions: ["png"] }];
+    const subject = {
+      ports,
+      files: { cards: [path.join(out, "Strawberry Vanilla.png"), path.join(out, "Vanilla.png")] },
+      texts: {},
+      inputs: {},
+      run: { status: "failed", errors: ["Row 1 · Fig: No image for Row 1 · Fig: Fig not found."] },
+      questions: [{ kind: "inputs", text: "How should each row in flavors.csv find its image in pics?" }],
+      outputs: [
+        { label: "Row 2 - Strawberry Vanilla.png", details: ["Paired pics Strawberry_Vanilla.PNG"] },
+        { label: "Row 3 - Vanilla.png", details: ["Paired pics mango.jpg"] },
+      ],
+    };
+    const results = await runChecks(
+      [
+        { type: "askedAbout", kind: "inputs", pattern: "find its image" },
+        { type: "askedAbout", kind: "ai", pattern: "size" },
+        { type: "noQuestions", kind: "ai" },
+        { type: "noQuestions" },
+        { type: "pairedWith", pairs: { "Strawberry Vanilla": "Strawberry_Vanilla.PNG", Vanilla: "vanilla.png", Fig: null } },
+        // "Vanilla" doesn't take Strawberry Vanilla's output: the right file has the wrong color.
+        { type: "colorAt", port: "cards", x: 0.5, y: 0.5, expect: { "Strawberry Vanilla": [220, 60, 90], Vanilla: [250, 240, 200] } },
+        { type: "outputNames", port: "cards", names: ["Strawberry Vanilla", "Vanilla", "Mango"], only: true },
+        { type: "noRunErrors", allow: "Fig" },
+        { type: "noRunErrors" },
+      ],
+      subject,
+    );
+    expect(results.map((r) => [r.check.type, r.passed, r.detail])).toEqual([
+      ["askedAbout", true, "asked: How should each row in flavors.csv find its image in pics?"],
+      ["askedAbout", false, "nothing asked about /size/ (0 question(s))"],
+      ["noQuestions", true, "no questions"],
+      ["noQuestions", false, "asked: How should each row in flavors.csv find its image in pics?"],
+      ["pairedWith", false, "Vanilla paired with Paired pics mango.jpg, expected vanilla.png"],
+      ["colorAt", false, "Vanilla.png is 245,170,30 there, expected 250,240,200 (Vanilla)"],
+      ["outputNames", false, "missing: Mango"],
+      ["noRunErrors", true, "run failed (1 expected)"],
+      ["noRunErrors", false, "Row 1 · Fig: No image for Row 1 · Fig: Fig not found."],
+    ]);
+  });
+
+  it("reads a JPEG's pixels for color checks, through macOS's sips", async () => {
+    const img = await readImage(path.join(process.cwd(), "evals/tasks/ps-logo-two-folders/fixtures/photos/apricot.jpg"), { pixels: true });
+    const [r, g, b] = img.pixel!(10, 10);
+    expect([Math.abs(r - 240) < 8, Math.abs(g - 180) < 8, Math.abs(b - 120) < 8]).toEqual([true, true, true]);
   });
 
   it("finds white left around or inside the subject, and passes a trimmed product that fills its canvas", async () => {

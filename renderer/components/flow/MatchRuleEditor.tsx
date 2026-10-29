@@ -7,13 +7,14 @@ import { doppel } from "@/lib/doppel";
 import { Field } from "../ui/Field";
 import { Spinner } from "../ui/Progress";
 
-const RULES: MatchRule["by"][] = ["index", "fileNameEqualsColumn", "columnEquals"];
+const RULES: MatchRule["by"][] = ["index", "fileNameEqualsColumn", "columnEquals", "sameFileName"];
 
-/** A rule with sensible empty fields when its kind changes. */
-function ruleOf(by: MatchRule["by"], columns: string[], otherColumns: string[]): MatchRule {
-  if (by === "index") return { by };
-  if (by === "fileNameEqualsColumn") return { by, column: columns[0] ?? "", ignoreExtension: true };
-  return { by, leftColumn: columns[0] ?? "", rightColumn: otherColumns[0] ?? columns[0] ?? "" };
+/** A rule with sensible empty fields when its kind changes (keeping "items without a partner"). */
+function ruleOf(by: MatchRule["by"], columns: string[], otherColumns: string[], optional?: boolean): MatchRule {
+  const keep = optional ? { optional } : {};
+  if (by === "index" || by === "sameFileName") return { by, ...keep };
+  if (by === "fileNameEqualsColumn") return { by, column: columns[0] ?? "", ignoreExtension: true, loose: true, ...keep };
+  return { by, leftColumn: columns[0] ?? "", rightColumn: otherColumns[0] ?? columns[0] ?? "", ...keep };
 }
 
 function ColumnSelect({ value, columns, onChange, label, id }: { value: string; columns: string[]; onChange: (v: string) => void; label: string; id: string }) {
@@ -86,7 +87,7 @@ export function MatchRuleEditor({
           id={`rule-${edgeId}`}
           className="ui-select max-w-xs"
           value={current?.by ?? ""}
-          onChange={(e) => onChange(ruleOf(e.target.value as MatchRule["by"], rowsColumns, otherColumns))}
+          onChange={(e) => onChange(ruleOf(e.target.value as MatchRule["by"], rowsColumns, otherColumns, current?.optional))}
         >
           {!current && <option value="">—</option>}
           {RULES.map((r) => (
@@ -104,6 +105,12 @@ export function MatchRuleEditor({
             <span>{copy.match.ignoreExtension}</span>
           </label>
         </>
+      )}
+      {current && (
+        <label className="ui-choice">
+          <input type="checkbox" checked={!!current.optional} onChange={(e) => onChange({ ...current, optional: e.target.checked || undefined })} />
+          <span>{copy.match.optional}</span>
+        </label>
       )}
       {current?.by === "columnEquals" && (
         <>

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Papa from "papaparse";
 import readXlsxFile from "read-excel-file/node";
+import { extensionOf, normalizeExtensions as foldExtensions } from "../../shared/ports";
 
 // Reads the spreadsheets and data files a routine runs on (CSV/TSV, JSON, Excel) into plain rows,
 // and finds files in a folder by the names those rows mention.
@@ -342,7 +343,8 @@ export interface FolderFile {
   ext: string;
 }
 
-const normalizeExtensions = (list?: string[]) => list?.map((e) => e.trim().replace(/^\./, "").toLowerCase());
+/** Allowed extensions with aliases folded ("jpeg" and "jpg" are one format), or undefined: any. */
+const normalizeExtensions = (list?: string[]) => (list?.length ? foldExtensions(list) : undefined);
 
 /** Files directly in the folder (not recursive), sorted by name, without dotfiles; optional extension filter (case-insensitive, no dots). */
 export async function listFolderFiles(folder: string, options: { extensions?: string[] } = {}): Promise<FolderFile[]> {
@@ -367,7 +369,7 @@ export async function listFolderFiles(folder: string, options: { extensions?: st
     if (!isFile) continue;
     const extname = path.extname(entry.name);
     const ext = extname.slice(1).toLowerCase();
-    if (allowed && !allowed.includes(ext)) continue;
+    if (allowed && !allowed.includes(extensionOf(entry.name))) continue;
     files.push({ name: entry.name, path: full, stem: entry.name.slice(0, entry.name.length - extname.length), ext });
   }
   return files.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -399,6 +401,6 @@ export async function resolveFileInFolder(
   const byStem = files.filter((f) => fold(f.stem) === target);
   if (!byStem.length) return null;
   const order = normalizeExtensions(options.extensions);
-  if (order) byStem.sort((a, b) => order.indexOf(a.ext) - order.indexOf(b.ext));
+  if (order) byStem.sort((a, b) => order.indexOf(extensionOf(a.name)) - order.indexOf(extensionOf(b.name)));
   return byStem[0].path;
 }
