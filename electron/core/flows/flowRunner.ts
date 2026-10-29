@@ -27,6 +27,8 @@ export interface FlowRunSpec {
   info: FlowRoutines;
   /** Per input node: what was picked. */
   inputs: Record<string, InputValue>;
+  /** Per input node: columns the designer picked for ones Doppl couldn't find (expected name → the file's column). */
+  columns?: Record<string, Record<string, string>>;
   /** Per output node: where to save. Without a folder, the files stay in the run folder. */
   outputFolders: Record<string, string>;
   /** Per app: the document routines with a document input work on. */
@@ -278,7 +280,7 @@ export class FlowRunner {
     }
     let resolved;
     try {
-      resolved = await resolveInput(node.port.type === "rows" ? { ...node.port, columns: [...columns] } : node.port, spec.inputs[node.id]);
+      resolved = await resolveInput(node.port.type === "rows" ? { ...node.port, columns: [...columns] } : node.port, spec.inputs[node.id], { aliases: spec.columns?.[node.id] });
     } catch (err) {
       sp.status = "failed";
       sp.error = err instanceof InputValueError ? err.message : errorMessage(err);

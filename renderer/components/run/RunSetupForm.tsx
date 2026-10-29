@@ -10,6 +10,7 @@ import { appLabel, fileName } from "@/lib/format";
 import { useAsync, useLiveReload } from "@/lib/hooks";
 import { useAiReviewAvailable, useShell } from "@/lib/store";
 import { MatchRuleEditor } from "../flow/MatchRuleEditor";
+import { PreflightReport } from "./PreflightReport";
 import { AiCallCounter } from "../ui/AiCallCounter";
 import { Button } from "../ui/Button";
 import { Notice } from "../ui/Notice";
@@ -47,6 +48,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
     Object.fromEntries(setup.settings.map((s) => [s.key, (setup.last.settings[s.key] ?? s.default ?? (s.type === "formatList" ? [] : s.type === "boolean" ? false : null)) as ParamValue])),
   );
   const [matches, setMatches] = useState<Record<string, MatchRule>>(() => ({ ...(routine?.matches ?? {}), ...setup.last.matches }));
+  const [columns, setColumns] = useState<Record<string, Record<string, string>>>(() => setup.last.columns ?? {});
   const [documents, setDocuments] = useState<Partial<Record<AppId, string>>>({});
   const [qcMode, setQcMode] = useState<QcMode>("auto");
   const [qcOptions, setQcOptions] = useState<QcOptions>(DEFAULT_QC);
@@ -65,6 +67,14 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   }, [qcMode, aiReviewAvailable]);
   const setSetting = useCallback((key: string, value: ParamValue) => setSettings((v) => ({ ...v, [key]: value })), []);
 
+  // The check before the run, whenever the picks change (no AI).
+  const picked = inputNodes.some((n) => !isEmpty(inputs[n.id]));
+  const { data: preflight, loading: checking } = useAsync(
+    () => (picked ? doppel().preflightRun(target, { inputs, ...(routine ? { matches } : {}), columns }) : Promise.resolve(null)),
+    [target.id, JSON.stringify(inputs), JSON.stringify(matches), JSON.stringify(columns)],
+  );
+  const unusable = (preflight?.needs ?? []).filter((i) => i.kind !== "partner");
+
   const appIds = useMemo(() => new Set(Object.values(setup.routines).map((r) => r.appId)), [setup.routines]);
   const canChooseTarget = [...appIds].some((a) => a === "figma" || a === "indesign") && Object.values(setup.routines).some((r) => r.inputs.some((p) => p.type === "document"));
   const joins = routine?.iterate
@@ -77,7 +87,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
     ...inputNodes.filter((n) => n.port.required && isEmpty(inputs[n.id])).map((n) => n.port.label),
     ...(target.kind === "flow" ? outputNodes.filter((n) => !folders[n.id]).map((n) => n.port.label) : []),
   ];
-  const blocked = setup.issues.length > 0 || !readiness || readiness.some((r) => !r.ok) || missing.length > 0 || (envProblem && !envAccepted);
+  const blocked = setup.issues.length > 0 || !readiness || readiness.some((r) => !r.ok) || missing.length > 0 || unusable.length > 0 || (envProblem && !envAccepted);
 
   const start = async () => {
     setStarting(true);
@@ -88,6 +98,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
         inputs,
         outputFolders: folders,
         ...(routine ? { settings, matches } : {}),
+        columns,
         qcMode,
         options: { target: target2, documents: { ...picked, ...documents }, qcOptions },
       });
@@ -188,6 +199,23 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
               </div>
             );
           })}
+        </Section>
+      )}
+
+      {picked && (
+        <Section title={copy.run.preflightTitle}>
+          <PreflightReport
+            report={preflight ?? null}
+            loading={checking}
+            canPickPartners={!!routine}
+            onPickPartner={(issue, file) =>
+              setMatches((m) => {
+                const rule = m[issue.port] ?? routine?.matches?.[issue.port] ?? flow.edges.find((e) => e.to.port === issue.port)?.match;
+                return rule ? { ...m, [issue.port]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
+              })
+            }
+            onPickColumn={(issue, column) => setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }))}
+          />
         </Section>
       )}
 

@@ -87,8 +87,8 @@ describe("match rules", () => {
       "VANILLA.jpeg",
       "No flavor image for Row 4 · Fig: Fig not found.",
     ]);
-    // Without "loose", names must be the same apart from case.
-    const strict = pairItems({ by: "fileNameEqualsColumn", column: "flavor", ignoreExtension: true }, { type: "rows", items: flavors }, { type: "fileList", items: images, label: "Flavor images" });
+    // A strict rule (loose: false): names must be the same apart from case.
+    const strict = pairItems({ by: "fileNameEqualsColumn", column: "flavor", ignoreExtension: true, loose: false }, { type: "rows", items: flavors }, { type: "fileList", items: images, label: "Flavor images" });
     expect(strict.get("r1")!.matched).toBeNull();
     // Two files contain "Berry": neither is picked.
     expect(partnersByName(["Berry"], [{ name: "blue berry", item: { n: 1 } }, { name: "berry mix", item: { n: 2 } }], true)).toEqual([null]);

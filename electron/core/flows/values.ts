@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DataFileError, listFolderFiles, readDataFile } from "../helpers/dataFiles";
+import { DataFileError, type ReadAs, listFolderFiles, readDataFile } from "../helpers/dataFiles";
 import { fileAllowed } from "../../shared/ports";
 import type { InputValue, PortDef, PortType } from "../types";
 import { errorMessage } from "../util";
@@ -18,7 +18,7 @@ export interface ListItem {
 
 export type PortValue =
   | { kind: "value"; type: PortType; value: string | number | boolean | null }
-  | { kind: "list"; type: "fileList" | "rows"; items: ListItem[]; columns?: string[]; name?: string; path?: string };
+  | { kind: "list"; type: "fileList" | "rows"; items: ListItem[]; columns?: string[]; name?: string; path?: string; readAs?: ReadAs };
 
 /** An item that can't run, with the reason (a data row with errors). */
 export interface ItemProblem {
@@ -60,7 +60,11 @@ export function fileList(files: string[], keyOf: (file: string, i: number) => st
  * Reads what was picked for a flow input: a data file becomes rows, files or a folder become a file list.
  * Rows with errors are left out of the list and returned as problems (they fail at the input, the rest runs).
  */
-export async function resolveInput(port: PortDef, raw: InputValue | undefined): Promise<{ value: PortValue | null; problems: ItemProblem[] }> {
+export async function resolveInput(
+  port: PortDef,
+  raw: InputValue | undefined,
+  options: { aliases?: Record<string, string> } = {},
+): Promise<{ value: PortValue | null; problems: ItemProblem[] }> {
   const empty = raw === undefined || raw === null || raw === "" || (Array.isArray(raw) && raw.length === 0);
   if (empty) return { value: null, problems: [] };
   switch (port.type) {
@@ -68,7 +72,7 @@ export async function resolveInput(port: PortDef, raw: InputValue | undefined): 
       if (typeof raw !== "string") throw new InputValueError(`${port.label}: pick a CSV, JSON or Excel file.`);
       let table;
       try {
-        table = await readDataFile(raw, { requiredColumns: port.columns });
+        table = await readDataFile(raw, { requiredColumns: port.columns, aliases: options.aliases });
       } catch (err) {
         throw new InputValueError(err instanceof DataFileError ? err.message : `${path.basename(raw)} couldn't be read: ${errorMessage(err)}`);
       }
@@ -83,7 +87,7 @@ export async function resolveInput(port: PortDef, raw: InputValue | undefined): 
         if (problem) problems.push({ key: item.key, label: item.label, error: `Row ${n}: ${problem}` });
         else items.push(item);
       });
-      return { value: { kind: "list", type: "rows", items, columns: table.columns, name: path.basename(raw), path: raw }, problems };
+      return { value: { kind: "list", type: "rows", items, columns: table.columns, name: path.basename(raw), path: raw, ...(table.readAs ? { readAs: table.readAs } : {}) }, problems };
     }
     case "fileList": {
       let files: string[];

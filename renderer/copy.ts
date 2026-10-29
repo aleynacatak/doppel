@@ -320,6 +320,18 @@ export const copy = {
     outputsHintFlow: "Pick where each result goes.",
     settingsTitle: "Settings",
     joinsTitle: "How items pair",
+    preflightTitle: "Your files",
+    preflight: {
+      summary: (fixed: number, needs: number, skipped: number) =>
+        [fixed ? `${fixed} handled automatically` : "", needs ? `${needs} ${needs === 1 ? "needs" : "need"} you` : "", skipped ? `${skipped} skipped` : ""].filter(Boolean).join(" · "),
+      allGood: "Everything is ready.",
+      chooseFile: "Choose file…",
+      chooseColumn: "Choose column…",
+      skip: "Skip it",
+      willSkip: (text: string) => `${text} It will be skipped.`,
+      showDetails: "Details",
+      hideDetails: "Hide details",
+    },
     chooseFiles: "Choose files…",
     chooseFolder: "Choose folder…",
     filesChosen: (n: number) => plural(n, "file"),

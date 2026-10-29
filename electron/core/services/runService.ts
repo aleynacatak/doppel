@@ -11,6 +11,7 @@ import type {
   AppId,
   DevFlowOptions,
   Flow,
+  PreflightReport,
   InputValue,
   MatchRule,
   QcOptions,
@@ -27,6 +28,7 @@ import { FlowInvalidError, FlowRunner } from "../flows/flowRunner";
 import { simulatedApps } from "../flows/mockAdapters";
 import type { AdapterSource } from "../flows/nodeRunner";
 import { checkReadiness } from "../flows/readiness";
+import { preflight } from "../inputs/preflight";
 import { type FlowRoutines, routineOf, validateFlow } from "../flows/validateFlow";
 import type { AppStatusService } from "./appStatusService";
 import { ROUTINE_NODE, type FlowService, routineFlow } from "./flowService";
@@ -156,6 +158,12 @@ export class RunService {
     return { flow, info: await this.deps.flows.routinesOf(flow) };
   }
 
+  /** The check before a run: the picked inputs read as the run will read them (see inputs/preflight). */
+  async preflight(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">): Promise<PreflightReport> {
+    const { flow, info } = await this.resolve(target, request.matches);
+    return preflight(flow, info, request.inputs, request.columns ?? {});
+  }
+
   async setup(target: RunTarget): Promise<RunSetup> {
     const last = await this.deps.storage.getLastValues(this.scope(target));
     const { flow, info, routine } = await this.resolve(target, last?.matches);
@@ -168,7 +176,7 @@ export class RunService {
       flow,
       routines,
       settings: routine?.settings ?? [],
-      last: { inputs: last?.inputs ?? {}, outputFolders: last?.outputFolders ?? {}, settings: last?.settings ?? {}, matches: last?.matches ?? {} },
+      last: { inputs: last?.inputs ?? {}, outputFolders: last?.outputFolders ?? {}, settings: last?.settings ?? {}, matches: last?.matches ?? {}, columns: last?.columns ?? {} },
       issues: validateFlow(flow, info).issues,
     };
   }
@@ -239,6 +247,7 @@ export class RunService {
       inputs,
       outputFolders: request.outputFolders,
       ...(routine ? { settings: request.settings ?? {}, matches: request.matches } : {}),
+      ...(request.columns && Object.keys(request.columns).length ? { columns: request.columns } : {}),
       qcMode: request.qcMode,
       options: { ...request.options, documents, qcOptions: request.options.qcOptions ?? DEFAULT_QC_OPTIONS },
       status: "running",
@@ -253,11 +262,13 @@ export class RunService {
       ...(mocked ? { mocked: true } : {}),
     };
     if (!mocked) {
+      const last = await storage.getLastValues(this.scope(target));
       await storage.saveLastValues(this.scope(target), {
         inputs: request.inputs,
         outputFolders: request.outputFolders,
         settings: request.settings ?? {},
         matches: request.matches ?? {},
+        columns: { ...(last?.columns ?? {}), ...(request.columns ?? {}) },
         documents,
       });
     }
@@ -317,6 +328,7 @@ export class RunService {
           flow,
           info,
           inputs: run.inputs,
+          ...(run.columns ? { columns: run.columns } : {}),
           outputFolders: run.outputFolders,
           documents: run.options.documents ?? {},
           target: run.options.target,

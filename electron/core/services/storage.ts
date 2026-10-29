@@ -8,6 +8,8 @@ export interface LastValues {
   outputFolders: Record<string, string>;
   settings: Record<string, ParamValue>;
   matches: Record<string, MatchRule>;
+  /** Columns picked per input node, remembered like the rest (see RunRequest.columns). */
+  columns?: Record<string, Record<string, string>>;
   documents?: Partial<Record<AppId, string>>;
 }
 

@@ -57,6 +57,8 @@ export interface ReadDataOptions {
   maxRows?: number;
   /** Excel only: sheet name, or sheet number starting at 1. Default: the first sheet. */
   sheet?: string | number;
+  /** Columns the designer picked for required ones Doppl couldn't find: required name → the column in the file. */
+  aliases?: Record<string, string>;
 }
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -98,6 +100,7 @@ export async function readDataFile(filePath: string, options: ReadDataOptions = 
     fileName,
     format,
     required: options.requiredColumns ?? [],
+    aliases: options.aliases ?? {},
     maxRows: options.maxRows && options.maxRows > 0 ? Math.max(1, Math.floor(options.maxRows)) : DEFAULT_MAX_ROWS,
     readAs: {},
   };
@@ -112,6 +115,7 @@ interface Context {
   fileName: string;
   format: DataTable["format"];
   required: string[];
+  aliases: Record<string, string>;
   maxRows: number;
   readAs: ReadAs;
 }
@@ -337,7 +341,8 @@ function finish(ctx: Context, fileColumns: string[], entries: Entry[], errors: D
   const renamed: Record<string, string> = {};
   for (const name of ctx.required) {
     if (columns.includes(name)) continue;
-    const like = columns.filter((c) => !ctx.required.includes(c) && nameKey(c) === nameKey(name));
+    const picked = ctx.aliases[name];
+    const like = columns.filter((c) => !ctx.required.includes(c) && (picked !== undefined ? nameKey(c) === nameKey(picked) : nameKey(c) === nameKey(name)));
     if (like.length > 1) throw new DataFileError(`${ctx.fileName} has more than one column like "${name}": ${like.map((c) => `"${c}"`).join(", ")}. Keep one of them.`);
     if (like.length === 1) {
       columns[columns.indexOf(like[0])] = name;

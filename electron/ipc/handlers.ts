@@ -80,6 +80,7 @@ export function registerIpc(s: Services) {
     getRunSetup: (target) => s.runs.setup(target),
     rememberInputs: (target, inputs) => s.runs.rememberInputs(target, inputs),
     checkReadiness: (target, documents) => s.runs.readiness(target, documents ?? {}),
+    preflightRun: (target, request) => s.runs.preflight(target, request),
     startRun: (target, request) => s.runs.start(target, request),
     cancelRun: (id) => s.runs.cancel(id),
     getRun: (id) => s.runs.get(id),

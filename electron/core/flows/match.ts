@@ -91,8 +91,35 @@ export function ruleProblem(rule: MatchRule, iterType: ListType, joinType: ListT
   return null;
 }
 
-/** Pairs every iterated item with one item of the joined list. */
+/** What a person calls an item: a file's name; a row's value in the column it pairs by, or its label. */
+export function itemName(item: ListItem, type: ListType, rule?: MatchRule): string {
+  if (type === "fileList") return fileName(item);
+  const column = rule?.by === "fileNameEqualsColumn" ? rule.column : rule?.by === "columnEquals" ? rule.leftColumn : null;
+  const value = column ? String(cell(item, column) ?? "").trim() : "";
+  return value || item.label.replace(/^Row \d+ · /, "");
+}
+
+/** The key of a hand-picked pair for an item. */
+export const pairKey = (item: ListItem, type: ListType, rule: MatchRule) => nameKey(itemName(item, type, rule));
+
+/** Pairs every iterated item with one item of the joined list: by hand where the designer picked, else by the rule. */
 export function pairItems(
+  rule: MatchRule,
+  iter: { type: ListType; items: ListItem[] },
+  joined: { type: ListType; items: ListItem[]; label: string },
+): Map<string, Pairing> {
+  const out = pairByRule(rule, iter, joined);
+  if (!rule.pairs || Object.keys(rule.pairs).length === 0) return out;
+  const partners = joined.items.map((j) => ({ j, key: nameKey(itemName(j, joined.type)) }));
+  for (const item of iter.items) {
+    const wanted = rule.pairs[pairKey(item, iter.type, rule)];
+    const partner = wanted !== undefined ? partners.find((p) => p.key === nameKey(wanted)) : undefined;
+    if (partner) out.set(item.key, { matched: partner.j });
+  }
+  return out;
+}
+
+function pairByRule(
   rule: MatchRule,
   iter: { type: ListType; items: ListItem[] },
   joined: { type: ListType; items: ListItem[]; label: string },
@@ -117,9 +144,11 @@ export function pairItems(
     case "fileNameEqualsColumn": {
       const name = (v: string) => (rule.ignoreExtension ? stem(baseName(v)) : baseName(v));
       const exactly = (a: string, b: string) => (rule.ignoreExtension ? fold(stem(a)) === fold(stem(b)) : fold(a) === fold(b));
+      // Forgiving unless a rule says otherwise (routines saved before this was the default get it too).
+      const loose = rule.loose !== false;
       if (iter.type === "rows") {
         const wanted = iter.items.map((item) => String(cell(item, rule.column) ?? "").trim());
-        const found = rule.loose
+        const found = loose
           ? partnersByName(wanted.map(name), joined.items.map((j) => ({ name: name(fileName(j)), item: j })), true)
           : wanted.map((w) => joined.items.find((j) => exactly(fileName(j), baseName(w))) ?? null);
         iter.items.forEach((item, i) => {
@@ -128,7 +157,7 @@ export function pairItems(
         });
       } else {
         const rowsWithName = joined.items.map((j) => ({ name: name(String(cell(j, rule.column) ?? "")), item: j })).filter((r) => r.name);
-        const found = rule.loose
+        const found = loose
           ? partnersByName(iter.items.map((item) => name(fileName(item))), rowsWithName, true)
           : iter.items.map((item) => joined.items.find((j) => exactly(fileName(item), baseName(String(cell(j, rule.column) ?? "")))) ?? null);
         iter.items.forEach((item, i) =>

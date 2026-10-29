@@ -55,6 +55,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   getRunSetup: true,
   rememberInputs: true,
   checkReadiness: true,
+  preflightRun: true,
   startRun: true,
   cancelRun: true,
   getRun: true,

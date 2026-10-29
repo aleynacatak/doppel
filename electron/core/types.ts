@@ -195,7 +195,7 @@ export interface SettingDef extends Omit<ParamDef, "type" | "extensions" | "colu
 /** How items from two lists pair up for an iterating routine (a data row and its image). */
 export type MatchRule = (
   | { by: "index" }
-  /** loose: case, spaces, dashes, underscores and accents don't count, and a name may contain the other ("Strawberry Vanilla" → strawberry_vanilla-label.png) when only one fits. */
+  /** Names match loosely (case, spaces, dashes, one-word names, suffixes; a name inside another when only one fits) unless loose is false. */
   | { by: "fileNameEqualsColumn"; column: string; ignoreExtension: boolean; loose?: boolean }
   | { by: "columnEquals"; leftColumn: string; rightColumn: string }
   /** Files with files by name (photo.jpg with photo_mask.png), loosely. */
@@ -203,6 +203,8 @@ export type MatchRule = (
 ) & {
   /** Items without a partner still run (without it) instead of failing. */
   optional?: boolean;
+  /** Partners the designer picked by hand: an item's name (see itemName) → its partner's file or row name. They win over the rule. */
+  pairs?: Record<string, string>;
 };
 
 /**
@@ -609,9 +611,35 @@ export interface RunRequest {
   settings?: Record<string, ParamValue>;
   /** Routine runs: how each other list input pairs with the iterated items. */
   matches?: Record<string, MatchRule>;
+  /** Per input node: columns the designer picked for ones Doppl couldn't find (expected name → the file's column). */
+  columns?: Record<string, Record<string, string>>;
   qcMode: QcMode;
   options: RunOptions;
 }
+
+/**
+ * What Doppl found in the picked inputs before a run (no AI): what it handled on its own, what needs the designer,
+ * and what will be skipped. Nothing here stops the other items from running.
+ */
+export interface PreflightReport {
+  fixed: PreflightNote[];
+  needs: PreflightIssue[];
+  skipped: PreflightNote[];
+}
+
+export interface PreflightNote {
+  text: string;
+  /** Technical detail, shown on request ("windows-1254"). */
+  detail?: string;
+}
+
+export type PreflightIssue =
+  /** An item without a partner: pick one of the candidates (unused files, the likeliest first), or let it be skipped. */
+  | { kind: "partner"; id: string; nodeId: string; port: string; item: string; key: string; text: string; candidates: string[] }
+  /** A column the routine needs that Doppl couldn't find: pick the file's column that holds it. */
+  | { kind: "column"; id: string; inputNodeId: string; column: string; text: string; candidates: string[] }
+  /** A file that can't be read at all. */
+  | { kind: "file"; id: string; inputNodeId: string; text: string };
 
 /** Everything the Run screen asks for, for a routine or a flow. */
 export interface RunSetup {
@@ -630,6 +658,7 @@ export interface RunSetup {
     outputFolders: Record<string, string>;
     settings: Record<string, ParamValue>;
     matches: Record<string, MatchRule>;
+    columns: Record<string, Record<string, string>>;
   };
   /** Problems that keep it from running (an invalid flow, a routine that no longer exists). */
   issues: FlowIssue[];
@@ -697,6 +726,8 @@ export interface Run {
   /** Routine runs: setting values and how joined lists paired. */
   settings?: Record<string, ParamValue>;
   matches?: Record<string, MatchRule>;
+  /** Columns picked per input node (see RunRequest). */
+  columns?: Record<string, Record<string, string>>;
   qcMode: QcMode;
   options: RunOptions;
   status: RunStatus;
@@ -1198,6 +1229,8 @@ export interface DoppelApi {
   rememberInputs(target: RunTarget, inputs: Record<string, InputValue>): Promise<void>;
   /** Whether every app the routine or flow uses is connected with the right document. */
   checkReadiness(target: RunTarget, documents?: Partial<Record<AppId, string>>): Promise<ReadinessItem[]>;
+  /** Reads the picked inputs as the run would and reports what Doppl handled, what needs the designer, and what's skipped. No AI. */
+  preflightRun(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">): Promise<PreflightReport>;
   startRun(target: RunTarget, request: RunRequest): Promise<Run>;
   cancelRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Run | null>;
