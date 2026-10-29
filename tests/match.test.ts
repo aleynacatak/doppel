@@ -137,3 +137,15 @@ describe("match rules", () => {
     expect(singular("Product images")).toBe("product image");
   });
 });
+
+describe("why an item failed", () => {
+  it("tells the files' problems, the app's and the routine's apart", async () => {
+    const { failureCause } = await import("../electron/core/flows/failures");
+    expect(failureCause("No photo for Row 4: fig.png not found.", true)).toBe("files");
+    expect(failureCause("Could not complete your request because the file-format module cannot parse the file.", false)).toBe("files");
+    expect(failureCause("Photoshop isn't running.", false)).toBe("app");
+    expect(failureCause("Start the Doppl plugin in your Figma file first.", false)).toBe("app");
+    expect(failureCause("Error 21: undefined is not an object (line 4)", false)).toBe("routine");
+    expect(failureCause("Action 2 (setText): no layer", false)).toBe("routine");
+  });
+});

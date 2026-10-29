@@ -19,7 +19,7 @@ export function PreflightReport({
 }: {
   report: Report | null;
   loading: boolean;
-  /** Routine runs pick partners here; flows pick them in the flow editor. */
+  /** Whether partners can be picked here (both routine and flow runs can). */
   canPickPartners: boolean;
   onPickPartner: (issue: Extract<PreflightIssue, { kind: "partner" }>, file: string) => void;
   onPickColumn: (issue: Extract<PreflightIssue, { kind: "column" }>, column: string) => void;

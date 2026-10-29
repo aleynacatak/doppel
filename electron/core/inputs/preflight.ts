@@ -1,5 +1,5 @@
 import path from "node:path";
-import { compactKey, nameKey } from "../../shared/names";
+import { nameKey, rankByLikeness as ranked } from "../../shared/names";
 import { fileAllowed, isListType } from "../../shared/ports";
 import { DataFileError, type DataTable, listFolderFiles, readDataFile } from "../helpers/dataFiles";
 import { itemName, pairItems, pairKey, singular, stem } from "../flows/match";
@@ -24,21 +24,6 @@ const DELIMITERS: Record<string, string> = { ";": "semicolons", "\t": "tabs", "|
 
 const isEmpty = (v: InputValue | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 const list = (names: string[], n = 3) => (names.length > n ? `${names.slice(0, n).join(", ")} and ${names.length - n} more` : names.join(", "));
-
-/** How alike two names are, for ranking candidates: shared words, then a shared beginning. */
-function likeness(a: string, b: string): number {
-  const wa = new Set(nameKey(a).split(" ").filter(Boolean));
-  const shared = nameKey(b)
-    .split(" ")
-    .filter((w) => w && wa.has(w)).length;
-  const ca = compactKey(a);
-  const cb = compactKey(b);
-  let prefix = 0;
-  while (prefix < ca.length && prefix < cb.length && ca[prefix] === cb[prefix]) prefix++;
-  return shared * 10 + prefix + (ca && cb && (ca.includes(cb) || cb.includes(ca)) ? 5 : 0);
-}
-
-const ranked = (name: string, candidates: string[]) => [...candidates].sort((x, y) => likeness(name, y) - likeness(name, x) || x.localeCompare(y));
 
 /** The columns the routines fed by an input node need. */
 function neededColumns(flow: Flow, info: FlowRoutines, node: Input): string[] {

@@ -70,7 +70,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   // The check before the run, whenever the picks change (no AI).
   const picked = inputNodes.some((n) => !isEmpty(inputs[n.id]));
   const { data: preflight, loading: checking } = useAsync(
-    () => (picked ? doppel().preflightRun(target, { inputs, ...(routine ? { matches } : {}), columns }) : Promise.resolve(null)),
+    () => (picked ? doppel().preflightRun(target, { inputs, matches, columns }) : Promise.resolve(null)),
     [target.id, JSON.stringify(inputs), JSON.stringify(matches), JSON.stringify(columns)],
   );
   const unusable = (preflight?.needs ?? []).filter((i) => i.kind !== "partner");
@@ -97,7 +97,8 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
       const run = await doppel().startRun(target, {
         inputs,
         outputFolders: folders,
-        ...(routine ? { settings, matches } : {}),
+        ...(routine ? { settings } : {}),
+        matches,
         columns,
         qcMode,
         options: { target: target2, documents: { ...picked, ...documents }, qcOptions },
@@ -207,11 +208,14 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
           <PreflightReport
             report={preflight ?? null}
             loading={checking}
-            canPickPartners={!!routine}
+            canPickPartners
             onPickPartner={(issue, file) =>
               setMatches((m) => {
-                const rule = m[issue.port] ?? routine?.matches?.[issue.port] ?? flow.edges.find((e) => e.to.port === issue.port)?.match;
-                return rule ? { ...m, [issue.port]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
+                // Routine runs pair per input; flow runs per connection.
+                const edge = flow.edges.find((e) => e.to.nodeId === issue.nodeId && e.to.port === issue.port);
+                const key = routine ? issue.port : edge?.id;
+                const rule = key ? (m[key] ?? (routine ? routine.matches?.[issue.port] : undefined) ?? edge?.match) : undefined;
+                return key && rule ? { ...m, [key]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
               })
             }
             onPickColumn={(issue, column) => setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }))}

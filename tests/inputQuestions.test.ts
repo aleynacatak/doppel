@@ -157,6 +157,30 @@ describe("the input check in a creation", () => {
     expect(failed.aiCalls).toBe(0);
   });
 
+  it("asks which file an item's partner is when a trial fails on the files, instead of asking the AI", async () => {
+    await fs.writeFile(path.join(dir, "products.csv"), "Flavor,image\nStrawberry Vanilla,strawberry-vanilla.png\n");
+    const c = await service.create({ request: "Make a label for each flavor", references: [path.join(dir, "products.csv")], appId: "figma", apps: [{ appId: "figma" }] });
+    // No pictures yet: Doppl asks for samples, and the designer adds a folder with a file named differently.
+    await until(c.id, (x) => x.status === "waiting" && x.needs?.kind === "samples");
+    await fs.mkdir(path.join(dir, "camera"));
+    await fs.writeFile(path.join(dir, "camera", "IMG_2041.png"), "img");
+    await service.addSamples(c.id, { files: [], folders: [path.join(dir, "camera")] });
+    const asked = structuredClone(await until(c.id, (x) => x.status === "waiting" && !!x.question));
+    expect(asked.question).toMatchObject({
+      kind: "inputs",
+      text: "No flavor image matches “strawberry-vanilla.png” for Strawberry Vanilla. Which file is it?",
+      options: [
+        { id: "file:IMG_2041.png", label: "IMG_2041.png" },
+        { id: "add", label: "I'll add the flavor image" },
+      ],
+    });
+    await service.answer(c.id, asked.question!.id, "file:IMG_2041.png");
+    const ready = await until(c.id, (x) => x.status === "ready");
+    expect(placed).toEqual(["IMG_2041.png"]);
+    expect(firstMessages).toHaveLength(1);
+    expect(ready.draft!.matches!.images.pairs).toEqual({ "strawberry vanilla png": "IMG_2041.png" });
+  });
+
   it("doesn't ask when every row finds its image", async () => {
     const c = await start("Flavor\nStrawberry Vanilla\nMango\nOld\n");
     const ready = await until(c.id, (x) => x.status === "ready" || x.status === "waiting");

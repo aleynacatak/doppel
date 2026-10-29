@@ -1,6 +1,6 @@
 // All UI strings in one place. Functions are used where the text depends on values.
 
-import type { AiRole, AppStatus, CreationStageKey, MatchRule, PortType, QcLevel, QcMode, RunStatus, StageRunStatus } from "@core/types";
+import type { AiRole, AppStatus, CreationStageKey, FailureCause, MatchRule, PortType, QcLevel, QcMode, RunStatus, StageRunStatus } from "@core/types";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -399,6 +399,11 @@ export const copy = {
   },
 
   results: {
+    cause: {
+      files: "Check this item's file or data.",
+      routine: "The routine couldn't handle this item.",
+      app: "The app wasn't ready.",
+    } satisfies Record<FailureCause, string>,
     title: (name: string) => `Results · ${name}`,
     summary: (o: { outputs: number; passed: number; flagged: number; failed: number; checked: boolean; aiCalls: number }) =>
       [

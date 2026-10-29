@@ -35,3 +35,19 @@ export function coreKey(value: unknown): string {
   }
   return words.join(" ");
 }
+
+/** How alike two names are, for ranking candidates: shared words, then a shared beginning, then one inside the other. */
+export function likeness(a: string, b: string): number {
+  const wa = new Set(nameKey(a).split(" ").filter(Boolean));
+  const shared = nameKey(b)
+    .split(" ")
+    .filter((w) => w && wa.has(w)).length;
+  const ca = compactKey(a);
+  const cb = compactKey(b);
+  let prefix = 0;
+  while (prefix < ca.length && prefix < cb.length && ca[prefix] === cb[prefix]) prefix++;
+  return shared * 10 + prefix + (ca && cb && (ca.includes(cb) || cb.includes(ca)) ? 5 : 0);
+}
+
+/** Candidates ordered by how alike they are to a name, the likeliest first. */
+export const rankByLikeness = (name: string, candidates: string[]) => [...candidates].sort((x, y) => likeness(name, y) - likeness(name, x) || x.localeCompare(y));

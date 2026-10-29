@@ -5,7 +5,8 @@ import type { RoutineTemplate } from "../../adapters/types";
 import { layoutLeftToRight, topoOrder } from "../../shared/flowGraph";
 import { compatible, describeSpec, inputSpec, isListType, outputSpec, typeTag } from "../../shared/ports";
 import { DataFileError, listFolderFiles, readDataFile } from "../helpers/dataFiles";
-import { pairItems, suggestMatch } from "../flows/match";
+import { itemName, pairItems, pairKey, singular, suggestMatch } from "../flows/match";
+import { rankByLikeness } from "../../shared/names";
 import {
   IMAGE_EXTENSIONS,
   type InputAnalysis,
@@ -213,6 +214,16 @@ interface CreationState {
   pastMessages: ChatMessage[];
   /** The input check: what was attached, how it pairs, and what the designer decided. */
   inputs?: { analysis: InputAnalysis; decisions: InputDecision[] };
+  /** Partners the designer picked during trials, per input key: an item's pair key → the file. Saved with the routine. */
+  trialPairs?: Record<string, Record<string, string>>;
+}
+
+/** The item a trial ran on, and the partners it has none for (with the files that could be them, likeliest first). */
+interface TrialSample {
+  index: number;
+  total: number;
+  label: string;
+  missing: { port: PortDef; key: string; want: string; candidates: string[] }[];
 }
 
 function freshStages(): CreationStage[] {
@@ -1069,7 +1080,7 @@ export class RoutineService {
     const c = state.creation;
     c.question = { id: `inputs-${newId()}`, kind: "inputs", text: q.text, ...(q.detail ? { detail: q.detail } : {}), options: q.options };
     c.status = "waiting";
-    this.setStage(state, "read", "active", "Waiting for your answer");
+    this.setStage(state, state.stage, "active", "Waiting for your answer");
     const optionId = await this.waitForAnswer(state);
     if (state.cancelled) throw new CancelledError();
     const label = c.question.options.find((o) => o.id === optionId)?.label ?? optionId;
@@ -1424,6 +1435,66 @@ export class RoutineService {
     return best.related;
   }
 
+  /** The item a trial runs on, and which partners it has none for. */
+  private trialSample(draft: RoutineDraft, inputs: Record<string, PortValue | undefined>, joins: Record<string, MatchRule>, iter: Extract<PortValue, { kind: "list" }>, index: number): TrialSample {
+    const item = iter.items[index];
+    const missing: TrialSample["missing"] = [];
+    for (const [key, rule] of Object.entries(joins)) {
+      const joined = inputs[key];
+      const port = draft.inputs.find((p) => p.key === key);
+      if (!port || joined?.kind !== "list" || rule.optional) continue;
+      const pairs = pairItems(rule, { type: iter.type, items: iter.items }, { type: joined.type, items: joined.items, label: port.label });
+      if (pairs.get(item.key)?.matched) continue;
+      const used = new Set([...pairs.values()].flatMap((p) => (p.matched ? [p.matched.key] : [])));
+      const want = itemName(item, iter.type, rule);
+      const free = joined.items.filter((j) => !used.has(j.key)).map((j) => itemName(j, joined.type));
+      missing.push({ port, key: pairKey(item, iter.type, rule), want, candidates: rankByLikeness(want, free) });
+    }
+    return { index, total: iter.items.length, label: item.label, missing };
+  }
+
+  /**
+   * A trial that failed only because of the sample files (no partner, an empty value, a file that won't open) isn't
+   * the routine's problem: Doppl asks the designer which file is the item's (or to add it), or tries the next item,
+   * and runs the same routine again. No AI.
+   */
+  private async settleSampleProblems(
+    state: CreationState,
+    draft: RoutineDraft,
+    attempt: { res: NodeRunResult; workDir: string; sample?: TrialSample },
+    spec: { appId: AppId; planned?: PlannedRoutine },
+    ai: AiCallContext,
+  ): Promise<{ res: NodeRunResult; workDir: string; sample?: TrialSample }> {
+    for (let tries = 0; tries < 3; tries++) {
+      const failed = attempt.res.items.filter((i) => !i.ok);
+      if (attempt.res.cancelled || !failed.length || failed.some((i) => i.cause !== "files")) return attempt;
+      const sample = attempt.sample;
+      if (!sample) return attempt;
+      let index = sample.index;
+      const missing = sample.missing[0];
+      if (missing) {
+        const what = singular(missing.port.label);
+        const answer = await this.askAboutInputs(state, {
+          id: `partner:${missing.port.key}`,
+          text: `No ${what} matches “${missing.want}” for ${sample.label.replace(/^Row \d+ · /, "")}. Which file is it?`,
+          options: [...missing.candidates.slice(0, 3).map((f) => ({ id: `file:${f}`, label: f })), { id: "add", label: `I'll add the ${what}` }],
+        });
+        if (answer.startsWith("file:")) ((state.trialPairs ??= {})[missing.port.key] ??= {})[missing.key] = answer.slice(5);
+        else if (!(await this.waitForSamples(state, [missing.port]))) throw new CancelledError();
+      } else {
+        // Another problem with this item's files (an empty value, a file that won't open): the next item.
+        if (index + 1 >= sample.total) return attempt;
+        this.note(state.creation, `${failed[0].label}: ${failed[0].error ?? "its files have a problem"} Tried the next item`);
+        index += 1;
+      }
+      await fs.rm(attempt.workDir, { recursive: true, force: true }).catch(() => undefined);
+      const next = await this.trial(state, draft, index, spec, ai);
+      if ("skipped" in next) return attempt;
+      attempt = next;
+    }
+    return attempt;
+  }
+
   /** How two sample lists pair, as the input check decided (either way round), or null. */
   private decidedJoin(state: CreationState, iter: PortValue | undefined, joined: PortValue | undefined): MatchRule | null {
     if (!state.inputs) return null;
@@ -1449,7 +1520,7 @@ export class RoutineService {
     ai: AiCallContext,
     /** Refine: only these input items (empty: the first one). */
     onlyItems?: Set<string>,
-  ): Promise<{ res: NodeRunResult; workDir: string } | { skipped: string }> {
+  ): Promise<{ res: NodeRunResult; workDir: string; sample?: TrialSample } | { skipped: string }> {
     const c = state.creation;
     const trialId = `trial-${c.id}-${newId().slice(0, 8)}`;
     const workDir = path.join(this.deps.workRoot, trialId);
@@ -1489,6 +1560,8 @@ export class RoutineService {
       else if (iterValue?.kind === "list" && joined?.kind === "list") joins[port.key] = suggestMatch(iterValue, joined);
       else joins[port.key] = { by: "index" };
     }
+    // Partners the designer picked during earlier trials.
+    for (const [key, pairs] of Object.entries(state.trialPairs ?? {})) if (joins[key]) joins[key] = { ...joins[key], pairs: { ...(joins[key].pairs ?? {}), ...pairs } };
     if (Object.keys(joins).length) draft.matches = joins;
     // Try an item that has its partners (row 1 may have no image while row 3 has one).
     let index = sampleIndex;
@@ -1507,6 +1580,7 @@ export class RoutineService {
         }
       }
     }
+    const sample = iterValue?.kind === "list" && !onlyItems?.size && iterValue.items[index] ? this.trialSample(draft, inputs, joins, iterValue, index) : undefined;
     await fs.mkdir(workDir, { recursive: true });
     const adapter = this.deps.registry.get(spec.appId);
     const settings: Record<string, ParamValue> = Object.fromEntries(draft.settings.map((s) => [s.key, (s.default ?? (s.type === "boolean" ? false : null)) as ParamValue]));
@@ -1549,7 +1623,7 @@ export class RoutineService {
     c.outputs = res.outputs;
     c.trial = res.progress;
     this.emit(c);
-    return { res, workDir };
+    return { res, workDir, ...(sample ? { sample } : {}) };
   }
 
   /** The trial result as the model sees it: per item, with errors, findings and a few previews. */
@@ -1826,6 +1900,8 @@ export class RoutineService {
         result = { draft, res: null, workDir: "" };
         break;
       }
+      // Problems with the sample files are sorted out with the designer, not sent to the AI.
+      if (proposal) attempt = await this.settleSampleProblems(state, draft, attempt, spec, ai);
       const { res, workDir } = attempt;
       if (!proposal) {
         await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
@@ -1834,6 +1910,11 @@ export class RoutineService {
       }
       if (res.cancelled) throw new CancelledError();
       const problems = res.items.filter((i) => !i.ok);
+      if (problems.length && problems.every((i) => i.cause === "files")) {
+        // Still a files problem: say so plainly; the AI can't fix files.
+        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+        throw new ExecutionError(`The sample files have a problem: ${problems[0].label}: ${problems[0].error ?? "it couldn't be used."}`, "Fix the file or pick other samples, then continue. Nothing was sent to the AI for this.", "generic");
+      }
       if (problems.length || res.progress.status === "failed") {
         await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
         progress.lastProblem = [res.progress.error, ...problems.map((i) => `${i.label}: ${i.error}`)].filter(Boolean).join(" · ") || "The trial failed.";

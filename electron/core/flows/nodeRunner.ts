@@ -5,9 +5,10 @@ import { PluginNotConnectedError } from "../../adapters/figma/pluginBridge";
 import { BridgeError } from "../../adapters/adobe/bridge";
 import type { DesignAppAdapter, StageItemInput, StageItemResult, StageRunContext, StageSession } from "../../adapters/types";
 import { fileAllowed } from "../../shared/ports";
-import type { AppId, MatchRule, NodeProgress, ParamValue, PortDef, Routine, RuleFinding, RunOutput, Stage, StageItemProgress } from "../types";
+import type { AppId, FailureCause, MatchRule, NodeProgress, ParamValue, PortDef, Routine, RuleFinding, RunOutput, Stage, StageItemProgress } from "../types";
 import { CancelledError, errorMessage } from "../util";
 import { expandValue, PlaceholderError, plain } from "../routines/placeholders";
+import { failureCause } from "./failures";
 import { pairItems } from "./match";
 import { type ListItem, type PortValue, fileKey, itemValue, scopeValue, scriptValue } from "./values";
 
@@ -67,6 +68,8 @@ export interface ItemRecord {
   label: string;
   ok: boolean;
   error?: string;
+  /** Why it failed (see FailureCause). */
+  cause?: FailureCause;
   scriptFailure?: boolean;
   data?: unknown;
   log: string[];
@@ -176,12 +179,13 @@ export class NodeRunner {
       }
       return { progress, outputs, findings, items, values, log, cancelled };
     };
-    const failItem = (ip: StageItemProgress, item: { key: string; label: string }, error: string) => {
+    const failItem = (ip: StageItemProgress, item: { key: string; label: string }, error: string, cause: FailureCause) => {
       ip.status = "failed";
       ip.error = error;
+      ip.cause = cause;
       progress.failed++;
       spec.failed.set(item.key, { node: spec.name, reason: error });
-      outputs.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: "failed", error, node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
+      outputs.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: "failed", error, cause, node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
     };
 
     let prepared: PreparedItem[];
@@ -205,8 +209,10 @@ export class NodeRunner {
         return false;
       }
       if (p.preError) {
-        failItem(ip, p, p.preError);
-        items.push({ key: p.key, label: p.label, ok: false, error: p.preError, log: [], findings: [], outputIds: [`${spec.nodeId}:${p.key}`] });
+        // Found before running (no partner, an empty value, a format): the files', except a forced dev failure.
+        const cause = p.preError.startsWith("Forced failure") ? "routine" : "files";
+        failItem(ip, p, p.preError, cause);
+        items.push({ key: p.key, label: p.label, ok: false, error: p.preError, cause, log: [], findings: [], outputIds: [`${spec.nodeId}:${p.key}`] });
         return false;
       }
       return true;
@@ -258,7 +264,8 @@ export class NodeRunner {
         const where = runnable.length > 1 ? `${shortApp(adapter)} · item ${n + 1} of ${runnable.length}` : shortApp(adapter);
         emit(where);
         const res = await this.runItem(adapter, session, routine, item, index, ctx, spec, inputsScope, params, (text) => emit(`${where} · ${text}`));
-        const record: ItemRecord = { key: item.key, label: item.label, ok: res.ok, error: res.error, scriptFailure: res.scriptFailure, data: res.data, log: res.log, findings: res.findings, outputIds: [] };
+        const cause = res.ok ? undefined : failureCause(res.error, false);
+        const record: ItemRecord = { key: item.key, label: item.label, ok: res.ok, error: res.error, ...(cause ? { cause } : {}), scriptFailure: res.scriptFailure, data: res.data, log: res.log, findings: res.findings, outputIds: [] };
         items.push(record);
         log.push(...res.log.map((l) => `${spec.name} · ${item.label}: ${l}`));
         const mine: RunOutput[] = res.outputs.map((o) => ({
@@ -266,6 +273,7 @@ export class NodeRunner {
           label: o.label,
           status: res.ok ? "done" : "failed",
           error: res.ok ? undefined : res.error,
+          ...(cause ? { cause } : {}),
           preview: o.preview,
           filePath: o.filePath,
           page: o.page,
@@ -278,7 +286,7 @@ export class NodeRunner {
           itemLabel: item.label,
         }));
         if (mine.length === 0) {
-          mine.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: res.ok ? "done" : "failed", error: res.error, node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
+          mine.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: res.ok ? "done" : "failed", error: res.error, ...(cause ? { cause } : {}), node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
         }
         // Adapters preview documents they render; files the routine saved (and Figma frames) get theirs here.
         for (const o of mine) {
@@ -296,6 +304,7 @@ export class NodeRunner {
         } else {
           ip.status = "failed";
           ip.error = res.error;
+          ip.cause = cause;
           progress.failed++;
           spec.failed.set(item.key, { node: spec.name, reason: res.error ?? "It failed." });
         }
@@ -303,7 +312,7 @@ export class NodeRunner {
         emit(where);
         // The app went away: the remaining items can't run either.
         if (!res.ok && res.fatal) {
-          for (const rest of runnable.slice(n + 1)) failItem(progress.items[prepared.indexOf(rest)], rest, res.error ?? "The app stopped responding.");
+          for (const rest of runnable.slice(n + 1)) failItem(progress.items[prepared.indexOf(rest)], rest, res.error ?? "The app stopped responding.", "app");
           break;
         }
       }
@@ -315,7 +324,7 @@ export class NodeRunner {
         progress.error = errorMessage(err);
         for (const [i, ip] of progress.items.entries()) {
           if (ip.status !== "pending" && ip.status !== "running") continue;
-          failItem(ip, prepared[i], progress.error);
+          failItem(ip, prepared[i], progress.error, failureCause(progress.error, false));
         }
       }
     } finally {

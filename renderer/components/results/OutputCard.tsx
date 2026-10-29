@@ -46,6 +46,7 @@ export function OutputCard({ output, actions }: { output: RunOutput; actions?: O
         </div>
 
         {output.error && <p className="ui-small">{output.error}</p>}
+        {output.status === "failed" && output.cause && <p className="ui-small ui-muted">{copy.results.cause[output.cause]}</p>}
         {problems.length > 0 && !output.markedOk && (
           <ul className="ui-small flex flex-col gap-0.5">
             {problems.map((p) => (

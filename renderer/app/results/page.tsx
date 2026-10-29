@@ -87,7 +87,8 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
       ) : (
         <OutputGrid>{mine.map(card)}</OutputGrid>
       )}
-      {failedItems.length > 0 && node.kind === "routine" && onRepair && !node.error && (
+      {/* The AI can fix the routine, not the designer's files or an app that wasn't ready. */}
+      {failedItems.some((i) => !i.cause || i.cause === "routine") && node.kind === "routine" && onRepair && !node.error && (
         <div>
           <Button size="small" onClick={onRepair}>
             {copy.results.repair}

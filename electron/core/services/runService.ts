@@ -154,7 +154,9 @@ export class RunService {
       };
       return { flow: routineFlow(routine, matches), info, routine };
     }
-    const flow = await this.deps.flows.require(target.id);
+    // A flow run can pair differently than the flow saves (files picked by hand on the Run page): per connection.
+    const saved = await this.deps.flows.require(target.id);
+    const flow = matches && Object.keys(matches).length ? { ...saved, edges: saved.edges.map((e) => (matches[e.id] ? { ...e, match: matches[e.id] } : e)) } : saved;
     return { flow, info: await this.deps.flows.routinesOf(flow) };
   }
 
@@ -246,7 +248,8 @@ export class RunService {
       appIds: [...new Set(readiness.map((r) => r.appId))],
       inputs,
       outputFolders: request.outputFolders,
-      ...(routine ? { settings: request.settings ?? {}, matches: request.matches } : {}),
+      ...(routine ? { settings: request.settings ?? {} } : {}),
+      ...(request.matches && Object.keys(request.matches).length ? { matches: request.matches } : {}),
       ...(request.columns && Object.keys(request.columns).length ? { columns: request.columns } : {}),
       qcMode: request.qcMode,
       options: { ...request.options, documents, qcOptions: request.options.qcOptions ?? DEFAULT_QC_OPTIONS },
@@ -458,6 +461,7 @@ export class RunService {
       outputFolders: run.outputFolders,
       settings: run.settings,
       matches: run.matches,
+      columns: run.columns,
       qcMode: run.qcMode,
       options: run.options,
     };

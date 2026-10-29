@@ -515,6 +515,8 @@ export interface RunOutput {
   preview?: PreviewImage;
   qc?: QcResult;
   error?: string;
+  /** Why it failed: the designer's files or data, the routine itself, or an app that wasn't ready. */
+  cause?: FailureCause;
   /** File written by the routine, if any. */
   filePath?: string;
   /** Page name as shown in the app, and its 1-based position. */
@@ -609,7 +611,7 @@ export interface RunRequest {
   outputFolders: Record<string, string>;
   /** Routine runs: setting values. */
   settings?: Record<string, ParamValue>;
-  /** Routine runs: how each other list input pairs with the iterated items. */
+  /** How lists pair, when it differs from what's saved: routine runs per input key, flow runs per connection id. */
   matches?: Record<string, MatchRule>;
   /** Per input node: columns the designer picked for ones Doppl couldn't find (expected name → the file's column). */
   columns?: Record<string, Record<string, string>>;
@@ -671,7 +673,15 @@ export interface StageItemProgress {
   label: string;
   status: "pending" | "running" | "done" | "failed" | "skipped";
   error?: string;
+  cause?: FailureCause;
 }
+
+/**
+ * Why an item failed. "files": its files or data (no partner, an empty value, a format, a file that won't open):
+ * the designer or Doppl's input handling fixes it, not the AI. "routine": the routine's own code. "app": the app
+ * wasn't ready (not connected, no document).
+ */
+export type FailureCause = "files" | "routine" | "app";
 
 /** Progress and result of one flow node in a run (per item for routines that iterate). */
 export interface NodeProgress {

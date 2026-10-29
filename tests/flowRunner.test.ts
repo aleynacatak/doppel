@@ -220,7 +220,8 @@ describe("flow runner", () => {
     // Edge labels say what flowed.
     expect(res.edges.find((e) => e.edgeId === "e2")).toEqual({ edgeId: "e2", count: 2, label: "2 PNG" });
     // Results per node and item, failed items included; findings tied to the item's outputs.
-    expect(res.outputs.find((o) => o.itemKey === "row-2")).toMatchObject({ node: "n-labels", status: "failed", error: "Action 2 (setText): no layer" });
+    // The routine's own error is the routine's to fix.
+    expect(res.outputs.find((o) => o.itemKey === "row-2")).toMatchObject({ node: "n-labels", status: "failed", error: "Action 2 (setText): no layer", cause: "routine" });
     expect(res.outputs.find((o) => o.itemKey === "row-4")).toMatchObject({ node: "in-products", status: "failed" });
     expect(res.findings).toEqual([expect.objectContaining({ type: "text-overflow", outputKey: "n-labels:row-3-export-1" })]);
   });
@@ -278,7 +279,8 @@ describe("flow runner", () => {
     );
     const cardsNode = res.nodes.find((n) => n.nodeId === "n-cards")!;
     expect(cardsNode.items.find((i) => i.key === "row-1")!.status).toBe("done");
-    expect(cardsNode.items.find((i) => i.key === "row-3")).toMatchObject({ status: "failed", error: "No label image for Row 3 · Jam: Jam not found." });
+    // No partner: the files' problem, not the routine's.
+    expect(cardsNode.items.find((i) => i.key === "row-3")).toMatchObject({ status: "failed", error: "No label image for Row 3 · Jam: Jam not found.", cause: "files" });
     expect(res.status).toBe("partial");
   });
 
