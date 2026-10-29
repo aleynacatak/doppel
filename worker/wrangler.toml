@@ -11,17 +11,9 @@ routes = [{ pattern = "api.doppl.work", custom_domain = true }]
 META_API_BASE_URL = "https://api.meta.ai/v1"
 # Kill switch: "false" makes every AI endpoint answer demo_paused.
 DEMO_ENABLED = "true"
-# Standard models only. Never the -contributor variants: Meta may train on their request data.
-ALLOWED_CHAT_MODELS = "muse-spark-1.3"
-ALLOWED_SEGMENT_MODELS = "sam-3.1"
-MAX_OUTPUT_TOKENS = "8000"
-MAX_CALLS_PER_CREATION = "15"
+# Allowed models (standard ones only, never the -contributor variants), their prices, the output token cap and the
+# calls per creation come from the app's model registry, electron/ai/models.json (see src/models.ts).
 MAX_REQUEST_BYTES = "10485760"
-# USD per million tokens / per 1,000 images (dev.meta.ai/docs/pricing-rate-limits).
-PRICE_INPUT_PER_M = "1.25"
-PRICE_CACHED_INPUT_PER_M = "0.15"
-PRICE_OUTPUT_PER_M = "4.25"
-PRICE_SAM_PER_1K_IMAGES = "2.50"
 # Estimated spend caps in USD. Reaching either pauses the demo.
 DAILY_SPEND_CAP = "20"
 TOTAL_SPEND_CAP = "100"

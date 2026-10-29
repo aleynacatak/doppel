@@ -5,8 +5,11 @@ import { Suspense } from "react";
 import { ClarifyingQuestion } from "@/components/create/ClarifyingQuestion";
 import { CreationFailure } from "@/components/create/CreationFailure";
 import { CreationResult } from "@/components/create/CreationResult";
+import { FlowPlanView, FlowRoutinesProgress } from "@/components/create/FlowPlanView";
+import { NeedsSamples } from "@/components/create/NeedsSamples";
+import { RefineReview } from "@/components/create/RefineReview";
 import { StageList } from "@/components/create/StageList";
-import { StageProgressList } from "@/components/run/StageProgressList";
+import { NodeProgressList } from "@/components/run/NodeProgressList";
 import { AiCallCounter } from "@/components/ui/AiCallCounter";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -30,16 +33,26 @@ function CreateScreen() {
   const api = doppel();
   const discard = async () => {
     await api.discardCreation(creation.id);
-    router.push(creation.mode === "repair" && creation.routineId ? `/routine?id=${creation.routineId}` : "/");
+    router.push(creation.flowLink ? `/flow?id=${creation.flowLink.flowId}` : (creation.mode === "repair" || creation.mode === "refine") && creation.routineId ? `/routine?id=${creation.routineId}` : "/");
   };
   const save = async (name: string, acceptPortabilityIssues: boolean) => {
     const result = await api.saveRoutine(creation.id, { name, acceptPortabilityIssues });
     if (!result.saved) return result.issues;
+    // "Make compatible" goes back to the flow, whose node now uses the new version.
+    if (creation.flowLink) {
+      router.push(`/flow?id=${creation.flowLink.flowId}&updated=${creation.flowLink.nodeId}`);
+      return null;
+    }
     const notice = creation.mode === "repair" ? `repaired=${result.routine!.version}` : "saved=1";
     router.push(`/routine?id=${result.routine!.id}&${notice}`);
     return null;
   };
   const startOver = async () => {
+    // "Make compatible" and Refine keep their place: start them over as they are.
+    if (creation.flowLink || creation.mode === "refine") {
+      setData(await api.retryCreation(creation.id));
+      return;
+    }
     const t = creation.task;
     const next =
       creation.mode === "repair" && creation.routineId
@@ -49,11 +62,13 @@ function CreateScreen() {
     router.replace(`/create?task=${next.id}`);
   };
   const running = creation.status === "running" || creation.status === "waiting";
+  const planWaiting = creation.kind === "flow" && creation.status === "waiting" && !!creation.plan && !creation.planConfirmed && !creation.question && !creation.needs;
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        title={creation.mode === "repair" ? copy.create.titleRepair : copy.create.titleCreate}
+        back={creation.flowLink ? { href: `/flow?id=${creation.flowLink.flowId}`, label: copy.create.backToFlow } : undefined}
+        title={creation.mode === "refine" ? copy.refine.titleCreating : creation.mode === "repair" ? copy.create.titleRepair : creation.kind === "flow" ? copy.create.titleFlow : copy.create.titleCreate}
         subtitle={<>“{creation.task.request}”</>}
         actions={
           running ? (
@@ -66,7 +81,7 @@ function CreateScreen() {
         <StageList creation={creation} />
         <div className="flex flex-col gap-2 md:w-72">
           <AiCallCounter count={creation.aiCalls} label={copy.create.aiCallsLabel} hint={copy.create.aiCallsHint} />
-          {creation.activity !== undefined && <p className="ui-small ui-muted">{copy.create.aiCallsLimit(15)}</p>}
+          {creation.activity !== undefined && <p className="ui-small ui-muted">{creation.steps ? copy.create.stepsOf(creation.steps, 15) : copy.create.aiCallsLimit(15)}</p>}
           {creation.quota && <p className="ui-small">{copy.create.quota(creation.quota.used, creation.quota.max)}</p>}
         </div>
       </div>
@@ -82,12 +97,48 @@ function CreateScreen() {
         </section>
       )}
 
-      {creation.trialStages && running && (
+      {creation.kind === "flow" && creation.flowRoutines && (
         <section className="flex flex-col gap-2">
-          <div className="ui-h3">{copy.create.trialTitle}</div>
-          <StageProgressList stages={creation.trialStages} />
+          <div className="ui-h3">{copy.create.flowRoutinesTitle}</div>
+          <FlowRoutinesProgress creation={creation} />
         </section>
       )}
+
+      {planWaiting && (
+        <section className="flex flex-col gap-4">
+          <div className="ui-h2">{copy.create.planTitle}</div>
+          <p className="ui-muted">{copy.create.planHint}</p>
+          <FlowPlanView plan={creation.plan!} />
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={async () => setData(await api.confirmPlan(creation.id))}>
+              {copy.create.planConfirm}
+            </Button>
+            <Button onClick={discard}>{copy.common.discard}</Button>
+          </div>
+        </section>
+      )}
+
+      {creation.trial && running && (
+        <section className="flex flex-col gap-2">
+          <div className="ui-h3">{copy.create.trialTitle}</div>
+          <NodeProgressList nodes={[creation.trial]} />
+        </section>
+      )}
+
+      {creation.status === "saved" && creation.savedFlowId && (
+        <Notice
+          title={copy.create.flowSavedTitle}
+          actions={
+            <ButtonLink href={`/flow?id=${creation.savedFlowId}`} variant="primary">
+              {copy.create.openFlow}
+            </ButtonLink>
+          }
+        >
+          {copy.create.flowSavedBody(creation.flowRoutines?.length ?? 0, creation.aiCalls)}
+        </Notice>
+      )}
+
+      {creation.status === "waiting" && creation.needs?.kind === "samples" && <NeedsSamples creation={creation} onChange={setData} />}
 
       {creation.status === "waiting" && creation.question && (
         <ClarifyingQuestion
@@ -127,7 +178,20 @@ function CreateScreen() {
         />
       )}
 
-      {(creation.status === "ready" || creation.status === "saved") && creation.draft && (
+      {creation.mode === "refine" && creation.status === "ready" && creation.draft && creation.refine && (
+        <RefineReview
+          creation={creation}
+          onSave={async () => {
+            const result = await api.saveRoutine(creation.id, { name: creation.draft!.name });
+            const v = result.routine!.version;
+            router.push(creation.flowLink ? `/flow?id=${creation.flowLink.flowId}&node=${creation.flowLink.nodeId}&refined=${v}` : `/routine?id=${result.routine!.id}&refined=${v}`);
+          }}
+          onTryAgain={async (instruction) => setData(await api.refineFollowUp(creation.id, instruction))}
+          onDiscard={discard}
+        />
+      )}
+
+      {creation.mode !== "refine" && (creation.status === "ready" || (creation.status === "saved" && creation.kind === "routine")) && creation.draft && (
         <CreationResult creation={creation} onSave={save} onDiscard={discard} />
       )}
     </div>

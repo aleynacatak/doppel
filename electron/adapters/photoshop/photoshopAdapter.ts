@@ -1,3 +1,4 @@
+import { photoshopLibrary } from "./library";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AppStatus, DocumentRef, DocumentSummary, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
@@ -5,21 +6,12 @@ import { newId, shortVersion } from "../../core/util";
 import { assembleScript, BridgeError } from "../adobe/bridge";
 import { AdobeConnection } from "../adobe/connection";
 import { filePreview } from "../previews";
-import type {
-  AdapterOutput,
-  DesignAppAdapter,
-  Progress,
-  ScriptContext,
-  ScriptResult,
-  StageItemInput,
-  StageItemResult,
-  StageRunContext,
-  StageSession,
-} from "../types";
+import type { AdapterOutput, DesignAppAdapter, ManifestOptions, Progress, ScriptContext, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession } from "../types";
 import { photoshopBridge } from "./bridge";
 import { BEGIN_STAGE, END_STAGE, FOCUS_DOCUMENT, INSPECT, LAYER_NAMES, LIST_DOCUMENTS, MISSING_FONTS, PROBE, RENDER_PREVIEW, wrapItem } from "./jsx/scripts";
 import { lintPhotoshopScript } from "./lint";
-import { PHOTOSHOP_MODEL_GUIDE } from "./modelGuide";
+import { PHOTOSHOP_GUIDE_INTRO, PHOTOSHOP_GUIDE_OUTRO, PHOTOSHOP_GUIDE_RULES, PHOTOSHOP_MODEL_GUIDE } from "./modelGuide";
+import { blocks } from "../../core/blocks/registry";
 
 const PREVIEW_WIDTH = 640;
 
@@ -87,8 +79,8 @@ export class PhotoshopAdapter implements DesignAppAdapter {
     this.adobe = new AdobeConnection(photoshopBridge, PROBE, () => this.options.getTimeoutSec(), { onChange: options.onStatusChange });
   }
 
-  private call<T>(main: string, input: unknown, label?: string, timeoutSec?: number): Promise<T> {
-    return this.adobe.call<T>(main, input, timeoutSec, label);
+  private call<T>(main: string, input: unknown, label?: string, timeoutSec?: number, library?: string): Promise<T> {
+    return this.adobe.call<T>(main, input, timeoutSec, label, library);
   }
 
   getStatus(): Promise<AppStatus> {
@@ -155,8 +147,10 @@ export class PhotoshopAdapter implements DesignAppAdapter {
     return this.inspectRaw(docId, max);
   }
 
-  capabilityManifest() {
-    return PHOTOSHOP_MODEL_GUIDE;
+  /** The guide: the helper catalog as before ("full"), or a ranked index of the building blocks ("index"). */
+  capabilityManifest(options: ManifestOptions = {}) {
+    if (options.helperDocs === "index") return `${PHOTOSHOP_GUIDE_INTRO}${PHOTOSHOP_GUIDE_RULES}\n${blocks.indexText("photoshop", options.request ?? "")}\n\n${PHOTOSHOP_GUIDE_OUTRO}`;
+    return PHOTOSHOP_MODEL_GUIDE + blocks.personalText("photoshop");
   }
 
   // ---------- Stages ----------
@@ -185,12 +179,14 @@ export class PhotoshopAdapter implements DesignAppAdapter {
         params: input.params,
         item: input.item,
         itemIndex: input.index,
-        stages: input.stages,
+        matched: input.matched ?? {},
         workDir: ctx.workDir,
         allowedFolders: [ctx.workDir, ...ctx.allowedFolders],
         owned: state.owned,
       },
       "run-item",
+      undefined,
+      ctx.stage.blocks?.code ? photoshopLibrary(ctx.stage.blocks.code) : undefined,
     );
     state.owned = res.owned ?? state.owned;
 
@@ -252,7 +248,7 @@ export class PhotoshopAdapter implements DesignAppAdapter {
     const stageCtx: StageRunContext = {
       runId: ctx.runId,
       routineName: ctx.routineName,
-      stage: { id: "main", name: ctx.routineName, appId: this.id, kind: "script", body: script, inputs: [], outputs: [], document: ctx.documentId ? "open" : "none" },
+      stage: { id: "main", name: ctx.routineName, appId: this.id, kind: "script", body: script, outputs: [], document: ctx.documentId ? "open" : "none" },
       documentId: ctx.documentId,
       target: ctx.target,
       workDir: ctx.workDir,
@@ -264,7 +260,7 @@ export class PhotoshopAdapter implements DesignAppAdapter {
     try {
       const res = await this.runStageItem(
         session,
-        { key: "main", label: ctx.routineName, index: 0, item: null, params, stages: {}, body: script },
+        { key: "main", label: ctx.routineName, index: 0, item: null, params, body: script },
         stageCtx,
         (text) => onProgress({ phase: text }),
       );

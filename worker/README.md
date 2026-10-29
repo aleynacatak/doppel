@@ -101,7 +101,7 @@ It asks you to paste the admin token (what you paste isn't shown), checks it wit
 npm run codes:create -- --label judges --creations 20 --sam 500 --expires 2026-11-20
 ```
 
-It prints a code like `DOPPL-7KQ2-…` **once**; copy it. Only its hash is stored. One "creation" is one routine being created or repaired in Doppl, however many model calls it needs (up to `MAX_CALLS_PER_CREATION`). `--sam` is the number of images the code may send to SAM 3.1 for object checks.
+It prints a code like `DOPPL-7KQ2-…` **once**; copy it. Only its hash is stored. One "creation" is one routine being created or repaired in Doppl, however many model calls it needs (up to the demo's calls per creation, `maxCallsPerCreation` in `electron/ai/models.json`). `--sam` is the number of images the code may send to SAM 3.1 for object checks.
 
 Other commands:
 
@@ -138,7 +138,7 @@ Meta's Model API docs (dev.meta.ai) don't describe a spend limit or billing aler
 
 Limits:
 - **Codes:** each code has a number of creations, a number of SAM images and an expiry.
-- **Per creation:** at most `MAX_CALLS_PER_CREATION` model calls (default 15).
+- **Per creation:** at most `maxCallsPerCreation` model calls (15), set for the `doppl-demo` provider in the app's model registry, `electron/ai/models.json`. Allowed models and their prices come from the same file, so the app and the Worker stay in sync.
 - **Rate:** 30 requests a minute per code.
 - **Size:** requests over `MAX_REQUEST_BYTES` (10 MB) are rejected before being read.
 - **Concurrency:** every limit is a single conditional `UPDATE … RETURNING` in D1, so parallel requests can't spend the same unit twice. The tests check that exactly 3 of 10 parallel requests get through when 3 creations are left.
@@ -147,7 +147,7 @@ Safety and privacy:
 - **Your key:** the tester's `Authorization` header is replaced with yours on the upstream request only.
 - **Models:** only the allowlisted standard models (`muse-spark-1.3`, `sam-3.1`) are accepted. The `-contributor` variants are rejected, because Meta may train on their request data.
 - **Retention:** `store: false` is always sent, so Meta keeps no copy of requests. The Responses API used for SAM stores requests by default.
-- **Request fields:** only an allowlist is forwarded, so no tools and no background jobs. `max_completion_tokens` is clamped to `MAX_OUTPUT_TOKENS`.
+- **Request fields:** only an allowlist is forwarded, so no tools and no background jobs. `max_completion_tokens` is clamped to the demo's `maxOutputTokens` (8000) from the same registry.
 - **Logging:** request and response bodies are never stored or logged; `usage_events` holds counts only. No CORS headers: the app calls from Electron's main process. Workers Logs aren't turned on, because they'd record request headers, and those include access codes.
 - **Errors:** always `{ "error": { "code", "message" } }`, with a message the app shows as is. Codes: `invalid_code`, `code_expired`, `code_revoked`, `quota_exhausted`, `creation_call_limit`, `rate_limited`, `demo_paused`, `model_not_allowed`, `request_too_large`, `upstream_error` (includes `upstreamStatus`), plus `bad_request`, `unauthorized`, `not_found`, `internal_error`.
 

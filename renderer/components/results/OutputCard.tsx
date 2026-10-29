@@ -22,6 +22,8 @@ export interface OutputActions {
   onOpen?: () => void;
   onReveal?: () => void;
   onMarkOk?: () => void;
+  /** "This isn't right": opens Refine with this item attached; offered for failed items too. */
+  onRefine?: () => void;
 }
 
 export function OutputCard({ output, actions }: { output: RunOutput; actions?: OutputActions }) {
@@ -73,14 +75,14 @@ export function OutputCard({ output, actions }: { output: RunOutput; actions?: O
           </div>
         )}
 
-        {actions && output.status === "done" && (
+        {actions && (output.status === "done" || (output.status === "failed" && actions.onRefine)) && (
           <div className="mt-auto flex flex-wrap gap-2 pt-2">
-            {actions.onOpen && (
+            {actions.onOpen && output.status === "done" && (
               <Button size="small" onClick={actions.onOpen}>
                 {copy.results.openInApp}
               </Button>
             )}
-            {actions.onReveal && output.filePath && (
+            {actions.onReveal && output.status === "done" && output.filePath && (
               <Button size="small" onClick={actions.onReveal}>
                 {copy.results.showInFinder}
               </Button>
@@ -88,6 +90,11 @@ export function OutputCard({ output, actions }: { output: RunOutput; actions?: O
             {actions.onMarkOk && flagged && (
               <Button size="small" onClick={actions.onMarkOk}>
                 {copy.results.markOk}
+              </Button>
+            )}
+            {actions.onRefine && (
+              <Button size="small" onClick={actions.onRefine}>
+                {copy.results.notRight}
               </Button>
             )}
           </div>

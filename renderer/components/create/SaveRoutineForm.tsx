@@ -25,7 +25,7 @@ export function SaveRoutineForm({
     setSaving(false);
   };
 
-  const saveLabel = creation.mode === "repair" ? copy.create.saveRepair(creation.nextVersion ?? 2) : copy.create.saveCreate;
+  const saveLabel = creation.flowLink ? copy.create.compatSaved : creation.mode === "repair" ? copy.create.saveRepair(creation.nextVersion ?? 2) : copy.create.saveCreate;
   return (
     <div className="flex flex-col gap-3">
       <Field label={copy.create.nameLabel} htmlFor="routine-name">

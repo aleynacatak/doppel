@@ -5,9 +5,8 @@ const APP_NAMES: Record<string, string> = { indesign: "InDesign", figma: "Figma"
 /** Short app name for badges ("InDesign" rather than "Adobe InDesign"). */
 export const appLabel = (appId: AppId) => APP_NAMES[appId] ?? appId;
 
-/** Every app a routine uses, in stage order (older routines: their one app). */
-export const routineApps = (r: { appId: AppId; stages?: { appId: AppId }[] }): AppId[] =>
-  r.stages?.length ? [...new Set(r.stages.map((s) => s.appId))] : [r.appId];
+/** Every app a flow's routines use (filled in when flows are listed). */
+export const flowApps = (f: { appIds?: AppId[] }): AppId[] => f.appIds ?? [];
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });

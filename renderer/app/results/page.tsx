@@ -1,12 +1,10 @@
 "use client";
 
-import type { RunOutput } from "@core/types";
+import type { NodeProgress, Run, RunOutput } from "@core/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { OutputCard } from "@/components/results/OutputCard";
 import { OutputGrid } from "@/components/results/OutputGrid";
-import { ResultsSummary } from "@/components/results/ResultsSummary";
-import { RunFailure } from "@/components/results/RunFailure";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
@@ -18,7 +16,7 @@ import { Tag } from "@/components/ui/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { appLabel, formatDateTime } from "@/lib/format";
-import { useRun } from "@/lib/hooks";
+import { useAsync, useRun } from "@/lib/hooks";
 
 type Filter = "all" | "flagged" | "passed";
 
@@ -29,10 +27,82 @@ const matches = (o: RunOutput, filter: Filter) => {
   return o.status === "done" && !flagged;
 };
 
+/** "12 items · 2 flagged · 0 AI calls": items are what the last routine went through (its rows or files). */
+function runSummary(run: Run) {
+  const last = [...run.nodes].reverse().find((n) => n.kind === "routine" && n.total > 0);
+  const items = last ? last.total : run.outputs.filter((o) => o.status !== "failed").length;
+  const failedKeys = new Set(run.outputs.filter((o) => o.status === "failed").map((o) => o.itemKey ?? o.id));
+  return {
+    items,
+    failed: failedKeys.size,
+    flagged: run.outputs.filter((o) => o.status === "done" && o.qc?.status === "flagged" && !o.markedOk).length,
+    aiCalls: run.aiCalls,
+  };
+}
+
+function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: NodeProgress; shown: RunOutput[]; card: (o: RunOutput) => React.ReactNode; onRepair?: () => void }) {
+  const mine = shown.filter((o) => o.node === node.nodeId);
+  const failedItems = node.items.filter((i) => i.status === "failed" || (i.status === "skipped" && i.error));
+  return (
+    <Section
+      title={
+        <span id={`node-${node.nodeId}`} className="flex flex-wrap items-center gap-2">
+          {node.appId && <Tag tone="strong">{appLabel(node.appId)}</Tag>}
+          {node.kind === "output" ? `${copy.flow.saveToFolder} · ${node.name}` : node.kind === "input" ? `${copy.flow.inputNode} · ${node.name}` : node.name}
+        </span>
+      }
+      aside={<Tag>{copy.run.stageStatus[node.status]}</Tag>}
+    >
+      {node.documentName && node.kind === "routine" && <p className="ui-small ui-muted">{copy.results.stageOn(node.documentName)}</p>}
+      {node.kind === "output" && node.status === "done" && node.documentName && <p className="ui-small">{copy.results.savedTo(node.done, node.documentName)}</p>}
+      {node.note && <p className="ui-small ui-muted">{node.note}</p>}
+      {node.error && (
+        <Notice tone="warning" actions={onRepair && node.kind === "routine" ? <Button size="small" onClick={onRepair}>{copy.results.repair}</Button> : undefined}>
+          {node.error}
+        </Notice>
+      )}
+      {node.kind === "routine" && node.total > 1 && <p className="ui-small ui-muted">{copy.run.stageProgress(node.done, node.total, node.failed)}</p>}
+      {failedItems.length > 0 && node.kind !== "routine" && (
+        <ul className="ui-small flex flex-col gap-0.5">
+          {failedItems.map((i) => (
+            <li key={i.key}>{i.error}</li>
+          ))}
+        </ul>
+      )}
+      {node.kind === "output" ? (
+        <ul className="ui-small flex flex-col gap-1">
+          {mine.map((o) => (
+            <li key={o.id} className="flex items-center justify-between gap-3">
+              <span className="truncate">{o.label}</span>
+              {o.filePath && (
+                <Button size="small" onClick={() => doppel().revealOutput(run.id, o.id)}>
+                  {copy.results.showInFinder}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : mine.length === 0 ? (
+        node.kind === "routine" && <p className="ui-small ui-muted">{copy.results.noneMatch}</p>
+      ) : (
+        <OutputGrid>{mine.map(card)}</OutputGrid>
+      )}
+      {failedItems.length > 0 && node.kind === "routine" && onRepair && !node.error && (
+        <div>
+          <Button size="small" onClick={onRepair}>
+            {copy.results.repair}
+          </Button>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function ResultsScreen() {
   const runId = useSearchParams().get("run");
   const router = useRouter();
   const { data: run, loading, setData } = useRun(runId);
+  const { data: flow } = useAsync(() => (run?.target.kind === "flow" ? doppel().getFlow(run.target.id) : Promise.resolve(null)), [run?.target.kind, run?.target.id]);
   const [filter, setFilter] = useState<Filter>("all");
   const [note, setNote] = useState<string | null>(null);
 
@@ -40,29 +110,37 @@ function ResultsScreen() {
   if (!run) return <EmptyState title={copy.common.notFound} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
 
   const api = doppel();
+  const isFlow = run.target.kind === "flow";
+  const back = isFlow ? `/flow?id=${run.target.id}` : `/routine?id=${run.target.id}`;
+  const again = `/run?${run.target.kind}=${run.target.id}`;
   const failedCount = run.outputs.filter((o) => o.status === "failed").length;
   const shown = run.outputs.filter((o) => matches(o, filter));
-  const repair = async () => {
-    const creation = await api.repairRoutine(run.routineId, run.id);
-    router.push(`/create?task=${creation.id}`);
+  const summary = runSummary(run);
+  const repairNode = (nodeId: string) => {
+    const node = flow?.nodes.find((n) => n.id === nodeId);
+    const routineId = isFlow ? (node?.kind === "routine" ? node.routineId : undefined) : run.target.id;
+    if (!routineId || run.mocked) return undefined;
+    return async () => {
+      try {
+        const creation = await api.repairRoutine(routineId, run.id);
+        router.push(`/create?task=${creation.id}`);
+      } catch (e) {
+        setNote((e as Error).message);
+      }
+    };
+  };
+  // "This isn't right" on items a routine made (not the copies saved to a folder).
+  const refineLink = (o: RunOutput) => {
+    if (run.mocked) return undefined;
+    if (!isFlow) return o.node === "routine" || !o.node ? `/refine?routine=${run.target.id}&run=${run.id}&output=${o.id}` : undefined;
+    const node = flow?.nodes.find((n) => n.id === o.node);
+    if (node?.kind !== "routine") return undefined;
+    return `/refine?routine=${node.routineId}&run=${run.id}&output=${o.id}&flow=${run.target.id}&node=${node.id}`;
   };
   const retry = async () => {
     const next = await api.retryFailed(run.id);
-    // Multi-app runs retry as a new run with only the failed items.
-    if (next.id !== run.id) router.push(`/run?routine=${run.routineId}&run=${next.id}`);
-    else setData(next);
+    router.push(`/run?${next.target.kind}=${next.target.id}&run=${next.id}`);
   };
-  const card = (o: RunOutput) => (
-    <OutputCard
-      key={o.id}
-      output={o}
-      actions={{
-        onOpen: () => open(o),
-        onReveal: () => api.revealOutput(run.id, o.id),
-        onMarkOk: async () => setData(await api.markOutputOk(run.id, o.id)),
-      }}
-    />
-  );
   const open = async (o: RunOutput) => {
     setNote(null);
     try {
@@ -71,83 +149,73 @@ function ResultsScreen() {
       setNote((e as Error).message);
     }
   };
+  const card = (o: RunOutput) => {
+    const refine = refineLink(o);
+    return (
+      <OutputCard
+        key={o.id}
+        output={o}
+        actions={{
+          onOpen: () => open(o),
+          onReveal: () => api.revealOutput(run.id, o.id),
+          onMarkOk: async () => setData(await api.markOutputOk(run.id, o.id)),
+          ...(refine && run.status !== "running" ? { onRefine: () => router.push(refine) } : {}),
+        }}
+      />
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        back={{ href: `/routine?id=${run.routineId}`, label: copy.results.backToRoutine }}
-        title={copy.results.title(run.routineName)}
-        subtitle={`${formatDateTime(run.startedAt)} · ${copy.common.version(run.routineVersion)} · ${copy.run.qcModes[run.qcMode].label}`}
+        back={{ href: back, label: isFlow ? copy.results.backToFlow : copy.results.backToRoutine }}
+        title={copy.results.title(run.name)}
+        subtitle={`${formatDateTime(run.startedAt)} · ${copy.common.version(run.version)} · ${copy.run.qcModes[run.qcMode].label}`}
         tags={<Tag tone={run.status === "failed" ? "strong" : "default"}>{copy.runStatus[run.status]}</Tag>}
-        actions={<ButtonLink href={`/run?routine=${run.routineId}`}>{copy.results.runAgain}</ButtonLink>}
+        actions={<ButtonLink href={again}>{copy.results.runAgain}</ButtonLink>}
       />
-
-      {run.status === "failed" && <RunFailure run={run} onRepair={repair} />}
-
-      {run.status !== "failed" && (
-        <>
-          <ResultsSummary run={run} />
-          {run.targetDocument && !run.stages?.length && (
-            <div className="ui-small ui-muted flex flex-col">
-              <span>
-                {run.appId === "figma" && run.options.target === "copy"
-                  ? copy.results.ranOnFigmaCopy(run.targetDocument.name)
-                  : copy.results.ranOn(run.targetDocument.name, run.options.target === "copy")}
-              </span>
-              {run.modifiesDocument && <span>{run.appId === "figma" ? copy.results.undoHintFigma : copy.results.undoHint(run.routineName)}</span>}
-            </div>
-          )}
-          {run.status === "running" && (
-            <div className="ui-muted flex items-center gap-2">
-              <Spinner /> {run.phase ?? copy.results.running}
-            </div>
-          )}
-          {failedCount > 0 && run.status !== "running" && (
-            <Notice
-              tone="warning"
-              title={copy.results.partialTitle(failedCount)}
-              actions={
-                <Button variant="primary" onClick={retry}>
-                  {run.stages?.length ? copy.results.retryFailedItems : copy.results.retryFailed}
-                </Button>
-              }
-            />
-          )}
-          {note && <Notice>{note}</Notice>}
-          <div>
-            <Segmented<Filter>
-              label="Filter outputs"
-              value={filter}
-              onChange={setFilter}
-              options={[
-                { value: "all", label: copy.results.filters.all },
-                { value: "flagged", label: copy.results.filters.flagged },
-                { value: "passed", label: copy.results.filters.passed },
-              ]}
-            />
-          </div>
-          {shown.length === 0 ? (
-            <p className="ui-muted">{copy.results.noneMatch}</p>
-          ) : run.stages?.length ? (
-            run.stages.map((stage, i) => {
-              const mine = shown.filter((o) => o.stageId === stage.stageId);
-              return (
-                <Section
-                  key={stage.stageId}
-                  title={copy.results.stageSection(i + 1, stage.name, appLabel(stage.appId))}
-                  aside={<Tag>{copy.run.stageStatus[stage.status]}</Tag>}
-                >
-                  {stage.documentName && <p className="ui-small ui-muted">{copy.results.stageOn(stage.documentName)}</p>}
-                  {stage.error && <Notice tone="warning">{stage.error}</Notice>}
-                  {mine.length === 0 ? <p className="ui-small ui-muted">{copy.results.noneMatch}</p> : <OutputGrid>{mine.map(card)}</OutputGrid>}
-                </Section>
-              );
-            })
-          ) : (
-            <OutputGrid>{shown.map(card)}</OutputGrid>
-          )}
-        </>
+      {run.mocked && <Notice>{copy.results.simulated}</Notice>}
+      <p className="ui-h2">{copy.results.itemsSummary(summary)}</p>
+      {run.status === "failed" && (run.error || run.errorDetail) && (
+        <Notice tone="error" title={run.error ?? copy.results.failedTitle}>
+          {run.errorDetail && <p>{run.errorDetail}</p>}
+        </Notice>
       )}
+      {run.status === "running" && (
+        <div className="ui-muted flex items-center gap-2">
+          <Spinner /> {run.phase ?? copy.results.running}
+        </div>
+      )}
+      {failedCount > 0 && run.status !== "running" && (
+        <Notice
+          tone="warning"
+          title={copy.results.partialTitle(failedCount)}
+          actions={
+            <Button variant="primary" onClick={retry}>
+              {copy.results.retryFailedItems}
+            </Button>
+          }
+        />
+      )}
+      {note && <Notice>{note}</Notice>}
+      <div>
+        <Segmented<Filter>
+          label="Filter outputs"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: copy.results.filters.all },
+            { value: "flagged", label: copy.results.filters.flagged },
+            { value: "passed", label: copy.results.filters.passed },
+          ]}
+        />
+      </div>
+      {run.nodes
+        .filter((n) => n.kind === "routine" || n.failed > 0 || n.status === "failed" || (n.kind === "output" && n.status !== "pending"))
+        .map((node) => (
+          <NodeSection key={node.nodeId} run={run} node={node} shown={shown} card={card} onRepair={repairNode(node.nodeId)} />
+        ))}
+      {run.workDir && <p className="ui-small ui-muted">{copy.results.runFolder(run.workDir)}</p>}
     </div>
   );
 }

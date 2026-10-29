@@ -134,3 +134,34 @@ body {
 .ui-nav-link[aria-current="page"] { background: var(--ui-muted); font-weight: 600; }
 .ui-dev-panel { background: var(--ui-bg); border-left: 1px solid var(--ui-strong); box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08); }
 }
+
+/*
+  Flow canvas (React Flow): grayscale, layout only. Port shapes say the type; colors come with the final design.
+  Unlayered on purpose: React Flow's own stylesheet is unlayered, and these must win over it.
+*/
+.ui-flow { border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); }
+.ui-flow .react-flow__node { cursor: default; }
+.ui-flow-node { border: 1px solid var(--ui-border-strong); border-radius: 6px; background: var(--ui-bg); }
+.ui-flow-node[data-kind="input"], .ui-flow-node[data-kind="output"] { border-style: dashed; }
+.ui-flow-node[data-selected="true"] { border-color: var(--ui-strong); box-shadow: 0 0 0 1px var(--ui-strong); }
+.ui-flow-node[data-invalid="true"] { border-color: var(--ui-strong); border-width: 2px; }
+.ui-flow-node[data-active="true"] { box-shadow: 0 0 0 3px var(--ui-muted), 0 0 0 4px var(--ui-strong); }
+.ui-flow-port-type { font-size: 11px; color: var(--ui-text-muted); }
+.ui-flow-port[data-fit="no"] { opacity: 0.35; }
+.ui-flow-handle { width: 10px; height: 10px; background: var(--ui-bg); border: 1.5px solid var(--ui-strong); border-radius: 999px; }
+/* Lists: filled; rows: square; documents and folders: diamond; values: small ring. */
+.ui-flow-handle[data-port-type="fileList"] { background: var(--ui-strong); }
+.ui-flow-handle[data-port-type="rows"] { border-radius: 1px; background: var(--ui-strong); }
+.ui-flow-handle[data-port-type="document"], .ui-flow-handle[data-port-type="folder"] { border-radius: 1px; transform: translate(-50%, -50%) rotate(45deg); }
+.ui-flow-handle.react-flow__handle-right[data-port-type="document"], .ui-flow-handle.react-flow__handle-right[data-port-type="folder"] { transform: translate(50%, -50%) rotate(45deg); }
+.ui-flow-handle[data-port-type="text"], .ui-flow-handle[data-port-type="number"], .ui-flow-handle[data-port-type="boolean"] { width: 8px; height: 8px; }
+.ui-flow-handle[data-fit="fit"] { box-shadow: 0 0 0 4px var(--ui-muted), 0 0 0 5px var(--ui-strong); }
+.ui-flow-handle[data-fit="no"] { opacity: 0.3; }
+.ui-flow-edge-label { position: absolute; pointer-events: all; background: var(--ui-surface); padding: 0 4px; border-radius: 4px; }
+.ui-flow-dot { fill: var(--ui-strong); }
+.ui-flow-menu { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+.ui-flow-menu-item { border-radius: var(--ui-radius); padding: 4px 6px; text-align: left; width: 100%; }
+.ui-flow-menu-item:hover { background: var(--ui-muted); }
+.ui-flow-library-item { cursor: grab; }
+.ui-flow .react-flow__controls { border: 1px solid var(--ui-border); border-radius: var(--ui-radius); overflow: hidden; }
+.ui-flow .react-flow__controls-button { background: var(--ui-bg); border-bottom: 1px solid var(--ui-border); width: 24px; height: 24px; }

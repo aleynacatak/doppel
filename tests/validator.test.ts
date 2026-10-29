@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateRoutine, type ValidatorApps } from "../electron/core/stages/validator";
-import type { ParamDef, Stage } from "../electron/core/types";
+import { type RoutineContract, type ValidatorApps, producedOutputs, validateRoutine } from "../electron/core/routines/contract";
 
 const apps: ValidatorApps = {
   has: (id) => ["figma", "photoshop", "indesign"].includes(id),
@@ -8,104 +7,141 @@ const apps: ValidatorApps = {
   lintScript: (_id, script) => (/=>/.test(script) ? ["arrow functions (=>) don't exist in ExtendScript"] : []),
 };
 
-const params: ParamDef[] = [
-  { key: "products", label: "Products", type: "dataFile", required: true },
-  { key: "mockup", label: "Mockup", type: "file", required: true, extensions: ["psd"] },
-  { key: "out", label: "Output folder", type: "folder", required: true, role: "output" },
-];
+function labels(): RoutineContract {
+  return {
+    appId: "figma",
+    kind: "actions",
+    script: "",
+    inputs: [
+      { key: "file", label: "Figma file", type: "document", required: true },
+      { key: "products", label: "Products", type: "rows", required: true, columns: ["name", "ean"] },
+      { key: "cutouts", label: "Cutouts", type: "fileList", required: true, extensions: ["png"] },
+    ],
+    settings: [{ key: "scale", label: "Scale", type: "number", required: false, default: 2 }],
+    iterate: { input: "products" },
+    outputs: [{ key: "labels", label: "Labels", type: "fileList", required: true, extensions: ["png"] }],
+    actions: [
+      { action: "duplicateNode", id: "label", node: "Label" },
+      { action: "setText", node: "$label.#Name", text: "{{item.name}}" },
+      { action: "setImageFill", node: "$label.#Photo", image: { file: "{{matched.cutouts}}" } },
+      { action: "placeSvg", node: "$label.#Barcode", svg: { barcode: { type: "ean13", value: "{{item.ean}}" } } },
+      { action: "exportNode", node: "$label", format: "PNG", scale: "{{settings.scale}}", fileName: "label-{{itemIndex}}", output: "labels" },
+    ],
+  };
+}
 
-function stages(): Stage[] {
-  return [
-    {
-      id: "s1",
-      name: "Labels",
-      appId: "figma",
-      kind: "actions",
-      repeat: { over: "{{params.products.rows}}" },
-      inputs: ["{{params.products}}"],
-      outputs: [{ key: "files", type: "fileList" }],
-      body: {
-        actions: [
-          { action: "duplicateNode", id: "label", node: "Label" },
-          { action: "setText", node: "$label.#Name", text: "{{item.name}}" },
-          { action: "placeSvg", node: "$label.#Barcode", svg: { barcode: { type: "ean13", value: "{{item.ean}}" } } },
-          { action: "exportNode", node: "$label", format: "PNG", fileName: "label-{{itemIndex}}", output: "files" },
-        ],
-      },
-    },
-    {
-      id: "s2",
-      name: "Mockups",
-      appId: "photoshop",
-      kind: "script",
-      document: "none",
-      repeat: { over: "{{stage.s1.outputs.files}}" },
-      inputs: ["{{params.mockup}}", "{{params.out}}", "{{stage.s1.outputs.files}}"],
-      outputs: [{ key: "images", type: "fileList" }],
-      body: 'var doc = openDocument(params.mockup);\nreplaceSmartObject(findLayer("Label"), ctx.item.path);\nexportImage(ctx.join(params.out, ctx.item.stem + ".jpg"), "jpg", 85);',
-    },
-  ];
+function mockups(): RoutineContract {
+  return {
+    appId: "photoshop",
+    kind: "script",
+    inputs: [
+      { key: "labels", label: "Labels", type: "fileList", required: true, extensions: ["png"] },
+      { key: "mockup", label: "Mockup", type: "file", required: true, extensions: ["psd"] },
+    ],
+    settings: [],
+    iterate: { input: "labels" },
+    outputs: [{ key: "images", label: "Mockups", type: "fileList", required: true, extensions: ["jpg"] }],
+    script: 'var doc = openDocument(params.mockup);\nreplaceSmartObject(findLayer("Label"), ctx.item.path);\nexportImage(ctx.join(ctx.workDir, ctx.item.stem + ".jpg"), "jpg", 85);',
+  };
 }
 
 const codes = (r: ReturnType<typeof validateRoutine>) => r.errors.map((e) => e.code);
 
-describe("routine validator", () => {
-  it("accepts a valid two-stage Figma → Photoshop routine", () => {
-    const res = validateRoutine({ params, stages: stages() }, apps, { values: ["Organic honey 500 g", "4006381333931"], columns: { products: ["name", "ean"] } });
-    expect(res.errors).toEqual([]);
-    expect(res.ok).toBe(true);
+describe("routine contract validator", () => {
+  it("accepts single-app routines whose body uses only what they declare", () => {
+    expect(validateRoutine(labels(), apps, { values: ["Organic honey 500 g", "4006381333931"], columns: { products: ["name", "ean"] } }).errors).toEqual([]);
+    expect(validateRoutine(mockups(), apps).errors).toEqual([]);
   });
 
-  it("finds placeholders that don't resolve, with their location", () => {
-    const s = stages();
-    (s[0].body as any).actions[1].text = "{{item.title}}";
-    (s[0].body as any).actions[0].node = "{{params.template}}";
-    const res = validateRoutine({ params, stages: s }, apps, { values: [], columns: { products: ["name", "ean"] } });
+  it("rejects placeholders that point at undeclared inputs or settings, with their location", () => {
+    const r = labels();
+    r.actions![1].text = "{{item.title}}";
+    r.actions![0].node = "{{inputs.template}}";
+    r.actions![4].scale = "{{settings.quality}}";
+    r.actions![2].image = { file: "{{matched.photos}}" };
+    const res = validateRoutine(r, apps);
     expect(res.errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: "stages[0].body.actions[1].text", code: "unresolved-placeholder" }),
-        expect.objectContaining({ path: "stages[0].body.actions[0].node", code: "unresolved-placeholder" }),
+        expect.objectContaining({ path: "actions[1].text", code: "unresolved-placeholder" }),
+        expect.objectContaining({ path: "actions[0].node", code: "unresolved-placeholder" }),
+        expect.objectContaining({ path: "actions[4].scale", code: "unresolved-placeholder" }),
+        expect.objectContaining({ path: "actions[2].image.file", code: "unresolved-placeholder" }),
       ]),
     );
-    expect(res.errors.find((e) => e.path.endsWith("actions[1].text"))!.message).toContain('no "title" column');
+    expect(res.errors.find((e) => e.path === "actions[1].text")!.message).toContain('no "title" column');
+    expect(res.errors.find((e) => e.path === "actions[0].node")!.message).toContain('there is no input "template"');
   });
 
-  it("only lets a stage use outputs of earlier stages", () => {
-    const s = stages().reverse();
-    const res = validateRoutine({ params, stages: s }, apps);
-    expect(codes(res)).toContain("stage-order");
+  it("names the replacement for older placeholders", () => {
+    const r = labels();
+    r.actions![1].text = "{{params.name}}";
+    r.actions![2].image = { files: "{{stage.s1.outputs.files}}", name: "{{item.name}}" };
+    const messages = validateRoutine(r, apps).errors.map((e) => e.message);
+    expect(messages).toEqual(expect.arrayContaining([expect.stringContaining("use {{inputs.name}} for an input or {{settings.name}}"), expect.stringContaining("through one of its inputs")]));
   });
 
-  it("allows item placeholders only in repeated stages", () => {
-    const s = stages();
-    delete s[0].repeat;
-    const res = validateRoutine({ params, stages: s }, apps);
-    expect(res.errors.some((e) => e.message.includes("only available in a stage that repeats"))).toBe(true);
+  it("allows item and matched placeholders only in routines that iterate", () => {
+    const r = labels();
+    delete r.iterate;
+    const res = validateRoutine(r, apps);
+    expect(res.errors.some((e) => e.message.includes("only exists in a routine that iterate"))).toBe(true);
+    const s = mockups();
+    delete s.iterate;
+    expect(validateRoutine(s, apps).errors.map((e) => e.message)).toContain('ctx.item only exists in a routine that iterates (set "iterate").');
   });
 
-  it("rejects absolute paths and literal sample data", () => {
-    const s = stages();
-    (s[0].body as any).actions[1].text = "Organic honey 500 g";
-    s[1].body = String(s[1].body).replace("params.mockup", '"/Users/ana/Mockup.psd"');
-    const res = validateRoutine({ params, stages: s }, apps, { values: ["Organic honey 500 g", "Name"], allowed: ["Label", "Name"] });
-    expect(codes(res)).toEqual(expect.arrayContaining(["sample-data", "absolute-path"]));
-    // Layer names that also occur in the data aren't flagged.
+  it("checks scripts use declared inputs and settings", () => {
+    const s = mockups();
+    s.script = s.script.replace("params.mockup", "params.template");
+    expect(validateRoutine(s, apps).errors[0]).toMatchObject({ path: "script", code: "unresolved-placeholder", message: expect.stringContaining("params.template") });
+  });
+
+  it("requires every declared output to be produced, and every produced one declared", () => {
+    const r = labels();
+    r.outputs.push({ key: "previews", label: "Previews", type: "fileList", required: true });
+    r.actions![4].output = "pngs";
+    const res = validateRoutine(r, apps);
+    expect(res.errors.map((e) => e.message)).toEqual(
+      expect.arrayContaining([expect.stringContaining('Output "labels" is never produced'), expect.stringContaining('Output "previews" is never produced'), expect.stringContaining('produces "pngs"')]),
+    );
+    // Photoshop: exportImage fills the first file output; other outputs need ctx.output.
+    expect([...producedOutputs(mockups())]).toEqual(["images"]);
+    const s = mockups();
+    s.outputs.push({ key: "colors", label: "Colors", type: "rows", required: true });
+    expect(validateRoutine(s, apps).errors[0].message).toBe('Output "colors" is never produced. Call ctx.output("colors", value) for each value.');
+  });
+
+  it("keeps a routine to one app", () => {
+    expect(codes(validateRoutine(labels(), apps, undefined, "photoshop"))).toContain("one-app");
+    const s = mockups();
+    s.script += '\nvar bt = new BridgeTalk(); bt.target = "indesign";';
+    expect(codes(validateRoutine(s, apps))).toContain("one-app");
+    expect(codes(validateRoutine({ ...labels(), appId: "illustrator" }, apps))).toEqual(["unknown-app"]);
+  });
+
+  it("checks the contract: keys, types, iteration and documents", () => {
+    const r = labels();
+    r.inputs.push({ key: "scale", label: "Scale again", type: "number", required: true });
+    r.inputs.push({ key: "doc2", label: "Another file", type: "document", required: true });
+    r.inputs.push({ key: "bad key", label: "Bad", type: "image" as never, required: true });
+    r.settings.push({ key: "folder", label: "Folder", type: "folder" as never, required: true });
+    r.iterate = { input: "file" };
+    const res = validateRoutine(r, apps);
+    expect(codes(res)).toEqual(expect.arrayContaining(["duplicate-id", "contract", "schema"]));
+    expect(res.errors.find((e) => e.path === "iterate.input")!.message).toBe('A routine iterates over a rows or fileList input; "file" is document.');
+    expect(res.errors.find((e) => e.path === "settings[1].type")!.message).toContain("Files, folders and data are inputs");
+  });
+
+  it("rejects absolute paths, literal sample data, unknown actions and lint problems", () => {
+    const r = labels();
+    r.actions![1].text = "Organic honey 500 g";
+    r.actions!.push({ action: "explode", node: "x" });
+    const s = mockups();
+    s.script = s.script.replace("params.mockup", '"/Users/ana/Mockup.psd"') + "\nvar f = () => 1;";
+    const res = validateRoutine(r, apps, { values: ["Organic honey 500 g", "Name"], allowed: ["Label", "Name"] });
+    expect(codes(res)).toEqual(expect.arrayContaining(["sample-data", "schema"]));
     expect(res.errors.filter((e) => e.code === "sample-data")).toHaveLength(1);
-  });
-
-  it("checks action schemas, scripts, apps and ids", () => {
-    const s = stages();
-    (s[0].body as any).actions.push({ action: "explode", node: "x" });
-    s[1].body = "var f = () => 1;";
-    s.push({ ...s[1], id: "s2" }, { ...s[1], id: "s4", appId: "illustrator" });
-    const res = validateRoutine({ params, stages: s }, apps);
-    expect(codes(res)).toEqual(expect.arrayContaining(["schema", "lint", "duplicate-id", "unknown-app"]));
-    expect(res.errors.find((e) => e.code === "schema")!.path).toBe("stages[0].body.actions[4].action");
-  });
-
-  it("requires repeat.over to be a list placeholder", () => {
-    const s = stages();
-    s[0].repeat = { over: "{{params.mockup}}" };
-    expect(validateRoutine({ params, stages: s }, apps).errors[0]).toMatchObject({ path: "stages[0].repeat.over" });
+    expect(res.errors.find((e) => e.code === "schema")!.path).toBe("actions[5].action");
+    expect(codes(validateRoutine(s, apps))).toEqual(expect.arrayContaining(["absolute-path", "lint"]));
   });
 });

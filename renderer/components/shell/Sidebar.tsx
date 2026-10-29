@@ -8,7 +8,7 @@ import { AppStatusChip } from "./AppStatusChip";
 
 const NAV = [
   { href: "/", label: copy.nav.newTask, match: ["/", "/create"] },
-  { href: "/routines", label: copy.nav.library, match: ["/routines", "/routine", "/run", "/results"] },
+  { href: "/routines", label: copy.nav.library, match: ["/routines", "/routine", "/flow", "/run", "/results"] },
   { href: "/style", label: copy.nav.style, match: ["/style"] },
   { href: "/settings", label: copy.nav.settings, match: ["/settings"] },
 ];

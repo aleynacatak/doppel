@@ -9,15 +9,8 @@ export interface Env {
   // Vars (wrangler.toml)
   META_API_BASE_URL: string;
   DEMO_ENABLED: string;
-  ALLOWED_CHAT_MODELS: string;
-  ALLOWED_SEGMENT_MODELS: string;
-  MAX_OUTPUT_TOKENS: string;
-  MAX_CALLS_PER_CREATION: string;
+  // Allowed models, prices, output tokens and calls per creation come from the app's model registry (src/models.ts).
   MAX_REQUEST_BYTES: string;
-  PRICE_INPUT_PER_M: string;
-  PRICE_CACHED_INPUT_PER_M: string;
-  PRICE_OUTPUT_PER_M: string;
-  PRICE_SAM_PER_1K_IMAGES: string;
   DAILY_SPEND_CAP: string;
   TOTAL_SPEND_CAP: string;
 }
@@ -26,11 +19,4 @@ export interface Env {
 export function num(value: string | undefined, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-export function list(value: string | undefined): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 }

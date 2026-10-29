@@ -1,6 +1,18 @@
 "use client";
 
-import type { ConnectionLogEntry, CreationTranscript, DevRunResult, DocumentRef, ValidationResult } from "@core/types";
+import type {
+  BlockCandidate,
+  BlockInfo,
+  ConnectionLogEntry,
+  CreationTranscript,
+  DevRunResult,
+  DocumentRef,
+  ExecutionPlan,
+  Flow,
+  HelperTestResult,
+  Routine,
+  ValidationResult,
+} from "@core/types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -164,6 +176,205 @@ function BarcodeTester() {
   );
 }
 
+/** Run a flow with every app simulated, forced failures, and the execution plan first. */
+function FlowLab() {
+  const router = useRouter();
+  const { data: flows = [] } = useAsync(() => doppel().listFlows(), []);
+  const [flowId, setFlowId] = useState("");
+  const flow: Flow | undefined = flows.find((f) => f.id === flowId) ?? flows[0];
+  const [mocked, setMocked] = useState(true);
+  const [failNodes, setFailNodes] = useState<string[]>([]);
+  const [failItems, setFailItems] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<ExecutionPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { data: ctx } = useAsync(() => (flow ? doppel().getFlowContext(flow) : Promise.resolve(null)), [flow?.id]);
+  const routineNodes = flow?.nodes.filter((n) => n.kind === "routine") ?? [];
+  const items = (text: string) =>
+    text
+      .split(/[,\s]+/)
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0);
+  const run = async () => {
+    if (!flow) return;
+    setError(null);
+    try {
+      const setup = await doppel().getRunSetup({ kind: "flow", id: flow.id });
+      const r = await doppel().devRunFlow(
+        flow.id,
+        { inputs: mocked ? {} : setup.last.inputs, outputFolders: mocked ? {} : setup.last.outputFolders, qcMode: "auto", options: { target: "copy" } },
+        { mocked, failNodes, failItems: Object.fromEntries(Object.entries(failItems).map(([k, v]) => [k, items(v)])) },
+      );
+      router.push(`/run?flow=${flow.id}&run=${r.id}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <Section title="Flow runner">
+      <p className="ui-small ui-muted">
+        Runs a flow without AI. Simulated apps write placeholder files for each output, so handoffs, joins, partial failure and cancel can be tried without InDesign,
+        Photoshop or Figma. Inputs nothing is picked for get three sample rows or files. Real apps use the values picked last time.
+      </p>
+      {flows.length === 0 ? (
+        <p className="ui-small">No flows yet.</p>
+      ) : (
+        <>
+          <select className="ui-select max-w-md" value={flow?.id ?? ""} onChange={(e) => setFlowId(e.target.value)}>
+            {flows.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+          <label className="ui-choice">
+            <input type="checkbox" checked={mocked} onChange={(e) => setMocked(e.target.checked)} />
+            <span>Simulate every app</span>
+          </label>
+          {routineNodes.length > 0 && (
+            <table className="ui-table ui-small">
+              <thead>
+                <tr>
+                  <th className="py-1 pr-3">Routine node</th>
+                  <th className="py-1 pr-3">Fail the node</th>
+                  <th className="py-1">Fail items (1-based, e.g. 2, 4)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {routineNodes.map((n) => (
+                  <tr key={n.id}>
+                    <td className="py-1 pr-3">{ctx?.routines[n.id]?.name ?? n.id}</td>
+                    <td className="py-1 pr-3">
+                      <input
+                        type="checkbox"
+                        checked={failNodes.includes(n.id)}
+                        onChange={(e) => setFailNodes((f) => (e.target.checked ? [...f, n.id] : f.filter((x) => x !== n.id)))}
+                        aria-label={`Fail ${n.id}`}
+                      />
+                    </td>
+                    <td className="py-1">
+                      <input className="ui-input max-w-40" value={failItems[n.id] ?? ""} onChange={(e) => setFailItems((f) => ({ ...f, [n.id]: e.target.value }))} aria-label={`Fail items of ${n.id}`} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="flex gap-2">
+            <Button onClick={async () => flow && setPlan(await doppel().devExecutionPlan(flow.id, {}))}>Show execution plan</Button>
+            <Button variant="primary" onClick={run}>
+              Run flow
+            </Button>
+          </div>
+          {error && <Notice tone="error">{error}</Notice>}
+          {plan && (
+            <div className="flex flex-col gap-2">
+              <table className="ui-table ui-small">
+                <thead>
+                  <tr>
+                    <th className="py-1 pr-3">#</th>
+                    <th className="py-1 pr-3">Node</th>
+                    <th className="py-1 pr-3">Items</th>
+                    <th className="py-1">Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.steps.map((s, i) => (
+                    <tr key={s.nodeId}>
+                      <td className="py-1 pr-3">{i + 1}</td>
+                      <td className="py-1 pr-3">
+                        {s.kind} · {s.name}
+                        {s.appId ? ` · ${s.appId}` : ""}
+                        {s.iterates ? ` · per item of ${s.iterates}` : ""}
+                      </td>
+                      <td className="py-1 pr-3">{s.items ?? "?"}</td>
+                      <td className="ui-muted py-1">{s.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {plan.joins.map((j) => (
+                <div key={j.edgeId} className="ui-small">
+                  <div className="ui-label">
+                    Join into {j.into}: {JSON.stringify(j.rule)}
+                  </div>
+                  {j.preview.note ? (
+                    <p className="ui-muted">{j.preview.note}</p>
+                  ) : (
+                    <ul>
+                      {j.preview.pairs.map((p, i) => (
+                        <li key={i}>
+                          {p.item} → {p.match ?? `none (${p.problem})`}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+              {plan.issues.length > 0 && <pre className="ui-code p-2">{plan.issues.map((i) => `${i.code}: ${i.message}`).join("\n")}</pre>}
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** One of my routines in the starter format, for resources/starters/. */
+function ExportStarter() {
+  const { data: routines = [] } = useAsync(() => doppel().listRoutines(), []);
+  const [id, setId] = useState("");
+  const [converter, setConverter] = useState(false);
+  const [result, setResult] = useState<{ path: string | null; removed: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const routine: Routine | undefined = routines.find((r) => r.id === id) ?? routines[0];
+  return (
+    <Section title="Export as starter">
+      <p className="ui-small ui-muted">
+        Writes one of your routines in the starter format (run history, request notes and locations on this Mac taken out; inputs and outputs checked). Put the
+        file into resources/starters/ to ship it as “Made by Doppl”. A converter has one input and one output and is offered for incompatible connections.
+      </p>
+      {routines.length === 0 ? (
+        <p className="ui-small">No routines yet.</p>
+      ) : (
+        <>
+          <select className="ui-select max-w-md" value={routine?.id ?? ""} onChange={(e) => setId(e.target.value)}>
+            {routines.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} (v{r.version})
+              </option>
+            ))}
+          </select>
+          <label className="ui-choice">
+            <input type="checkbox" checked={converter} onChange={(e) => setConverter(e.target.checked)} />
+            <span>Tag as converter</span>
+          </label>
+          <div>
+            <Button
+              onClick={async () => {
+                if (!routine) return;
+                setError(null);
+                try {
+                  setResult(await doppel().devExportStarter(routine.id, { converter }));
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              Export…
+            </Button>
+          </div>
+          {error && <Notice tone="error">{error}</Notice>}
+          {result && (
+            <Notice title={result.path ? `Saved ${result.path}` : "Not saved"}>
+              {result.removed.length > 0 && <p className="ui-small">Taken out: {result.removed.join("; ")}</p>}
+            </Notice>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
 function RoutineBuilder() {
   const router = useRouter();
   const [json, setJson] = useState("");
@@ -171,7 +382,10 @@ function RoutineBuilder() {
   const [error, setError] = useState<string | null>(null);
   return (
     <Section title="Routine builder">
-      <p className="ui-small ui-muted">Paste a routine (params + stages, in the model's format or Doppl's). Validate, then save it to the library. Saving and running use no AI.</p>
+      <p className="ui-small ui-muted">
+        Paste a routine in the model&apos;s format: {"{"} name, app, inputs, outputs, settings, iterate, actions (Figma) or script {"}"}. Validate, then save it to the library.
+        Saving and running use no AI.
+      </p>
       <textarea className="ui-input ui-code h-72" value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} aria-label="Routine JSON" />
       <div className="flex gap-2">
         <Button onClick={async () => setValidation(await doppel().devValidateRoutine(json))}>Validate</Button>
@@ -212,8 +426,8 @@ function LastCreation() {
   const load = async () => setT(await doppel().devLastCreationTranscript());
   return (
     <Section title="Last creation: the AI's answers" aside={<Button size="small" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
-      <p className="ui-small ui-muted">The latest multi-app creation, turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
-      {t === null && <p className="ui-small">No multi-app creation since Doppl started.</p>}
+      <p className="ui-small ui-muted">The latest creation (its plan and every routine), turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
+      {t === null && <p className="ui-small">No creation since Doppl started.</p>}
       {t && (
         <div className="flex flex-col gap-2">
           <p className="ui-small">
@@ -265,6 +479,147 @@ function ConnectionLog() {
   );
 }
 
+function TestResults({ results }: { results: HelperTestResult[] }) {
+  return (
+    <ul className="ui-small flex flex-col gap-0.5">
+      {results.map((r, i) => (
+        <li key={i}>
+          {r.skipped ? "SKIP" : r.passed ? "PASS" : "FAIL"} {r.helper} v{r.version} · {r.test}
+          {r.skipped ? ` (${r.skipped})` : r.passed ? "" : `: ${r.detail}`}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function BuildingBlocks() {
+  const { settings, setSettings } = useShell();
+  const { data: library } = useAsync<BlockInfo[]>(() => doppel().listBlocks(), []);
+  const { data: candidates, reload } = useAsync<BlockCandidate[]>(() => doppel().listBlockCandidates(), []);
+  const [tests, setTests] = useState<HelperTestResult[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const act = async (id: string, fn: () => Promise<BlockCandidate | { file: string; warnings: string[] } | null>) => {
+    setBusy(id);
+    setNote(null);
+    try {
+      const res = await fn();
+      if (res && "file" in res) setNote(`Exported to ${res.file}${res.warnings.length ? ` · ${res.warnings.join(" · ")}` : ""}`);
+      reload();
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Section title="Building blocks">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="ui-label">Library</span>
+          <Button
+            size="small"
+            disabled={busy === "tests"}
+            onClick={async () => {
+              setBusy("tests");
+              setTests(await doppel().runBlockTests().finally(() => setBusy(null)));
+            }}
+          >
+            {busy === "tests" ? "Running tests…" : "Run all tests in the apps"}
+          </Button>
+        </div>
+        <table className="ui-table ui-small">
+          <tbody>
+            {(library ?? []).map((b) => (
+              <tr key={b.id}>
+                <td className="py-1 pr-3">{b.call}</td>
+                <td className="ui-muted py-1 pr-3">
+                  {b.id} v{b.version}
+                  {b.versions.length > 1 ? ` (versions ${b.versions.join(", ")})` : ""}
+                </td>
+                <td className="ui-muted py-1 pr-3">{b.set}</td>
+                <td className="ui-muted py-1 pr-3">{b.source === "promoted" ? "yours" : "built-in"}</td>
+                <td className="ui-muted py-1">{b.tests} test(s)</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {tests && <TestResults results={tests} />}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="ui-label">Candidates (custom code from saved routines, best first)</span>
+        <label className="ui-choice">
+          <input
+            type="checkbox"
+            checked={!!settings?.autoPromoteBlocks}
+            onChange={async (e) => setSettings(await doppel().saveSettings({ autoPromoteBlocks: e.target.checked }))}
+          />
+          <span>Promote automatically: used successfully in 2+ routines, 5+ items, no "This isn't right" or refine changes, tests pass (off by default; uses AI only when a routine is saved)</span>
+        </label>
+        {note && <Notice>{note}</Notice>}
+        {(candidates ?? []).length === 0 && <p className="ui-small ui-muted">None yet. Steps written as custom code show up here after a routine is saved.</p>}
+        {(candidates ?? []).map((c) => (
+          <div key={c.id} className="ui-card flex flex-col gap-2 p-3" data-selected={c.status === "promoted"}>
+            <div className="ui-small">
+              <strong>score {c.score}</strong> · {c.app} · {c.status} · written in {new Set(c.occurrences.map((o) => o.routineId)).size} routine(s)
+            </div>
+            <ul className="ui-small ui-muted flex flex-col">
+              {c.occurrences.map((o, i) => (
+                <li key={i}>
+                  “{o.step}” in {o.routineName} v{o.version} · trial {o.trial.ok}/{o.trial.items}
+                </li>
+              ))}
+            </ul>
+            <div className="ui-small ui-muted">
+              {c.evidence.successfulItems} successful items · {c.evidence.inputKeys.length} distinct inputs · checks {c.evidence.qcPassed}/{c.evidence.qcChecked} · OK {c.evidence.markedOk} · not right {c.evidence.notRight} · refine changes {c.evidence.refineTouches}
+            </div>
+            <details>
+              <summary className="ui-small ui-link">Code</summary>
+              <pre className="ui-small overflow-x-auto whitespace-pre-wrap">{c.code}</pre>
+            </details>
+            {c.draft && (
+              <div className="flex flex-col gap-1">
+                <div className="ui-small">
+                  Generalized: <strong>{c.draft.def.call}</strong> ({c.draft.def.id} v{c.draft.def.version}) · {c.draft.def.summary}
+                </div>
+                {c.draft.lint.length > 0 && <Notice tone="warning">{c.draft.lint.join(" · ")}</Notice>}
+                {c.draft.tests.length > 0 && <TestResults results={c.draft.tests} />}
+                <details>
+                  <summary className="ui-small ui-link">Block code and docs</summary>
+                  <pre className="ui-small overflow-x-auto whitespace-pre-wrap">{`${c.draft.def.doc}\n\n${c.draft.def.code}`}</pre>
+                </details>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {c.status !== "promoted" && c.status !== "dismissed" && (
+                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().generalizeBlockCandidate(c.id))}>
+                  {busy === c.id ? "Working…" : c.draft ? "Generalize again" : "Generalize (1 AI call)"}
+                </Button>
+              )}
+              {c.status === "generalized" && (
+                <Button size="small" variant="primary" disabled={!!busy} onClick={() => act(c.id, () => doppel().approveBlockCandidate(c.id))}>
+                  Approve into my library
+                </Button>
+              )}
+              {c.status === "promoted" && (
+                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().exportBlockCandidate(c.id))}>
+                  Export as built-in…
+                </Button>
+              )}
+              {c.status !== "dismissed" && c.status !== "promoted" && (
+                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().dismissBlockCandidate(c.id))}>
+                  Dismiss
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 export default function DevPage() {
   return (
     <div className="flex flex-col gap-8">
@@ -272,7 +627,10 @@ export default function DevPage() {
       <FigmaRunner />
       <PhotoshopRunner />
       <BarcodeTester />
+      <FlowLab />
+      <ExportStarter />
       <RoutineBuilder />
+      <BuildingBlocks />
       <LastCreation />
       <ConnectionLog />
     </div>

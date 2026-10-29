@@ -1,4 +1,4 @@
-import { BrowserWindow, app, protocol, shell } from "electron";
+import { BrowserWindow, app, dialog, protocol, shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createServices, type Services } from "./core/config";
@@ -18,6 +18,9 @@ if (DEV_SERVER_URL) {
 }
 
 app.setName("Doppl");
+// `npm run eval` and `npm run test:helpers`: no window; run headless and quit (electron/evals/).
+const EVAL_MODE = process.argv.includes("--doppl-eval");
+const HELPER_TESTS = process.argv.includes("--doppl-test-helpers");
 // Optional: keep data somewhere else (e.g. a throwaway folder for testing).
 if (process.env.DOPPL_USER_DATA) app.setPath("userData", process.env.DOPPL_USER_DATA);
 
@@ -142,18 +145,41 @@ async function workerUrl(): Promise<string> {
 }
 
 app.whenReady().then(async () => {
+  if (EVAL_MODE || HELPER_TESTS) {
+    app.dock?.hide();
+    const paths = { userData: app.getPath("userData"), temp: app.getPath("temp") };
+    const run = EVAL_MODE
+      ? import("./evals/cli").then(async ({ runEvalCli }) => runEvalCli(process.argv, paths, await workerUrl()))
+      : import("./evals/helpersCli").then(({ runHelpersCli }) => runHelpersCli(process.argv, paths));
+    const code = await run.catch((err) => {
+      console.error(`${EVAL_MODE ? "Eval" : "Building block tests"} failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 2;
+    });
+    app.exit(code);
+    return;
+  }
   if (!DEV_SERVER_URL) registerAppProtocol();
 
   const emitters = {
     apps: (apps: unknown) => broadcast(EVENT_CHANNELS.apps, apps),
     run: (run: unknown) => broadcast(EVENT_CHANNELS.run, run),
     creation: (creation: unknown) => broadcast(EVENT_CHANNELS.creation, creation),
+    chooseSavePath: async (defaultName: string) => {
+      const win = BrowserWindow.getFocusedWindow();
+      const options = { defaultPath: path.join(app.isPackaged ? app.getPath("desktop") : path.join(app.getAppPath(), "resources", "starters"), defaultName) };
+      const res = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+      return res.canceled || !res.filePath ? null : res.filePath;
+    },
   };
   if (!process.env.DOPPL_USER_DATA) {
     await migrateDoppelData(app.getPath("appData"), app.getPath("userData")).catch((err) => console.error("[migration]", err));
   }
+  // Starter routines ship in the app's resources (resources/starters/ in the repo while developing;
+  // DOPPL_STARTERS_DIR points somewhere else for testing).
+  const starters =
+    process.env.DOPPL_STARTERS_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, "starters") : path.join(app.getAppPath(), "resources", "starters"));
   services = await createServices(
-    { userData: app.getPath("userData"), temp: app.getPath("temp"), documents: app.getPath("documents") },
+    { userData: app.getPath("userData"), temp: app.getPath("temp"), documents: app.getPath("documents"), starters },
     emitters,
     await workerUrl(),
   );

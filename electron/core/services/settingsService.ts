@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS: Settings = {
   figmaFiles: [],
   figmaPairingCode: "",
   figmaPort: 47810,
+  aiModels: { roleOverrides: {}, customEndpoints: [], providerSpend: {}, providerLimits: {} },
+  autoPromoteBlocks: false,
 };
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -33,6 +35,8 @@ export class SettingsService {
       if (stored && stored[key] !== undefined) (next as unknown as Record<string, unknown>)[key] = stored[key];
     }
     if (next.aiProvider === "local") next.aiProvider = "doppl-demo";
+    next.aiModels = { ...DEFAULT_SETTINGS.aiModels, ...(next.aiModels ?? {}) };
+    next.autoPromoteBlocks = next.autoPromoteBlocks === true;
     this.settings = next;
     if (!next.figmaPairingCode) await this.save({ figmaPairingCode: newPairingCode() });
     return this.settings;
@@ -63,5 +67,16 @@ export class SettingsService {
 
   async addOwnKeySpend(usd: number) {
     await this.save({ ownKeySpend: { month: thisMonth(), estUsd: this.ownKeySpend() + usd } });
+  }
+
+  /** Spend with another provider this month. */
+  providerSpend(provider: string): number {
+    const s = this.settings.aiModels.providerSpend[provider];
+    return s && s.month === thisMonth() ? s.estUsd : 0;
+  }
+
+  async addProviderSpend(provider: string, usd: number) {
+    const ai = this.settings.aiModels;
+    await this.save({ aiModels: { ...ai, providerSpend: { ...ai.providerSpend, [provider]: { month: thisMonth(), estUsd: this.providerSpend(provider) + usd } } } });
   }
 }

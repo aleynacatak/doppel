@@ -1,3 +1,8 @@
+import type { BlockCandidate, HelperPins, HelperTestResult, StageBlocks } from "./blocks/types";
+export type { BlockCandidate, HelperDef, HelperPins, HelperTestResult } from "./blocks/types";
+import type { ContractChange, StepChange } from "../shared/routineDiff";
+export type { ContractChange, StepChange };
+
 // Domain types shared by the main process and the renderer.
 // The renderer imports this file with `import type` only, so it must stay free of runtime code.
 
@@ -118,9 +123,13 @@ export interface TaskApp {
 export interface RoutineStep {
   id: string;
   plainLanguage: string;
+  /** "tested": done with building blocks; "custom": code written for this routine. */
+  kind?: "tested" | "custom";
+  /** Building blocks the step uses (ids). */
+  blocks?: string[];
 }
 
-/** "dataFile": a CSV, JSON or Excel file whose rows a stage can repeat over ({{params.<key>.rows}}). */
+/** Older routines' params (before inputs, outputs and settings); kept to read and migrate them. */
 export type ParamType = "text" | "file" | "folder" | "dataFile" | "number" | "select" | "formatList" | "boolean";
 
 export interface ParamOption {
@@ -152,7 +161,48 @@ export interface ParamDef {
 export type ParamValue = string | number | boolean | string[] | null;
 export type ParamValues = Record<string, ParamValue>;
 
-// ---------- Stages (multi-app routines) ----------
+// ---------- Routines: one app, with typed inputs and outputs ----------
+
+/**
+ * What a port carries. file / fileList take an extension list as sub-type (fileList<png> fits fileList<png|jpg>);
+ * rows are tabular data (from CSV, JSON or Excel, or made by a routine); document is a document open in the
+ * routine's app. Compatibility rules: electron/shared/ports.ts.
+ */
+export type PortType = "file" | "fileList" | "folder" | "rows" | "document" | "text" | "number" | "boolean";
+
+/** One input or output of a routine (or a flow's input / output node). */
+export interface PortDef {
+  /** Identifier used in placeholders ({{inputs.<key>}}) and scripts (params.<key>). */
+  key: string;
+  /** Shown in the UI, e.g. "Product images". */
+  label: string;
+  type: PortType;
+  required: boolean;
+  description?: string;
+  /** file, fileList: allowed extensions without dots, e.g. ["png", "jpg"]. Missing or empty: any file. */
+  extensions?: string[];
+  /** rows: columns every row has. */
+  columns?: string[];
+}
+
+/** Options that are set, not connected: export scale, quality, a naming pattern. */
+export type SettingType = "text" | "number" | "boolean" | "select" | "formatList";
+
+export interface SettingDef extends Omit<ParamDef, "type" | "extensions" | "columns" | "role"> {
+  type: SettingType;
+}
+
+/** How items from two lists pair up for an iterating routine (a data row and its image). */
+export type MatchRule =
+  | { by: "index" }
+  | { by: "fileNameEqualsColumn"; column: string; ignoreExtension: boolean }
+  | { by: "columnEquals"; leftColumn: string; rightColumn: string };
+
+/**
+ * A value picked for an input at run time: a path (file, folder, data file, or a folder whose files make a file
+ * list), several file paths, a document id, or a simple value.
+ */
+export type InputValue = string | string[] | number | boolean | null;
 
 /** One Figma action (validated against the action catalog in electron/shared/figmaActions.ts). */
 export interface FigmaActionStep {
@@ -166,6 +216,7 @@ export interface FigmaActionList {
   actions: FigmaActionStep[];
 }
 
+/** Figma routines run an action list ("actions"); InDesign and Photoshop routines run ExtendScript ("script"). */
 export type StageKind = "actions" | "script";
 export type StageOutputType = "fileList" | "file" | "nodeList" | "data";
 
@@ -173,47 +224,71 @@ export interface StageOutputDef {
   key: string;
   type: StageOutputType;
   label?: string;
+  /** File outputs: the extensions the routine promises. */
+  extensions?: string[];
 }
 
 /**
- * One part of a routine that runs in one app. Stages run in order and hand results to each other through
- * placeholders: {{params.<key>}}, {{item.<field>}} (repeated stages) and {{stage.<id>.outputs.<key>}}.
+ * How one routine node runs in its app: what the adapters get (beginStage → runStageItem × items → endStage).
+ * Built from a routine for each run; routines themselves have no stages.
  */
 export interface Stage {
   id: string;
   name: string;
   appId: AppId;
-  /** Figma: "actions" (a declarative action list). InDesign, Photoshop: "script" (ExtendScript). */
   kind: StageKind;
   body: FigmaActionList | string;
-  /** Run once per item of a list, e.g. "{{params.data.rows}}" or "{{stage.s1.outputs.files}}". */
-  repeat?: { over: string };
-  /** Placeholders the stage reads (params and earlier stages' outputs). */
-  inputs: string[];
   outputs: StageOutputDef[];
-  /** Plain-language steps for the routine page. */
-  steps?: string[];
-  /** "open": runs on a document the designer picks among those open in the app. "none": opens its own files. */
+  /** "open": runs on a document open in the app. "none": opens its own files. */
   document?: "open" | "none";
-  /** The stage changes the document it runs on (vs. only reading or exporting). */
+  /** The routine changes the document it runs on (vs. only reading or exporting). */
   modifiesDocument?: boolean;
+  /** The building blocks it runs with (the versions its routine pinned). */
+  blocks?: StageBlocks;
 }
 
 export interface RoutineVersion {
   version: number;
   createdAt: string;
   aiCalls: number;
+  /** What changed, in a sentence (a refine's change summary). */
   note: string;
+  /** The designer's words that asked for this version (Refine). */
+  request?: string;
+  /** Which model served each role while this version was made, and what it used. */
+  provenance?: Provenance;
 }
+
+export interface RoleProvenance {
+  model: string;
+  provider: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export type Provenance = Partial<Record<AiRole, RoleProvenance>>;
 
 export interface Routine {
   id: string;
   name: string;
+  /** Exactly one app. */
   appId: AppId;
   description: string;
   steps: RoutineStep[];
-  params: ParamDef[];
+  inputs: PortDef[];
+  outputs: PortDef[];
+  settings: SettingDef[];
+  /** Run once per item of this list input (a data row or a file); outputs are collected into lists. */
+  iterate?: { input: string };
+  /** When the routine runs on its own: how each other list input pairs with the iterated items. In flows, the edge's rule applies. */
+  matches?: Record<string, MatchRule>;
+  kind: StageKind;
+  /** Script routines (InDesign, Photoshop): the ExtendScript body. */
   script: string;
+  /** Figma routines: the action list. */
+  actions?: FigmaActionStep[];
   version: number;
   createdWithAiCalls: number;
   appVersion: string;
@@ -222,9 +297,6 @@ export interface Routine {
   createdAt: string;
   updatedAt: string;
   versions: RoutineVersion[];
-  /** Example routine the routine was based on, if any. */
-  templateId?: string;
-  experimental?: boolean;
   /** Whether the routine edits the document (vs. only exporting or reading it). */
   modifiesDocument: boolean;
   /** Default image-resolution profile for rule checks. */
@@ -233,13 +305,21 @@ export interface Routine {
   builtInQc?: boolean;
   /** Portability problems the user chose to accept when saving. */
   portabilityIssues?: PortabilityIssue[];
-  lastParams?: ParamValues;
+  /** Building block versions this routine runs (none: saved before blocks were pinned, runs their first versions). */
+  helpers?: HelperPins;
   /** Objects that must stay fully visible in outputs (checked with SAM while creating). */
   keyObjects?: string[];
-  /** Multi-app routines. Older single-app routines have none and run as one script stage. */
-  stages?: Stage[];
   /** Object checks with SAM that the routine defines ("Automatic check + AI review" only). */
   objectChecks?: ObjectCheckDef[];
+  /** Example routine the routine was based on, if any. */
+  templateId?: string;
+  experimental?: boolean;
+  /** Made by Doppl: a read-only starter routine from the app's resources. Converters are tagged "converter". */
+  starter?: { tags: string[] };
+  /** A copy of a starter routine (independent from later starter updates). */
+  duplicatedFrom?: { routineId: string; version: number; name: string };
+  /** 2: inputs, outputs and settings. Older routine files are migrated when Doppl starts. */
+  format: 2;
 }
 
 /** "Check that <object> is inside <region> in this output image" (SAM, counted as AI calls). */
@@ -247,6 +327,144 @@ export interface ObjectCheckDef {
   object: string;
   region: string;
 }
+
+// ---------- Flows: routines connected in a graph ----------
+
+export interface FlowPosition {
+  x: number;
+  y: number;
+}
+
+/** A flow-level input (picked when the flow runs), a routine, or an output ("Save to folder"). */
+export type FlowNode =
+  | { id: string; kind: "input"; port: PortDef; position: FlowPosition }
+  | {
+      id: string;
+      kind: "routine";
+      routineId: string;
+      /** Routine nodes pin a version; a newer one shows "Update available". */
+      routineVersion: number;
+      /** Setting values for this node (defaults otherwise). */
+      settings?: Record<string, ParamValue>;
+      /** Values for text, number and yes/no inputs that aren't connected. */
+      values?: Record<string, string | number | boolean>;
+      position: FlowPosition;
+    }
+  | { id: string; kind: "output"; port: PortDef; position: FlowPosition };
+
+export interface PortRef {
+  nodeId: string;
+  /** Routine nodes: the port key. Input and output nodes: their port's key. */
+  port: string;
+}
+
+export interface FlowEdge {
+  id: string;
+  from: PortRef;
+  to: PortRef;
+  /** Joins (a second list into an iterating routine): how items pair up. */
+  match?: MatchRule;
+}
+
+export interface Flow {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  runs: RunSummary[];
+  /** AI calls used to create the flow and its routines. */
+  createdWithAiCalls: number;
+  /** Every app its routines use (filled in when flows are listed; not stored). */
+  appIds?: AppId[];
+}
+
+/** A problem that keeps a flow from running, tied to a node or edge so the editor can highlight it. */
+export interface FlowIssue {
+  code:
+    | "empty"
+    | "cycle"
+    | "missing-routine"
+    | "missing-version"
+    | "legacy-routine"
+    | "unknown-port"
+    | "incompatible"
+    | "duplicate-input"
+    | "needs-match"
+    | "bad-match"
+    | "missing-input"
+    | "no-source";
+  message: string;
+  nodeId?: string;
+  edgeId?: string;
+  port?: string;
+}
+
+export interface FlowValidation {
+  ok: boolean;
+  issues: FlowIssue[];
+}
+
+/** What the flow editor needs besides the flow: each routine node's pinned routine, and the latest versions. */
+export interface FlowContext {
+  /** Per routine node id: the pinned version of its routine (missing when it doesn't exist). */
+  routines: Record<string, Routine>;
+  /** Per routine id: the newest version. */
+  latest: Record<string, number>;
+  validation: FlowValidation;
+}
+
+/** Pairs a join would make, for the edge inspector ("first 5 pairs"). */
+export interface MatchPreview {
+  pairs: { item: string; match: string | null; problem?: string }[];
+  total: number;
+  unmatched: number;
+  /** Why there is nothing to preview yet, e.g. "Pick the data file in the input node first." */
+  note?: string;
+}
+
+/** A converter that bridges an incompatible edge ("Insert a converter"). */
+export interface ConverterOption {
+  routineId: string;
+  version: number;
+  name: string;
+  description: string;
+}
+
+/** Dev panel: the order a flow runs in, with item counts and join pairs, before running it. */
+export interface ExecutionPlan {
+  steps: { nodeId: string; name: string; kind: FlowNode["kind"]; appId?: AppId; items: number | null; iterates?: string; note?: string }[];
+  joins: { edgeId: string; into: string; rule: MatchRule; preview: MatchPreview }[];
+  issues: FlowIssue[];
+}
+
+/** The plan Doppl proposes for a request that needs several apps: single-app routines and how they connect. */
+export interface FlowPlan {
+  name: string;
+  description: string;
+  /** Flow inputs (picked at run time). */
+  inputs: PortDef[];
+  /** Results saved to a folder the designer picks. */
+  outputs: PortDef[];
+  routines: FlowPlanRoutine[];
+  /** "input.<key>", "<routine id>.<port>" or "output.<key>" on each side. */
+  connections: { from: string; to: string; match?: MatchRule }[];
+}
+
+export interface FlowPlanRoutine {
+  id: string;
+  name: string;
+  appId: AppId;
+  purpose: string;
+  inputs: PortDef[];
+  outputs: PortDef[];
+  iterate?: { input: string };
+}
+
+// ---------- Runs ----------
 
 export type RunStatus = "running" | "succeeded" | "partial" | "failed" | "cancelled";
 export type OutputStatus = "pending" | "running" | "done" | "failed";
@@ -261,6 +479,7 @@ export interface RunSummary {
   outputCount: number;
   flaggedCount: number;
   aiCalls: number;
+  /** The routine's or flow's version. */
   routineVersion: number;
 }
 
@@ -271,6 +490,8 @@ export interface PreviewImage {
   width?: number;
   height?: number;
   label: string;
+  /** The image has transparent areas, shown on a dark gray checkerboard. */
+  transparent?: boolean;
 }
 
 export interface OutputDetail {
@@ -292,8 +513,8 @@ export interface RunOutput {
   pageIndex?: number;
   /** Figma node the output is (a frame the routine made). */
   nodeId?: string;
-  /** Multi-app routines: the stage and item that made this output. */
-  stageId?: string;
+  /** The flow node (routine or output) and item that made this output. */
+  node?: string;
   itemKey?: string;
   itemLabel?: string;
   details?: OutputDetail[];
@@ -361,10 +582,50 @@ export interface QcOptions {
 export interface RunOptions {
   /** InDesign: run on a copy saved next to the original (default) or on the original. Figma: on a copy of the page. */
   target: "copy" | "original";
-  documentId?: string;
-  /** Multi-app routines: the document picked per app. */
+  /** The document picked per app (routines with a document input). */
   documents?: Partial<Record<AppId, string>>;
   qcOptions?: QcOptions;
+}
+
+/** What to run: a routine (as a one-node flow) or a flow. */
+export interface RunTarget {
+  kind: "routine" | "flow";
+  id: string;
+}
+
+export interface RunRequest {
+  /** Value per input node: paths, file lists, document ids, simple values. */
+  inputs: Record<string, InputValue>;
+  /** Folder per output node ("Save to folder"). For a routine on its own it's optional: files stay in the run folder. */
+  outputFolders: Record<string, string>;
+  /** Routine runs: setting values. */
+  settings?: Record<string, ParamValue>;
+  /** Routine runs: how each other list input pairs with the iterated items. */
+  matches?: Record<string, MatchRule>;
+  qcMode: QcMode;
+  options: RunOptions;
+}
+
+/** Everything the Run screen asks for, for a routine or a flow. */
+export interface RunSetup {
+  target: RunTarget;
+  name: string;
+  version: number;
+  /** The flow, or the routine as a one-node flow (its inputs and outputs as input and output nodes). */
+  flow: Flow;
+  /** Per routine node id: the routine version that runs. */
+  routines: Record<string, Routine>;
+  /** Routine runs: the routine's settings. */
+  settings: SettingDef[];
+  /** Values used last time on this Mac. */
+  last: {
+    inputs: Record<string, InputValue>;
+    outputFolders: Record<string, string>;
+    settings: Record<string, ParamValue>;
+    matches: Record<string, MatchRule>;
+  };
+  /** Problems that keep it from running (an invalid flow, a routine that no longer exists). */
+  issues: FlowIssue[];
 }
 
 export type StageRunStatus = "pending" | "running" | "done" | "partial" | "failed" | "skipped" | "cancelled";
@@ -376,22 +637,32 @@ export interface StageItemProgress {
   error?: string;
 }
 
-/** Progress and result of one stage in a run. */
-export interface StageProgress {
-  stageId: string;
+/** Progress and result of one flow node in a run (per item for routines that iterate). */
+export interface NodeProgress {
+  nodeId: string;
+  kind: FlowNode["kind"];
   name: string;
-  appId: AppId;
+  appId?: AppId;
   status: StageRunStatus;
   total: number;
   done: number;
   failed: number;
   items: StageItemProgress[];
   error?: string;
-  /** The document the stage ran on, e.g. "Campaign · Page 1 (Doppl copy)". */
+  /** Something to know that isn't a failure, e.g. "No folder picked: the results stay in the run folder." */
+  note?: string;
+  /** The document the routine ran on, e.g. "Campaign · Page 1 (Doppl copy)"; for "Save to folder", the folder. */
   documentName?: string;
 }
 
-/** Whether a routine can run: per app, connected and with the right document. */
+/** What an edge carried in a run, for its label ("6 PNG"). */
+export interface EdgeProgress {
+  edgeId: string;
+  count: number;
+  label: string;
+}
+
+/** Whether a routine or flow can run: per app, connected and with the right document. */
 export interface ReadinessItem {
   appId: AppId;
   appName: string;
@@ -402,17 +673,23 @@ export interface ReadinessItem {
   needsDocument: boolean;
   documents: DocumentRef[];
   documentId?: string;
-  /** Names of the stages that use this app. */
-  stages: string[];
+  /** Names of the routines that use this app. */
+  uses: string[];
 }
 
 export interface Run {
   id: string;
-  routineId: string;
-  routineName: string;
-  routineVersion: number;
-  appId: AppId;
-  params: ParamValues;
+  target: RunTarget;
+  /** The routine's or flow's name and version when it ran. */
+  name: string;
+  version: number;
+  /** Every app the run uses. */
+  appIds: AppId[];
+  inputs: Record<string, InputValue>;
+  outputFolders: Record<string, string>;
+  /** Routine runs: setting values and how joined lists paired. */
+  settings?: Record<string, ParamValue>;
+  matches?: Record<string, MatchRule>;
   qcMode: QcMode;
   options: RunOptions;
   status: RunStatus;
@@ -425,15 +702,18 @@ export interface Run {
   /** Plain-language failure message. */
   error?: string;
   errorDetail?: string;
-  /** Document the routine actually ran on (the copy when running on a copy). */
-  targetDocument?: { id: string; name: string };
-  /** The routine edits the document, so InDesign has one "Doppl: …" undo step. */
-  modifiesDocument?: boolean;
   log?: string[];
-  /** Rule findings for the document, kept so retried outputs can be checked again. */
+  /** Rule findings, kept so retried outputs can be checked again. */
   findings?: RuleFinding[];
-  /** Multi-app routines: progress per stage. */
-  stages?: StageProgress[];
+  /** Progress per flow node, in run order. */
+  nodes: NodeProgress[];
+  edges: EdgeProgress[];
+  /** The run's working folder (userData/runs/<runId>/): each node's outputs stay there. */
+  workDir?: string;
+  /** Only these items ran (running failed items again). */
+  onlyItems?: string[];
+  /** Dev panel: every app was simulated. */
+  mocked?: boolean;
 }
 
 export interface StyleSource {
@@ -470,13 +750,20 @@ export interface ClarifyingQuestion {
   options: { id: string; label: string }[];
 }
 
+/** A routine before it is saved: what the AI proposed (or a repair), validated and tried once. */
 export interface RoutineDraft {
   name: string;
   description: string;
   appId: AppId;
   steps: RoutineStep[];
-  params: ParamDef[];
+  inputs: PortDef[];
+  outputs: PortDef[];
+  settings: SettingDef[];
+  iterate?: { input: string };
+  matches?: Record<string, MatchRule>;
+  kind: StageKind;
   script: string;
+  actions?: FigmaActionStep[];
   appVersion: string;
   requiredFonts: string[];
   templateId?: string;
@@ -485,13 +772,14 @@ export interface RoutineDraft {
   qcProfile: "print" | "web";
   builtInQc?: boolean;
   keyObjects?: string[];
-  stages?: Stage[];
   objectChecks?: ObjectCheckDef[];
+  /** Building block versions (set when it is tried, kept when it is saved). */
+  helpers?: HelperPins;
 }
 
 /** A problem that keeps a routine from being saved (sent back to the model to fix). */
 export interface ValidationError {
-  /** Where, e.g. "stages[1].body.actions[3].node". */
+  /** Where, as the model wrote it, e.g. "actions[3].node" or "inputs[1].type". */
   path: string;
   code:
     | "schema"
@@ -500,7 +788,8 @@ export interface ValidationError {
     | "sample-data"
     | "unresolved-placeholder"
     | "unknown-app"
-    | "stage-order"
+    | "one-app"
+    | "contract"
     | "duplicate-id";
   message: string;
 }
@@ -516,9 +805,99 @@ export interface PortabilityIssue {
   message: string;
 }
 
+/** What Refine starts from: the change the designer asks for, screenshots, a problem output, the items to try it on. */
+export interface RefineInput {
+  routineId: string;
+  request: string;
+  /** Screenshots or images (paths) shown to the AI. */
+  images: string[];
+  /** An output from Results that isn't right. */
+  problem?: { runId: string; outputId: string };
+  /** Keys of the input items to preview the change on (up to 3). */
+  testItems: string[];
+  /** Started from a flow node's inspector. */
+  flowLink?: { flowId: string; nodeId: string };
+}
+
+/** What the Refine screen offers: the routine, items to try the change on, and the problem output when there is one. */
+export interface RefineSetup {
+  routine: Routine;
+  /** Input items the change can be tried on (from the problem's run, the last run, or values picked last time). */
+  items: { key: string; label: string }[];
+  defaultItems: string[];
+  /** Where the items come from, in words. */
+  itemsSource?: string;
+  problem?: {
+    runId: string;
+    outputId: string;
+    label: string;
+    itemKey?: string;
+    itemLabel?: string;
+    /** The item it was made from: a data row or a file name. */
+    input?: string;
+    preview?: PreviewImage;
+    qc?: QcResult;
+    error?: string;
+  };
+}
+
+/** A refine waiting for review: what changed and what it would do to flows. */
+export interface RefineReview {
+  routineId: string;
+  fromVersion: number;
+  request: string;
+  changeSummary: string;
+  steps: StepChange[];
+  contract: ContractChange[];
+  /** Flows that use the routine and what updating them would do. */
+  flows: { flowId: string; name: string; nodes: number; issues: string[] }[];
+  /** The current version's results on the test items (before). */
+  before: RunOutput[];
+  /** The test items, in order. */
+  items: { key: string; label: string }[];
+  problemLabel?: string;
+  /** An update to improved building blocks (no AI, so no follow-up). */
+  blockUpdate?: boolean;
+}
+
+/** A building block as the dev panel lists it. */
+export interface BlockInfo {
+  id: string;
+  app: AppId;
+  set: string;
+  call: string;
+  summary: string;
+  source: "builtin" | "promoted";
+  version: number;
+  versions: number[];
+  tests: number;
+}
+
+/** A pinned building block with a newer version. */
+export interface BlockUpdate {
+  id: string;
+  call: string;
+  from: number;
+  to: number;
+  summary: string;
+}
+
+/** A flow that uses a routine: the versions its nodes pin and whether the newest one fits. */
+export interface RoutineUsage {
+  flowId: string;
+  name: string;
+  nodes: { nodeId: string; version: number }[];
+  latest: number;
+  /** Updating every node to the newest version keeps the flow's connections (no breaking change). */
+  compatible: boolean;
+  changes: ContractChange[];
+}
+
 export interface Creation {
   id: string;
-  mode: "create" | "repair";
+  mode: "create" | "repair" | "refine";
+  /** "flow": the request needs several apps, so Doppl plans a flow of single-app routines first. */
+  kind: "routine" | "flow";
   task: Task;
   /** Repair: the routine being repaired and the run that failed. */
   routineId?: string;
@@ -526,25 +905,44 @@ export interface Creation {
   status: "running" | "waiting" | "ready" | "failed" | "cancelled" | "saved";
   stages: CreationStage[];
   aiCalls: number;
+  /** Steps of the current routine (an answer, and its code when written separately), out of 15. */
+  steps?: number;
   question?: ClarifyingQuestion;
   draft?: RoutineDraft;
   /** Result of the trial run, with QC. */
   outputs: RunOutput[];
   /** What the AI looked at and tried, in plain language ("Previewed Labels on item 1"). */
   activity?: string[];
-  /** Trial run of a multi-app routine: progress per stage. */
-  trialStages?: StageProgress[];
+  /** Trial run on one sample item: progress per item. */
+  trial?: NodeProgress;
+  /** Something the designer can fix right away for creation to go on (status "waiting"). */
+  needs?: {
+    kind: "samples";
+    message: string;
+    /** The inputs that have no sample yet. */
+    inputs: { key: string; label: string; type: PortType; extensions?: string[] }[];
+  };
+  /** Flow creation: the plan, shown for confirmation before anything is created. */
+  plan?: FlowPlan;
+  planConfirmed?: boolean;
+  /** Flow creation: the routines of the plan, created one after another. */
+  flowRoutines?: { id: string; name: string; appId: AppId; status: "pending" | "creating" | "saved" | "failed"; aiCalls: number; routineId?: string }[];
+  savedFlowId?: string;
+  /** Repair started from a flow ("Make compatible") or Refine from a flow node. */
+  flowLink?: { flowId: string; nodeId: string; edgeId?: string };
+  /** Refine: the change summary, step and contract diff, before results (when ready for review). */
+  refine?: RefineReview;
   error?: {
     message: string;
     detail?: string;
-    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "validation" | "generic";
+    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "validation" | "needs-flow" | "generic";
     /** AI error code (from the demo Worker or Meta), e.g. "quota_exhausted". */
     code?: string;
     action?: AiErrorAction;
   };
   savedRoutineId?: string;
   nextVersion?: number;
-  /** A failed or cancelled multi-app creation can continue where it stopped (a fresh AI budget). */
+  /** A failed or cancelled creation can continue where it stopped (a fresh AI budget). */
   canContinue?: boolean;
   /** Demo access: routine creations used / available on the access code. */
   quota?: { used: number; max: number };
@@ -556,7 +954,7 @@ export interface NewTaskInput {
   folders?: string[];
   appId: AppId;
   documentId?: string;
-  /** Multi-app tasks: every app to use, with its document. */
+  /** Every app to use, with its document. Several apps make a flow. */
   apps?: TaskApp[];
 }
 
@@ -599,6 +997,61 @@ export interface Settings {
   figmaPairingCode: string;
   /** Local port the Doppl Figma plugin connects to. */
   figmaPort: number;
+  /** Settings → Advanced → AI models. Empty = Doppl picks the models. */
+  aiModels: AiModelSettings;
+  /** Dev panel: promote building blocks automatically when the rule says so (off by default). */
+  autoPromoteBlocks: boolean;
+}
+
+export type AiRole = "planner" | "coder" | "reviewer" | "segmenter";
+export type AiReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface AiRoleBinding {
+  model: string;
+  reasoningEffort?: AiReasoningEffort;
+}
+
+/** A model reached through an OpenAI-compatible API at a base URL (OpenRouter, Fireworks, Ollama, LM Studio…). */
+export interface AiCustomEndpoint {
+  id: string;
+  displayName: string;
+  baseUrl: string;
+  model: string;
+  structuredOutput: boolean;
+  vision: boolean;
+}
+
+export interface AiModelSettings {
+  /** Per role: a model instead of Doppl's pick. */
+  roleOverrides: Partial<Record<AiRole, AiRoleBinding>>;
+  customEndpoints: AiCustomEndpoint[];
+  /** Estimated spend per provider (other than Meta with the own key, kept in ownKeySpend) this month. */
+  providerSpend: Record<string, { month: string; estUsd: number }>;
+  /** Monthly limit per provider in USD (0 = none). */
+  providerLimits: Record<string, number>;
+}
+
+/** A custom endpoint to add or change; "key" (when given) is stored encrypted, "" removes it. */
+export type AiEndpointInput = Omit<AiCustomEndpoint, "id"> & { id?: string; key?: string };
+
+/** Settings → Advanced → AI models, as the renderer sees it (no keys). */
+export interface AiModelsInfo {
+  models: {
+    id: string;
+    displayName: string;
+    provider: string;
+    location: "cloud" | "local";
+    vision: boolean;
+    structuredOutput: boolean;
+    segmentation: boolean;
+    reasoningEffort: AiReasoningEffort[];
+    trainsOnData: boolean;
+    experimental: boolean;
+  }[];
+  defaults: Record<AiRole, AiRoleBinding>;
+  overrides: Partial<Record<AiRole, AiRoleBinding>>;
+  customEndpoints: (AiCustomEndpoint & { key: { saved: boolean; hint: string | null } })[];
+  providerSpend: { provider: string; displayName: string; month: string; estUsd: number; limit: number }[];
 }
 
 // ---------- AI access ----------
@@ -668,29 +1121,75 @@ export interface DoppelApi {
   showFigmaPlugin(): Promise<void>;
 
   // Routine creation
+  /** One app: a routine. Several apps: a flow plan to confirm first. */
   createRoutine(input: NewTaskInput): Promise<Creation>;
   getCreation(id: string): Promise<Creation | null>;
   answerQuestion(creationId: string, questionId: string, optionId: string): Promise<Creation>;
+  /** Flow creation: creates the plan's routines one after another, then saves the flow. */
+  confirmPlan(creationId: string): Promise<Creation>;
+  /** Sample files or folders attached while creation waits for them; it goes on without asking the AI again. */
+  addSamples(creationId: string, samples: { files: string[]; folders: string[] }): Promise<Creation>;
   cancelCreation(id: string): Promise<void>;
   retryCreation(id: string): Promise<Creation>;
-  /** Continues a failed multi-app creation where it stopped, with a fresh AI budget (one more demo creation). */
+  /** Continues a failed creation where it stopped, with a fresh AI budget (one more demo creation). */
   continueCreation(id: string): Promise<Creation>;
   saveRoutine(creationId: string, input: SaveRoutineInput): Promise<SaveRoutineResult>;
   discardCreation(id: string): Promise<void>;
   repairRoutine(routineId: string, runId?: string): Promise<Creation>;
+  /** Refine: what the screen offers for a routine (and a problem output from Results). */
+  getRefineSetup(routineId: string, problem?: { runId: string; outputId: string }, flowLink?: { flowId: string; nodeId: string }): Promise<RefineSetup>;
+  /** Refine: changes the routine as asked; saving makes a new version. */
+  refineRoutine(input: RefineInput): Promise<Creation>;
+  /** Refine: "Try again" with a follow-up instruction, in the same session. */
+  refineFollowUp(creationId: string, instruction: string): Promise<Creation>;
+  /** "Make compatible": adapts the edge's source or target routine with AI and saves it as a new version. */
+  makeCompatible(flowId: string, edgeId: string, side: "source" | "target"): Promise<Creation>;
 
   // Routines
+  /** My routines. */
   listRoutines(): Promise<Routine[]>;
+  /** Starter routines made by Doppl (read-only). */
+  listStarterRoutines(): Promise<Routine[]>;
+  /** The newest version of a routine (mine or a starter). */
   getRoutine(id: string): Promise<Routine | null>;
+  getRoutineVersion(id: string, version: number): Promise<Routine | null>;
+  /** Copies a routine (a starter) into my routines; the copy is independent. */
+  duplicateRoutine(id: string): Promise<Routine>;
+  /** A new version with an earlier version's content (history is never rewritten). */
+  restoreRoutineVersion(id: string, version: number): Promise<Routine>;
+  /** Flows that use the routine, with the versions they pin. */
+  getRoutineUsage(id: string): Promise<RoutineUsage[]>;
+  /** Moves every flow node to the routine's newest version where that keeps the connections working. */
+  updateFlowsToLatest(id: string): Promise<{ updated: string[]; skipped: { name: string; reason: string }[] }>;
   checkEnvironment(routineId: string): Promise<EnvironmentCheck>;
-  /** Multi-app routines: whether every stage's app is connected with the right document. */
-  checkReadiness(routineId: string, documents?: Partial<Record<AppId, string>>): Promise<ReadinessItem[]>;
-  getParamOptions(routineId: string, paramKey: string, documentId?: string): Promise<ParamOption[]>;
+  getSettingOptions(routineId: string, settingKey: string, documentId?: string): Promise<ParamOption[]>;
 
-  // Runs
-  runRoutine(routineId: string, params: ParamValues, qcMode: QcMode, options: RunOptions): Promise<Run>;
+  // Flows
+  listFlows(): Promise<Flow[]>;
+  getFlow(id: string): Promise<Flow | null>;
+  createFlow(name: string): Promise<Flow>;
+  /** Saves anytime; a flow only runs when it is valid. */
+  saveFlow(flow: Flow): Promise<Flow>;
+  deleteFlow(id: string): Promise<void>;
+  /** Pinned routines, newest versions and validation for the editor (works on unsaved changes). */
+  getFlowContext(flow: Flow): Promise<FlowContext>;
+  /** The pairs a join makes; with no rule, the suggested rule and its pairs. Uses the input values picked on this Mac. */
+  previewMatch(flow: Flow, edgeId: string, rule: MatchRule | null, inputs?: Record<string, InputValue>): Promise<MatchPreview & { rule: MatchRule | null }>;
+  /** Starter converters that bridge an incompatible edge. */
+  converterOptions(flow: Flow, edgeId: string): Promise<ConverterOption[]>;
+  /** The flow with a converter placed on the edge (not saved yet). */
+  insertConverter(flow: Flow, edgeId: string, routineId: string): Promise<Flow>;
+
+  // Runs (routines and flows)
+  getRunSetup(target: RunTarget): Promise<RunSetup>;
+  /** Keeps values picked for inputs (in the flow editor) for the next run, on this Mac only. */
+  rememberInputs(target: RunTarget, inputs: Record<string, InputValue>): Promise<void>;
+  /** Whether every app the routine or flow uses is connected with the right document. */
+  checkReadiness(target: RunTarget, documents?: Partial<Record<AppId, string>>): Promise<ReadinessItem[]>;
+  startRun(target: RunTarget, request: RunRequest): Promise<Run>;
   cancelRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Run | null>;
+  /** A new run with only the items that failed. */
   retryFailed(runId: string): Promise<Run>;
   markOutputOk(runId: string, outputId: string): Promise<Run>;
   openOutput(runId: string, outputId: string): Promise<void>;
@@ -721,6 +1220,25 @@ export interface DoppelApi {
   /** Checks the key with Meta's API; saves it (encrypted) only if it works. */
   saveApiKey(key: string): Promise<CheckResult<AiAccess>>;
   clearApiKey(): Promise<AiAccess>;
+  /** Building blocks: the library, a routine's newer block versions, tests, and candidates (dev panel). */
+  listBlocks(): Promise<BlockInfo[]>;
+  getBlockUpdates(routineId: string): Promise<BlockUpdate[]>;
+  /** Blocks promoted from this routine's own custom code that it doesn't use yet. */
+  getAdoptableBlocks(routineId: string): Promise<{ id: string; call: string; summary: string }[]>;
+  updateRoutineBlocks(routineId: string): Promise<Creation>;
+  runBlockTests(ids?: string[]): Promise<HelperTestResult[]>;
+  listBlockCandidates(): Promise<BlockCandidate[]>;
+  generalizeBlockCandidate(id: string): Promise<BlockCandidate>;
+  approveBlockCandidate(id: string): Promise<BlockCandidate>;
+  dismissBlockCandidate(id: string): Promise<BlockCandidate>;
+  exportBlockCandidate(id: string): Promise<{ file: string; warnings: string[] } | null>;
+  /** Settings → Advanced → AI models. */
+  getAiModels(): Promise<AiModelsInfo>;
+  setAiRoleOverrides(overrides: Partial<Record<AiRole, AiRoleBinding | null>>): Promise<AiModelsInfo>;
+  saveAiEndpoint(input: AiEndpointInput): Promise<AiModelsInfo>;
+  removeAiEndpoint(id: string): Promise<AiModelsInfo>;
+  setAiProviderLimit(provider: string, usd: number): Promise<AiModelsInfo>;
+  testAiEndpoint(id: string): Promise<CheckResult<string>>;
 
   // Dev panel (hidden; Cmd+Shift+D)
   devRunFigmaActions(documentId: string, actionsJson: string, itemJson?: string): Promise<DevRunResult>;
@@ -728,6 +1246,12 @@ export interface DoppelApi {
   devBarcode(type: string, value: string): Promise<{ ok: boolean; value?: string; svg?: string; error?: string }>;
   devValidateRoutine(json: string): Promise<{ validation: ValidationResult; parseError?: string }>;
   devSaveRoutine(json: string): Promise<SaveRoutineResult>;
+  /** Runs a flow with every app simulated (or real), with forced failures. Uses no AI. */
+  devRunFlow(flowId: string, request: RunRequest, options: DevFlowOptions): Promise<Run>;
+  /** The order, item counts and join pairs a flow would run with. */
+  devExecutionPlan(flowId: string, inputs: Record<string, InputValue>): Promise<ExecutionPlan>;
+  /** Writes one of my routines as a starter file (paths and personal data stripped). Null when cancelled. */
+  devExportStarter(routineId: string, options: { converter: boolean }): Promise<{ path: string | null; removed: string[] }>;
   getConnectionLog(): Promise<ConnectionLogEntry[]>;
   devLastCreationTranscript(): Promise<CreationTranscript | null>;
   clearConnectionLog(): Promise<void>;
@@ -739,7 +1263,16 @@ export interface DoppelApi {
   onConnectionLog(cb: (entry: ConnectionLogEntry) => void): Unsubscribe;
 }
 
-/** Dev panel: the latest multi-app creation's exchange with the AI (kept in memory only, never saved). */
+/** Dev panel: forced failures and simulated apps for a flow run. */
+export interface DevFlowOptions {
+  mocked: boolean;
+  /** Routine nodes that fail as a whole. */
+  failNodes: string[];
+  /** Per routine node: item numbers (1-based) that fail. */
+  failItems: Record<string, number[]>;
+}
+
+/** Dev panel: the latest creation's exchange with the AI (kept in memory only, never saved). */
 export interface CreationTranscript {
   creationId: string;
   request: string;

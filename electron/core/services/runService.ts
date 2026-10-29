@@ -5,31 +5,34 @@ import { FigmaApiError } from "../../adapters/figma/figmaRest";
 import { PluginNotConnectedError } from "../../adapters/figma/pluginBridge";
 import { BridgeError } from "../../adapters/adobe/bridge";
 import type { AdapterRegistry } from "../../adapters/registry";
-import type { AdapterOutput, ScriptResult } from "../../adapters/types";
 import { AiError } from "./aiTransport";
 import type { AiAccessService } from "./aiAccessService";
 import type {
   AppId,
-  ParamDef,
-  ParamValues,
-  QcMode,
+  DevFlowOptions,
+  Flow,
+  InputValue,
+  MatchRule,
   QcOptions,
+  ReadinessItem,
   Routine,
-  RuleFinding,
   Run,
-  RunOptions,
-  RunOutput,
+  RunRequest,
+  RunSetup,
   RunSummary,
+  RunTarget,
 } from "../types";
-import { CancelledError, errorMessage, newId, nowIso } from "../util";
-import { checkReadiness, stagesOf } from "../stages/readiness";
-import { RunInputError, type StageRunner } from "../stages/stageRunner";
+import { CancelledError, errorMessage, newId, nowIso, plural } from "../util";
+import { FlowInvalidError, FlowRunner } from "../flows/flowRunner";
+import { simulatedApps } from "../flows/mockAdapters";
+import type { AdapterSource } from "../flows/nodeRunner";
+import { checkReadiness } from "../flows/readiness";
+import { type FlowRoutines, routineOf, validateFlow } from "../flows/validateFlow";
 import type { AppStatusService } from "./appStatusService";
+import { ROUTINE_NODE, type FlowService, routineFlow } from "./flowService";
+import type { LibraryService } from "./libraryService";
 import type { QcService } from "./qcService";
 import type { Storage } from "./storage";
-
-/** Page previews rendered per run; later pages are listed without a preview. */
-const MAX_PAGE_PREVIEWS = 24;
 
 export const DEFAULT_QC_OPTIONS: QcOptions = { minPpiPrint: 300, minPpiWeb: 150 };
 
@@ -37,55 +40,13 @@ export class ExecutionError extends Error {
   constructor(
     message: string,
     readonly detail?: string,
-    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "validation" | "generic" = "generic",
-    /** The routine script itself failed (the error can be sent back to the model for a fix). */
+    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "validation" | "needs-flow" | "generic" = "generic",
+    /** The routine itself failed (the error can be sent back to the model for a fix). */
     readonly scriptFailure = false,
   ) {
     super(message);
     this.name = "ExecutionError";
   }
-}
-
-export interface ExecutionSpec {
-  runId: string;
-  appId: AppId;
-  routineName: string;
-  script: string;
-  modifiesDocument: boolean;
-  qcProfile: "print" | "web";
-  builtInQc?: boolean;
-  params: ParamValues;
-  qcMode: QcMode;
-  qcOptions: QcOptions;
-  target: "copy" | "original" | "trial";
-  documentId?: string;
-  /** Folder params of this run: the only places a routine may write files (Figma exports). */
-  allowedFolders: string[];
-  isCancelled: () => boolean;
-}
-
-export interface ExecutionHooks {
-  onPhase: (phase: string) => void;
-  onOutputs: (outputs: RunOutput[]) => void;
-  onAiCall: () => void;
-  /** Creation screen: switch from "Running" to "Checking result". */
-  onStage?: (stage: "run" | "check") => void;
-}
-
-export interface ExecutionResult {
-  outputs: RunOutput[];
-  document?: { id: string; name: string };
-  log: string[];
-  findings: RuleFinding[] | null;
-}
-
-function notConnectedMessage(appName: string, status: string) {
-  if (status === "permission-denied") return `Doppl isn't allowed to control ${appName} yet.`;
-  if (status === "awaiting-permission") return `macOS is asking whether Doppl may control ${appName}. Click OK in that prompt, then try again.`;
-  if (status === "needs-setup") return `${appName} isn't set up in Doppl yet. Open Connect apps.`;
-  if (appName === "Figma") return "Open your file in Figma and start the Doppl plugin (Plugins → Development → Doppl).";
-  if (status === "not-installed") return `${appName} isn't set up for Doppl on this Mac.`;
-  return `${appName} isn't running. Open it with your document, then try again.`;
 }
 
 export function toExecutionError(err: unknown, appName: string): Error {
@@ -102,191 +63,37 @@ export function toExecutionError(err: unknown, appName: string): Error {
         return new ExecutionError(err.message);
       case "script":
         if (/document is open|isn't open/i.test(err.message)) return new ExecutionError(err.message, undefined, "no-document");
-        return new ExecutionError(
-          "This routine couldn't finish on this document.",
-          `${err.message}${err.line ? ` (script line ${err.line})` : ""}`,
-          "generic",
-          true,
-        );
+        return new ExecutionError("This routine couldn't finish on this document.", `${err.message}${err.line ? ` (script line ${err.line})` : ""}`, "generic", true);
       default:
         return new ExecutionError(`Doppl couldn't talk to ${appName}.`, err.detail);
     }
   }
-  // Errors raised by the routine's own code inside the app (e.g. the Figma plugin) can be fixed by the model.
   return new ExecutionError(`This routine couldn't finish in ${appName}.`, errorMessage(err), "generic", true);
 }
 
-/**
- * Runs a routine script on an adapter, renders previews and runs quality control.
- * Shared by real runs (RunService) and trial runs during creation (RoutineService).
- */
-export class RoutineExecutor {
-  constructor(
-    private readonly deps: {
-      registry: AdapterRegistry;
-      qc: QcService;
-      apps: AppStatusService;
-      workRoot: string;
-      copiesDir: string;
-    },
-  ) {}
+/** Flow node id → the routine it runs. */
+const routinesOfNodes = (flow: Flow): Record<string, string> =>
+  Object.fromEntries(flow.nodes.flatMap((n) => (n.kind === "routine" ? [[n.id, n.routineId]] : [])));
 
-  async execute(spec: ExecutionSpec, hooks: ExecutionHooks): Promise<ExecutionResult> {
-    const { registry, qc, apps } = this.deps;
-    const adapter = registry.get(spec.appId);
-    const status = await apps.statusOf(spec.appId);
-    if (status !== "connected") throw new ExecutionError(notConnectedMessage(adapter.name, status), undefined, "app-not-connected");
+const isEmpty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 
-    const workDir = path.join(this.deps.workRoot, spec.runId);
-    await fs.mkdir(workDir, { recursive: true });
-    const outputs: RunOutput[] = [];
-    const upsert = (o: AdapterOutput & { status: RunOutput["status"]; error?: string }) => {
-      const existing = outputs.find((x) => x.id === o.key);
-      const next: RunOutput = {
-        id: o.key,
-        label: o.label,
-        status: o.status,
-        error: o.error,
-        preview: o.preview ?? existing?.preview,
-        filePath: o.filePath,
-        page: o.page,
-        pageIndex: o.pageIndex,
-        nodeId: o.nodeId,
-        details: o.details,
-        profile: o.profile,
-      };
-      if (existing) Object.assign(existing, next);
-      else outputs.push(next);
-    };
-    const aiCtx = { onAiCall: hooks.onAiCall, isCancelled: spec.isCancelled };
-    let result: ScriptResult | undefined;
-
-    try {
-      hooks.onStage?.("run");
-      hooks.onPhase(`Running in ${adapter.name}`);
-      try {
-        result = await adapter.runScript(
-          spec.script,
-          spec.params,
-          (p) => {
-            if (p.phase) hooks.onPhase(p.phase);
-            if (p.output) {
-              upsert(p.output);
-              hooks.onOutputs(outputs);
-            }
-          },
-          {
-            runId: spec.runId,
-            routineName: spec.routineName,
-            documentId: spec.documentId,
-            target: spec.target,
-            workDir,
-            copiesDir: this.deps.copiesDir,
-            modifiesDocument: spec.modifiesDocument,
-            allowedFolders: spec.allowedFolders,
-            isCancelled: spec.isCancelled,
-          },
-        );
-      } catch (err) {
-        throw toExecutionError(err, adapter.name);
-      }
-      if (spec.isCancelled()) throw new CancelledError();
-
-      // Outputs reported by the script, with unique keys.
-      const seen = new Set<string>();
-      for (const o of result.outputs) {
-        let key = o.key || `output-${seen.size + 1}`;
-        while (seen.has(key)) key = `${key}-${seen.size}`;
-        seen.add(key);
-        upsert({ ...o, key, status: o.preview ? "done" : "running" });
-      }
-      for (const o of outputs.filter((x) => !seen.has(x.id))) outputs.splice(outputs.indexOf(o), 1);
-      if (outputs.length === 0) {
-        upsert({ key: "document", label: result.document?.name ?? "Document", status: "running" });
-      }
-      hooks.onOutputs(outputs);
-
-      // Previews: exported files directly, Figma frames by node, pages through the app.
-      const pending = outputs.filter((o) => o.status === "running");
-      if (pending.length) hooks.onPhase("Rendering previews");
-      for (const o of pending.filter((x) => x.filePath || x.nodeId)) {
-        const target = o.filePath ? `file:${o.filePath}` : `node:${result.document?.id ?? spec.documentId}#${o.nodeId}`;
-        o.preview = await adapter.renderPreview(target).catch(() => undefined);
-        o.status = "done";
-        hooks.onOutputs(outputs);
-      }
-      const pageOutputs = pending.filter((x) => !x.filePath && !x.nodeId);
-      const pageIndexes = [...new Set(pageOutputs.map((o) => o.pageIndex ?? 1))].slice(0, MAX_PAGE_PREVIEWS);
-      if (pageOutputs.length && result.document) {
-        const previews = await adapter.renderPagePreviews(result.document.id, pageIndexes, workDir).catch(() => ({}) as Record<number, never>);
-        for (const o of pageOutputs) o.preview = previews[o.pageIndex ?? 1];
-      }
-      for (const o of pageOutputs) o.status = "done";
-      if (spec.isCancelled()) throw new CancelledError();
-
-      hooks.onOutputs(outputs);
-
-      // Quality control
-      hooks.onStage?.("check");
-      hooks.onPhase(spec.qcMode === "manual" && !spec.builtInQc ? "Finishing" : "Checking quality");
-      const subject = this.qcSubject(spec);
-      let findings: RuleFinding[] | null = null;
-      try {
-        findings = await qc.collectFindings(adapter, subject, outputs, result.document?.id, result.data, result.findings);
-      } catch (err) {
-        result.log.push(`Automatic checks failed: ${errorMessage(err)}`);
-      }
-      await qc.evaluate(adapter, subject, outputs, findings, aiCtx);
-      hooks.onOutputs(outputs);
-      return { outputs, document: result.document, log: result.log, findings };
-    } finally {
-      // Trial copies are hidden; copies of read-only routines change nothing, so close them too
-      // (the file stays next to the original, and "Open in app" reopens it).
-      const closeCopy = spec.target === "trial" || (spec.target === "copy" && !spec.modifiesDocument);
-      if (closeCopy && result?.document && result.document.id !== spec.documentId) {
-        await adapter.closeDocument(result.document.id).catch(() => undefined);
-      }
-      await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  }
-
-  qcSubject(spec: Pick<ExecutionSpec, "qcMode" | "qcOptions" | "qcProfile" | "builtInQc" | "params">) {
-    const qcOptions = { ...spec.qcOptions };
-    // Preflight report checks resolution against its own param.
-    const routinePpi = Number(spec.params.minPpi);
-    if (spec.builtInQc && routinePpi > 0) qcOptions.minPpiPrint = qcOptions.minPpiWeb = routinePpi;
-    return { qcMode: spec.qcMode, qcOptions, qcProfile: spec.qcProfile, builtInQc: spec.builtInQc };
-  }
-}
-
-// ---------- Runs ----------
-
-/** Values of the folder params: where this run may write files. */
-export function folderParams(defs: ParamDef[], values: ParamValues): string[] {
-  return defs.filter((d) => d.type === "folder" && typeof values[d.key] === "string" && values[d.key]).map((d) => String(values[d.key]));
-}
-
-function isEmpty(v: unknown) {
-  return v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
-}
-
-export function summarizeParams(defs: ParamDef[], values: ParamValues): string {
+/** "products.csv · 6 files · photos": what a run was given, for run history. */
+export function summarizeInputs(flow: Flow, inputs: Record<string, InputValue>): string {
   const parts: string[] = [];
-  for (const def of defs) {
-    const v = values[def.key];
+  for (const node of flow.nodes) {
+    if (node.kind !== "input") continue;
+    const v = inputs[node.id];
     if (isEmpty(v)) continue;
-    if (def.type === "folder" || def.type === "file") parts.push(path.basename(String(v)));
-    else if (def.type === "formatList") parts.push(`${(v as string[]).length} formats`);
-    else if (def.type === "boolean") {
-      if (v) parts.push(def.label.replace(/\s*\(.*\)$/, ""));
-    } else if (def.type === "number") parts.push(`${def.label.replace(/\s*\(.*\)$/, "")}: ${v}`);
+    if (Array.isArray(v)) parts.push(plural(v.length, "file"));
+    else if (typeof v === "string" && v.startsWith("/")) parts.push(path.basename(v));
+    else if (typeof v === "boolean") parts.push(`${node.port.label}: ${v ? "yes" : "no"}`);
     else parts.push(String(v));
   }
   const text = parts.join(" · ");
-  return text.length > 90 ? `${text.slice(0, 87)}…` : text || "Default settings";
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text || "No inputs";
 }
 
-export function summarizeRun(run: Run, routine: Pick<Routine, "params">): RunSummary {
+export function summarizeRun(run: Run, flow: Flow): RunSummary {
   const done = run.outputs.filter((o) => o.status === "done");
   const checked = done.some((o) => o.qc);
   const flaggedCount = done.filter((o) => o.qc?.status === "flagged" && !o.markedOk).length;
@@ -295,12 +102,12 @@ export function summarizeRun(run: Run, routine: Pick<Routine, "params">): RunSum
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     status: run.status,
-    inputsSummary: summarizeParams(routine.params, run.params),
+    inputsSummary: summarizeInputs(flow, run.inputs),
     qcStatus: !checked ? "not-checked" : flaggedCount > 0 ? "flagged" : "pass",
     outputCount: run.outputs.length,
     flaggedCount,
     aiCalls: run.aiCalls,
-    routineVersion: run.routineVersion,
+    routineVersion: run.version,
   };
 }
 
@@ -309,114 +116,244 @@ interface ActiveRun {
   cancelled: boolean;
 }
 
+/** Runs of routines and flows. A routine runs as a flow of one node; either way a run uses no AI unless AI review is on. */
 export class RunService {
   private active = new Map<string, ActiveRun>();
 
   constructor(
     private readonly deps: {
       storage: Storage;
-      executor: RoutineExecutor;
-      stageRunner: StageRunner;
+      library: LibraryService;
+      flows: FlowService;
       registry: AdapterRegistry;
       apps: AppStatusService;
       qc: QcService;
       access: AiAccessService;
       emit: (run: Run) => void;
-      /** userData/runs: multi-app runs keep their stage folders in runs/<runId>/. */
+      /** userData/runs: each run keeps its node folders in runs/<runId>/. */
       runsDir: string;
       copiesDir: string;
+      /** A run finished (not simulated): building block evidence, by the routine each node ran. */
+      onRunFinished?: (run: Run, routineOfNode: Record<string, string>) => void;
+      /** "Mark as OK" on an output of these routines. */
+      onFeedback?: (routineIds: string[], kind: "ok") => void;
     },
   ) {}
 
-  async start(routineId: string, params: ParamValues, qcMode: QcMode, options: RunOptions, onlyItems?: Set<string>): Promise<Run> {
+  private scope = (target: RunTarget) => `${target.kind}:${target.id}`;
+
+  /** The flow to run with its pinned routines: a flow, or a routine as a one-node flow. */
+  private async resolve(target: RunTarget, matches?: Record<string, MatchRule>): Promise<{ flow: Flow; info: FlowRoutines; routine?: Routine }> {
+    if (target.kind === "routine") {
+      const routine = await this.deps.library.require(target.id);
+      const info: FlowRoutines = {
+        routines: { [ROUTINE_NODE]: routine },
+        stageKind: (appId) => (this.deps.registry.list().some((a) => a.id === appId) ? this.deps.registry.get(appId).stageKind : null),
+      };
+      return { flow: routineFlow(routine, matches), info, routine };
+    }
+    const flow = await this.deps.flows.require(target.id);
+    return { flow, info: await this.deps.flows.routinesOf(flow) };
+  }
+
+  async setup(target: RunTarget): Promise<RunSetup> {
+    const last = await this.deps.storage.getLastValues(this.scope(target));
+    const { flow, info, routine } = await this.resolve(target, last?.matches);
+    const routines: RunSetup["routines"] = {};
+    for (const n of flow.nodes) if (n.kind === "routine" && routineOf(info, n.id)) routines[n.id] = routineOf(info, n.id)!;
+    return {
+      target,
+      name: flow.name,
+      version: flow.version,
+      flow,
+      routines,
+      settings: routine?.settings ?? [],
+      last: { inputs: last?.inputs ?? {}, outputFolders: last?.outputFolders ?? {}, settings: last?.settings ?? {}, matches: last?.matches ?? {} },
+      issues: validateFlow(flow, info).issues,
+    };
+  }
+
+  /** Values picked for inputs outside a run (the flow editor), kept for the next run on this Mac. */
+  async rememberInputs(target: RunTarget, inputs: Record<string, InputValue>) {
+    const last = await this.deps.storage.getLastValues(this.scope(target));
+    await this.deps.storage.saveLastValues(this.scope(target), {
+      inputs: { ...(last?.inputs ?? {}), ...inputs },
+      outputFolders: last?.outputFolders ?? {},
+      settings: last?.settings ?? {},
+      matches: last?.matches ?? {},
+      documents: last?.documents,
+    });
+  }
+
+  /** Per app: connected, with the document routines with a document input work on. */
+  async readiness(target: RunTarget, documents: Partial<Record<AppId, string>> = {}, adapters?: AdapterSource & { list(): { id: AppId }[] }): Promise<ReadinessItem[]> {
+    const { flow, info } = await this.resolve(target);
+    const units = flow.nodes.flatMap((n) => {
+      const r = n.kind === "routine" ? routineOf(info, n.id) : undefined;
+      if (!r) return [];
+      const docPort = r.inputs.find((p) => p.type === "document");
+      const docConnected = docPort && flow.edges.some((e) => e.to.nodeId === n.id && e.to.port === docPort.key);
+      return [{ appId: r.appId, name: r.name, needsDocument: !!docPort && !docConnected }];
+    });
+    const source = adapters ?? this.deps.registry;
+    return checkReadiness(source, adapters ? { statusOf: async () => "connected" as const } : this.deps.apps, units, documents);
+  }
+
+  async start(target: RunTarget, request: RunRequest, opts: { onlyItems?: Set<string>; dev?: DevFlowOptions } = {}): Promise<Run> {
     const { storage } = this.deps;
-    const routine = await storage.getRoutine(routineId);
-    if (!routine) throw new Error("This routine doesn't exist anymore.");
-    const missing = routine.params.filter((p) => p.required && isEmpty(params[p.key]));
-    if (missing.length) throw new Error(`Fill in ${missing.map((p) => p.label).join(", ")} first.`);
-    if (qcMode === "auto_ai" && this.deps.access.provider() !== "meta-api") {
+    const { flow, info, routine } = await this.resolve(target, request.matches);
+    if (routine) {
+      const node = flow.nodes.find((n) => n.id === ROUTINE_NODE);
+      if (node?.kind === "routine") node.settings = { ...(request.settings ?? {}) };
+    }
+    const validation = validateFlow(flow, info);
+    if (!validation.ok) throw new Error(validation.issues.map((i) => i.message).join(" "));
+    if (request.qcMode === "auto_ai" && this.deps.access.provider() !== "meta-api") {
       throw new Error("AI review isn't included in demo access. Choose Automatic check, or use your own Meta API key in Settings.");
     }
-    if (routine.stages?.length) {
-      // Every stage's app must be connected with the right document before anything runs.
-      const readiness = await checkReadiness(this.deps.registry, this.deps.apps, routine.stages, options.documents ?? {});
-      const blocked = readiness.filter((r) => !r.ok);
-      if (blocked.length) throw new Error(blocked.map((r) => `${r.appName}: ${r.message}`).join(" "));
-      options = { ...options, documents: Object.fromEntries(readiness.filter((r) => r.documentId).map((r) => [r.appId, r.documentId!])) };
+    const mocked = !!opts.dev?.mocked;
+    // Inputs that feed something must be picked; flows save to the folders their output nodes name.
+    const missing = flow.nodes.filter(
+      (n) => n.kind === "input" && n.port.required && flow.edges.some((e) => e.from.nodeId === n.id) && isEmpty(request.inputs[n.id]) && !mocked,
+    );
+    if (missing.length) throw new Error(`Pick ${missing.map((n) => (n.kind === "input" ? `“${n.port.label}”` : "")).join(", ")} first.`);
+    if (target.kind === "flow" && !mocked) {
+      const noFolder = flow.nodes.filter((n) => n.kind === "output" && flow.edges.some((e) => e.to.nodeId === n.id) && !request.outputFolders[n.id]);
+      if (noFolder.length) throw new Error(`Pick a folder for ${noFolder.map((n) => (n.kind === "output" ? `“${n.port.label}”` : "")).join(", ")}.`);
     }
 
+    const adapters = mocked ? simulatedApps(this.deps.registry) : this.deps.registry;
+    const readiness = await this.readiness(target, request.options.documents ?? {}, mocked ? simulatedApps(this.deps.registry, 0) : undefined);
+    const blocked = readiness.filter((r) => !r.ok);
+    if (blocked.length) throw new Error(blocked.map((r) => `${r.appName}: ${r.message}`).join(" "));
+    const documents = Object.fromEntries(readiness.filter((r) => r.documentId).map((r) => [r.appId, r.documentId!]));
+    const inputs = mocked ? await this.simulatedInputs(flow, info, request.inputs) : request.inputs;
+
+    const id = newId();
     const run: Run = {
-      id: newId(),
-      routineId,
-      routineName: routine.name,
-      routineVersion: routine.version,
-      appId: routine.appId,
-      modifiesDocument: routine.modifiesDocument,
-      params,
-      qcMode,
-      options: { ...options, qcOptions: options.qcOptions ?? DEFAULT_QC_OPTIONS },
+      id,
+      target,
+      name: flow.name,
+      version: flow.version,
+      appIds: [...new Set(readiness.map((r) => r.appId))],
+      inputs,
+      outputFolders: request.outputFolders,
+      ...(routine ? { settings: request.settings ?? {}, matches: request.matches } : {}),
+      qcMode: request.qcMode,
+      options: { ...request.options, documents, qcOptions: request.options.qcOptions ?? DEFAULT_QC_OPTIONS },
       status: "running",
       aiCalls: 0,
       outputs: [],
       startedAt: nowIso(),
       phase: "Starting",
+      nodes: [],
+      edges: [],
+      workDir: path.join(this.deps.runsDir, id),
+      ...(opts.onlyItems ? { onlyItems: [...opts.onlyItems] } : {}),
+      ...(mocked ? { mocked: true } : {}),
     };
-    routine.lastParams = params;
-    await storage.saveRoutine(routine);
+    if (!mocked) {
+      await storage.saveLastValues(this.scope(target), {
+        inputs: request.inputs,
+        outputFolders: request.outputFolders,
+        settings: request.settings ?? {},
+        matches: request.matches ?? {},
+        documents,
+      });
+    }
     await storage.saveRun(run);
     this.active.set(run.id, { run, cancelled: false });
-    if (routine.stages?.length) {
-      run.stages = stagesOf(routine).map((s) => ({ stageId: s.id, name: s.name, appId: s.appId, status: "pending", total: 0, done: 0, failed: 0, items: [] }));
-      void this.executeStages(run, routine, onlyItems);
-    } else {
-      void this.execute(run, routine);
-    }
+    void this.execute(run, flow, info, adapters, opts);
     return run;
   }
 
-  /** Multi-app routines: stages in order, with file handoff, per-item results and partial failure. */
-  private async executeStages(run: Run, routine: Routine, onlyItems?: Set<string>) {
+  /** Dev panel: placeholder values for inputs nothing was picked for (three rows, three files…). */
+  private async simulatedInputs(flow: Flow, info: FlowRoutines, picked: Record<string, InputValue>): Promise<Record<string, InputValue>> {
+    const out = { ...picked };
+    const dir = path.join(this.deps.runsDir, "simulated-inputs");
+    await fs.mkdir(dir, { recursive: true });
+    for (const n of flow.nodes) {
+      if (n.kind !== "input" || !isEmpty(out[n.id])) continue;
+      const p = n.port;
+      const ext = p.extensions?.[0] ?? "png";
+      if (p.type === "rows") {
+        // The columns the routines it feeds need, so the sample rows fit them.
+        const needed = new Set(p.columns ?? []);
+        for (const e of flow.edges.filter((x) => x.from.nodeId === n.id)) {
+          for (const c of routineOf(info, e.to.nodeId)?.inputs.find((x) => x.key === e.to.port)?.columns ?? []) needed.add(c);
+        }
+        const columns = needed.size ? [...needed] : ["name", "file"];
+        const csv = [columns.join(","), ...[1, 2, 3].map((i) => columns.map((c) => (/(file|image|photo|cutout)/i.test(c) ? `item-${i}.png` : `${c} ${i}`)).join(","))].join("\n");
+        const file = path.join(dir, `${p.key}.csv`);
+        await fs.writeFile(file, csv, "utf8");
+        out[n.id] = file;
+      } else if (p.type === "fileList" || p.type === "file") {
+        const files = [1, 2, 3].map((i) => path.join(dir, `item-${i}.${ext}`));
+        for (const f of files) await fs.writeFile(f, `Simulated input ${path.basename(f)}\n`);
+        out[n.id] = p.type === "file" ? files[0] : files;
+      } else if (p.type === "folder") out[n.id] = dir;
+      else if (p.type === "number") out[n.id] = 1;
+      else if (p.type === "boolean") out[n.id] = false;
+      else out[n.id] = "sample";
+    }
+    return out;
+  }
+
+  private async execute(run: Run, flow: Flow, info: FlowRoutines, adapters: AdapterSource, opts: { onlyItems?: Set<string>; dev?: DevFlowOptions }) {
     const entry = this.active.get(run.id)!;
     const emit = () => this.deps.emit(run);
+    const ctx = { onAiCall: () => (run.aiCalls += 1), isCancelled: () => entry.cancelled };
+    const forceFail = opts.dev
+      ? Object.fromEntries(
+          flow.nodes
+            .filter((n) => n.kind === "routine")
+            .map((n) => [n.id, { node: opts.dev!.failNodes.includes(n.id), items: opts.dev!.failItems[n.id] ?? [] }]),
+        )
+      : undefined;
     try {
-      const res = await this.deps.stageRunner.run(
+      const res = await new FlowRunner(adapters).run(
         {
           runId: run.id,
-          routineName: routine.name,
-          stages: routine.stages!,
-          params: routine.params,
-          values: run.params,
-          target: run.options.target,
+          flow,
+          info,
+          inputs: run.inputs,
+          outputFolders: run.outputFolders,
           documents: run.options.documents ?? {},
-          runDir: path.join(this.deps.runsDir, run.id),
+          target: run.options.target,
+          runDir: run.workDir!,
           copiesDir: this.deps.copiesDir,
           isCancelled: () => entry.cancelled,
-          onlyItems,
+          onlyItems: opts.onlyItems,
+          forceFail,
+          checkNode: async (_nodeId, routine, outputs, findings) => {
+            const adapter = adapters.get(routine.appId);
+            const subject = { qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, qcProfile: routine.qcProfile, builtInQc: routine.builtInQc };
+            const ids = new Set(outputs.map((o) => o.id));
+            await this.deps.qc.evaluate(adapter, subject, outputs, run.qcMode === "manual" ? null : findings.filter((f) => f.outputKey && ids.has(f.outputKey)), ctx);
+            if (run.qcMode === "auto_ai" && routine.objectChecks?.length) await this.deps.qc.objectChecks(outputs, routine.objectChecks, ctx);
+          },
         },
         {
-          onProgress: (stages, phase) => {
-            run.stages = stages;
+          onProgress: (nodes, edges, phase) => {
+            run.nodes = nodes.map((n) => ({ ...n, items: [...n.items] }));
+            run.edges = [...edges];
             if (!entry.cancelled) run.phase = phase;
             emit();
           },
           onOutputs: (outputs) => {
-            run.outputs = outputs;
+            run.outputs = [...outputs];
             emit();
           },
         },
       );
-      run.stages = res.stages;
+      run.nodes = res.nodes;
+      run.edges = res.edges;
       run.outputs = res.outputs;
       run.log = res.log;
       run.findings = res.findings;
-      if (res.status !== "cancelled" && !entry.cancelled) {
-        run.phase = run.qcMode === "manual" ? "Finishing" : "Checking quality";
-        emit();
-        await this.checkStageOutputs(run, routine, res.findings, { onAiCall: () => (run.aiCalls += 1), isCancelled: () => entry.cancelled });
-      }
       run.status = entry.cancelled ? "cancelled" : res.status;
       if (res.status === "failed") {
-        run.error = "This routine couldn't finish.";
+        run.error = run.target.kind === "flow" ? "This flow couldn't finish." : "This routine couldn't finish.";
         run.errorDetail = res.error;
       }
     } catch (err) {
@@ -424,112 +361,73 @@ export class RunService {
         run.status = "cancelled";
       } else {
         run.status = "failed";
-        run.error = err instanceof RunInputError ? err.message : "This routine couldn't finish.";
-        run.errorDetail = err instanceof RunInputError ? undefined : errorMessage(err);
+        run.error = err instanceof FlowInvalidError ? "This flow isn't ready to run." : run.target.kind === "flow" ? "This flow couldn't finish." : "This routine couldn't finish.";
+        run.errorDetail = errorMessage(err);
       }
     } finally {
       run.phase = undefined;
       run.finishedAt = nowIso();
       this.active.delete(run.id);
-      await this.persist(run);
+      await this.persist(run, flow);
       emit();
+      if (!run.mocked && run.status !== "cancelled") this.deps.onRunFinished?.(run, routinesOfNodes(flow));
     }
   }
 
-  /** Quality checks per stage, with that stage's app checks; object checks with SAM on "auto_ai". */
-  private async checkStageOutputs(run: Run, routine: Routine, findings: RuleFinding[], ctx: { onAiCall: () => void; isCancelled: () => boolean }) {
-    const subject = { qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, qcProfile: routine.qcProfile };
-    for (const stage of routine.stages ?? []) {
-      const mine = run.outputs.filter((o) => o.stageId === stage.id);
-      if (mine.length === 0) continue;
-      const adapter = this.deps.registry.get(stage.appId);
-      const ids = new Set(mine.map((o) => o.id));
-      await this.deps.qc.evaluate(adapter, subject, mine, run.qcMode === "manual" ? null : findings.filter((f) => f.outputKey && ids.has(f.outputKey)), ctx);
-      if (run.qcMode === "auto_ai" && routine.objectChecks?.length) {
-        await this.deps.qc.objectChecks(mine, routine.objectChecks, ctx);
-      }
-      this.deps.emit(run);
-    }
-  }
-
-  private async execute(run: Run, routine: Routine) {
-    const entry = this.active.get(run.id)!;
-    const emit = () => this.deps.emit(run);
-    try {
-      const res = await this.deps.executor.execute(
-        {
-          runId: run.id,
-          appId: routine.appId,
-          routineName: routine.name,
-          script: routine.script,
-          modifiesDocument: routine.modifiesDocument,
-          qcProfile: routine.qcProfile,
-          builtInQc: routine.builtInQc,
-          params: run.params,
-          qcMode: run.qcMode,
-          qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS,
-          target: run.options.target,
-          documentId: run.options.documentId,
-          allowedFolders: folderParams(routine.params, run.params),
-          isCancelled: () => entry.cancelled,
-        },
-        {
-          onPhase: (phase) => {
-            if (!entry.cancelled) run.phase = phase;
-            emit();
-          },
-          onOutputs: (outputs) => {
-            run.outputs = outputs;
-            emit();
-          },
-          onAiCall: () => {
-            run.aiCalls += 1;
-            emit();
-          },
-        },
-      );
-      run.outputs = res.outputs;
-      run.targetDocument = res.document;
-      run.log = res.log;
-      run.findings = res.findings ?? undefined;
-      run.status = res.outputs.some((o) => o.status === "failed") ? "partial" : "succeeded";
-    } catch (err) {
-      if (err instanceof CancelledError || entry.cancelled) {
-        run.status = "cancelled";
-      } else {
-        run.status = "failed";
-        run.error = err instanceof ExecutionError ? err.message : "This routine couldn't finish.";
-        run.errorDetail = err instanceof ExecutionError ? err.detail : errorMessage(err);
-      }
-    } finally {
-      run.phase = undefined;
-      run.finishedAt = nowIso();
-      this.active.delete(run.id);
-      await this.persist(run);
-      emit();
-    }
-  }
-
-  private async persist(run: Run) {
+  /** Saves the run and adds it to the history of its routine or flow. */
+  private async persist(run: Run, flow?: Flow) {
     const { storage } = this.deps;
     await storage.saveRun(run);
-    const routine = await storage.getRoutine(run.routineId);
-    if (!routine) return;
-    const summary = summarizeRun(run, routine);
-    routine.runs = [summary, ...routine.runs.filter((r) => r.id !== run.id)];
-    await storage.saveRoutine(routine);
+    if (run.mocked) return;
+    if (run.target.kind === "flow") {
+      const stored = await storage.getFlow(run.target.id);
+      if (!stored) return;
+      stored.runs = [summarizeRun(run, flow ?? stored), ...stored.runs.filter((r) => r.id !== run.id)];
+      await storage.saveFlow(stored);
+    } else {
+      const routine = await storage.getRoutine(run.target.id);
+      if (!routine) return;
+      routine.runs = [summarizeRun(run, flow ?? routineFlow(routine)), ...routine.runs.filter((r) => r.id !== run.id)];
+      await storage.saveRoutine(routine);
+    }
   }
 
   async cancel(runId: string) {
     const entry = this.active.get(runId);
     if (!entry) return;
     entry.cancelled = true;
-    entry.run.phase = "Cancelling after the current step…";
+    entry.run.phase = "Cancelling after the current item…";
     this.deps.emit(entry.run);
   }
 
   async get(runId: string): Promise<Run | null> {
-    return this.active.get(runId)?.run ?? (await this.deps.storage.getRun(runId));
+    const active = this.active.get(runId)?.run;
+    if (active) return active;
+    const run = await this.deps.storage.getRun(runId);
+    if (run) this.fillPreviews(run);
+    return run;
+  }
+
+  private filling = new Set<string>();
+
+  /** Runs made while previews of saved files weren't rendered: renders them once, emitting as each arrives. */
+  private fillPreviews(run: Run) {
+    const missing = run.outputs.filter((o) => o.status === "done" && o.filePath && !o.preview);
+    if (run.mocked || !missing.length || this.filling.has(run.id) || !run.appIds.length) return;
+    const adapter = this.deps.registry.list().find((a) => a.id === run.appIds[0]);
+    if (!adapter) return;
+    this.filling.add(run.id);
+    void (async () => {
+      let filled = 0;
+      for (const o of missing) {
+        o.preview = await adapter.renderPreview(`file:${o.filePath}`).catch(() => undefined);
+        if (o.preview) {
+          filled++;
+          this.deps.emit(run);
+        }
+      }
+      if (filled) await this.deps.storage.saveRun(run).catch(() => undefined);
+    })().finally(() => this.filling.delete(run.id));
   }
 
   private async requireRun(runId: string) {
@@ -538,49 +436,20 @@ export class RunService {
     return run;
   }
 
+  /** A new run with only the items that failed (everything again when no single item failed). */
   async retryFailed(runId: string): Promise<Run> {
     const run = await this.requireRun(runId);
     if (run.status === "running") return run;
-    const routine = await this.deps.storage.getRoutine(run.routineId);
-    if (!routine) throw new Error("This routine doesn't exist anymore.");
-    if (run.stages?.length) {
-      // Multi-app runs: a new run with only the items that failed.
-      const failed = new Set(run.outputs.filter((o) => o.status === "failed" && o.itemKey && o.itemKey !== "all").map((o) => o.itemKey!));
-      return this.start(routine.id, run.params, run.qcMode, run.options, failed.size ? failed : undefined);
-    }
-    const failed = run.outputs.filter((o) => o.status === "failed");
-    if (failed.length === 0) return run;
-
-    const entry: ActiveRun = { run, cancelled: false };
-    this.active.set(run.id, entry);
-    run.status = "running";
-    run.phase = "Retrying failed outputs";
-    for (const o of failed) Object.assign(o, { status: "running", error: undefined });
-    this.deps.emit(run);
-
-    void (async () => {
-      const adapter = this.deps.registry.get(run.appId);
-      const docId = run.targetDocument?.id ?? run.options.documentId;
-      for (const o of failed) {
-        const target = o.filePath
-          ? `file:${o.filePath}`
-          : o.nodeId && docId
-            ? `node:${docId}#${o.nodeId}`
-            : `page:${docId}#${o.pageIndex ?? 1}`;
-        o.preview = await adapter.renderPreview(target).catch(() => undefined);
-        o.status = "done";
-        this.deps.emit(run);
-      }
-      const subject = this.deps.executor.qcSubject({ ...routine, qcMode: run.qcMode, qcOptions: run.options.qcOptions ?? DEFAULT_QC_OPTIONS, params: run.params });
-      const findings = run.qcMode === "manual" && !routine.builtInQc ? null : (run.findings ?? []);
-      await this.deps.qc.evaluate(adapter, subject, run.outputs, findings, { onAiCall: () => (run.aiCalls += 1), isCancelled: () => false }, new Set(failed.map((o) => o.id)));
-      run.status = run.outputs.some((o) => o.status === "failed") ? "partial" : "succeeded";
-      run.phase = undefined;
-      this.active.delete(run.id);
-      await this.persist(run);
-      this.deps.emit(run);
-    })();
-    return run;
+    const failed = new Set(run.outputs.filter((o) => o.status === "failed" && o.itemKey && o.itemKey !== "all").map((o) => o.itemKey!));
+    const request: RunRequest = {
+      inputs: run.inputs,
+      outputFolders: run.outputFolders,
+      settings: run.settings,
+      matches: run.matches,
+      qcMode: run.qcMode,
+      options: run.options,
+    };
+    return this.start(run.target, request, { onlyItems: failed.size ? failed : undefined, ...(run.mocked ? { dev: { mocked: true, failNodes: [], failItems: {} } } : {}) });
   }
 
   async markOutputOk(runId: string, outputId: string): Promise<Run> {
@@ -589,25 +458,25 @@ export class RunService {
     if (output) output.markedOk = true;
     await this.persist(run);
     this.deps.emit(run);
+    if (output?.node) {
+      const flow = run.target.kind === "flow" ? await this.deps.flows.get(run.target.id) : null;
+      const routineId = flow ? routinesOfNodes(flow)[output.node] : output.node === ROUTINE_NODE ? run.target.id : undefined;
+      if (routineId) this.deps.onFeedback?.([routineId], "ok");
+    }
     return run;
   }
 
   async openOutput(runId: string, outputId: string) {
     const run = await this.requireRun(runId);
     const output = run.outputs.find((o) => o.id === outputId);
-    if (output?.stageId && run.stages?.length) {
-      const appId = run.stages.find((s) => s.stageId === output.stageId)?.appId ?? run.appId;
-      if (output.filePath && !output.nodeId) {
-        await shell.openPath(output.filePath);
-        return;
-      }
-      const docId = run.options.documents?.[appId];
-      if (docId) await this.deps.registry.get(appId).openInApp(docId, { pageIndex: output.pageIndex, nodeId: output.nodeId });
+    if (!output) return;
+    if (output.filePath && !output.nodeId) {
+      await shell.openPath(output.filePath);
       return;
     }
-    const docId = run.targetDocument?.id ?? run.options.documentId;
-    if (!docId) return;
-    await this.deps.registry.get(run.appId).openInApp(docId, { pageIndex: output?.pageIndex, nodeId: output?.nodeId });
+    const appId = run.nodes.find((n) => n.nodeId === output.node)?.appId;
+    const docId = appId ? run.options.documents?.[appId] : undefined;
+    if (appId && docId && !run.mocked) await this.deps.registry.get(appId).openInApp(docId, { pageIndex: output.pageIndex, nodeId: output.nodeId });
   }
 
   async revealOutput(runId: string, outputId: string) {

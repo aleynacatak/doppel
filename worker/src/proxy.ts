@@ -1,5 +1,6 @@
 import { type AccessCode } from "./codes";
-import { type Env, list, num } from "./env";
+import { type Env, num } from "./env";
+import { CHAT_MODELS, DEMO_LIMITS, SEGMENT_MODELS, chatCost, segmentCost } from "./models";
 import { ApiError, MESSAGES, json } from "./errors";
 import { chargeCreationCall, chargeSamImages, quotaHeaders, recordUsage, refundSamImages } from "./quota";
 
@@ -66,15 +67,6 @@ export function normalizeUsage(u: unknown): Usage | null {
   return { input, cached: Math.min(cached, input), output };
 }
 
-export function chatCost(env: Env, usage: Usage): number {
-  const uncached = Math.max(usage.input - usage.cached, 0);
-  return (
-    (uncached * num(env.PRICE_INPUT_PER_M, 1.25) +
-      usage.cached * num(env.PRICE_CACHED_INPUT_PER_M, 0.15) +
-      usage.output * num(env.PRICE_OUTPUT_PER_M, 4.25)) /
-    1_000_000
-  );
-}
 
 /** Pulls `usage` out of one SSE line: a chat chunk, or a Responses `response.completed` event. */
 function usageFromSseLine(line: string): Usage | null {
@@ -174,11 +166,11 @@ const CHAT_PASSTHROUGH = ["messages", "response_format", "temperature", "top_p",
 
 export function sanitizeChat(body: Json, env: Env): Json {
   const model = String(body.model ?? "");
-  if (!list(env.ALLOWED_CHAT_MODELS).includes(model)) throw new ApiError("model_not_allowed", MESSAGES.model_not_allowed);
+  if (!CHAT_MODELS.includes(model)) throw new ApiError("model_not_allowed", MESSAGES.model_not_allowed);
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw new ApiError("bad_request", "The request needs at least one message.");
   }
-  const maxOutput = num(env.MAX_OUTPUT_TOKENS, 8000);
+  const maxOutput = DEMO_LIMITS.maxOutputTokens;
   // `max_tokens` is deprecated in favor of `max_completion_tokens`; accept either, send one, clamp it.
   const requested = Number(body.max_completion_tokens ?? body.max_tokens ?? maxOutput);
   const out: Json = {
@@ -221,7 +213,7 @@ export async function handleChat(request: Request, env: Env, ctx: ExecutionConte
       inputTokens: u.input,
       cachedInputTokens: u.cached,
       outputTokens: u.output,
-      estCostUsd: chatCost(env, u),
+      estCostUsd: chatCost(String(body.model), u),
       status: usage ? "ok" : "ok_usage_missing",
     });
   };
@@ -236,7 +228,7 @@ export async function handleChat(request: Request, env: Env, ctx: ExecutionConte
 
 export function sanitizeSegment(body: Json, env: Env): { body: Json; images: number } {
   const model = String(body.model ?? "");
-  if (!list(env.ALLOWED_SEGMENT_MODELS).includes(model)) throw new ApiError("model_not_allowed", MESSAGES.model_not_allowed);
+  if (!SEGMENT_MODELS.includes(model)) throw new ApiError("model_not_allowed", MESSAGES.model_not_allowed);
   if (!Array.isArray(body.input)) throw new ApiError("bad_request", "The request needs an input array.");
 
   let images = 0;
@@ -288,7 +280,7 @@ export async function handleSegment(request: Request, env: Env, ctx: ExecutionCo
     throw await upstreamError(res);
   }
   const headers = await quotaHeaders(env, code.id);
-  const cost = (images * num(env.PRICE_SAM_PER_1K_IMAGES, 2.5)) / 1000;
+  const cost = segmentCost(String(body.model), images);
   const record = async (usage: Usage | null) =>
     recordUsage(env, {
       ...base,

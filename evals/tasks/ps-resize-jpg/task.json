@@ -1,0 +1,14 @@
+{
+  "id": "ps-resize-jpg",
+  "app": "photoshop",
+  "request": "Resize each image to 300 pixels wide, keeping its proportions, and save it as a JPG with the same file name.",
+  "attachments": { "inputs": { "images": "fixtures/images" } },
+  "checks": [
+    { "type": "outputCount", "port": "jpgs", "equals": "inputCount:images" },
+    { "type": "fileExtension", "port": "jpgs", "is": "jpg" },
+    { "type": "imageSize", "port": "jpgs", "width": 300 },
+    { "type": "fileNamePattern", "port": "jpgs", "stemsFrom": "images" },
+    { "type": "noRunErrors" }
+  ],
+  "tags": ["photoshop", "export"]
+}

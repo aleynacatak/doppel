@@ -1,12 +1,13 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { ContractView, RoutineBadges } from "@/components/routine/ContractView";
 import { CostLine } from "@/components/routine/CostLine";
-import { ParamsList } from "@/components/routine/ParamsList";
+import { RoutineDetails } from "@/components/routine/RoutineDetails";
+import { RoutineUsageList } from "@/components/routine/RoutineUsageList";
 import { RunHistory } from "@/components/routine/RunHistory";
 import { ScriptViewer } from "@/components/routine/ScriptViewer";
-import { StagesList } from "@/components/routine/StagesList";
 import { StepsList } from "@/components/routine/StepsList";
 import { VersionHistory } from "@/components/routine/VersionHistory";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -24,21 +25,50 @@ import { useShell } from "@/lib/store";
 
 function RoutineScreen() {
   const params = useSearchParams();
+  const router = useRouter();
   const id = params.get("id");
+  const version = params.get("version") ? Number(params.get("version")) : null;
   const apps = useShell((s) => s.apps);
-  const [showScript, setShowScript] = useState(false);
-  const { data: routine, loading, error } = useAsync(() => (id ? doppel().getRoutine(id) : Promise.resolve(null)), [id]);
+  const [showBody, setShowBody] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { data: latest, loading, error: loadError } = useAsync(() => (id ? doppel().getRoutine(id) : Promise.resolve(null)), [id, params.get("restored")]);
+  const { data: viewed } = useAsync(() => (id && version ? doppel().getRoutineVersion(id, version) : Promise.resolve(null)), [id, version]);
+  const { data: blockUpdates } = useAsync(() => (id ? doppel().getBlockUpdates(id) : Promise.resolve([])), [id, params.get("refined"), params.get("restored")]);
+  const [updating, setUpdating] = useState(false);
+  const { data: adoptable } = useAsync(() => (id ? doppel().getAdoptableBlocks(id) : Promise.resolve([])), [id, params.get("refined")]);
 
-  if (loading && routine === undefined) return <Loading />;
-  if (error) return <Notice tone="error">{error}</Notice>;
-  if (!routine) {
+  if (loading && latest === undefined) return <Loading />;
+  if (loadError) return <Notice tone="error">{loadError}</Notice>;
+  if (!latest) {
     return <EmptyState title={copy.common.notFound} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
   }
+  // An earlier version opened read-only from the version history.
+  const readOnly = !!version && version !== latest.version && !!viewed;
+  const routine = readOnly ? viewed! : latest;
+  const restore = async (v: number) => {
+    if (!window.confirm(copy.versions.restoreConfirm(v))) return;
+    setError(null);
+    try {
+      const restored = await doppel().restoreRoutineVersion(latest.id, v);
+      router.push(`/routine?id=${latest.id}&restored=${v}&as=${restored.version}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   const app = apps.find((a) => a.id === routine.appId);
+  const starter = !!routine.starter;
+  const legacy = !!app && (app.id === "figma" ? routine.kind !== "actions" : routine.kind !== "script");
   const repaired = params.get("repaired");
-  const stages = routine.stages ?? [];
-  const appIds = stages.length ? [...new Set(stages.map((s) => s.appId))] : [routine.appId];
+  const duplicate = async () => {
+    setError(null);
+    try {
+      const copyOf = await doppel().duplicateRoutine(routine.id);
+      router.push(`/routine?id=${copyOf.id}&duplicated=1`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
@@ -47,11 +77,7 @@ function RoutineScreen() {
           title={routine.name}
           tags={
             <>
-              {appIds.map((id) => (
-                <Tag key={id} tone="strong">
-                  {appLabel(id)}
-                </Tag>
-              ))}
+              <RoutineBadges appId={routine.appId} starter={starter} />
               <Tag>{copy.common.version(routine.version)}</Tag>
               {routine.experimental && <Tag tone="quiet">{copy.common.experimental}</Tag>}
             </>
@@ -59,46 +85,115 @@ function RoutineScreen() {
           subtitle={routine.description}
           actions={
             <>
-              <Button onClick={() => setShowScript((s) => !s)} aria-expanded={showScript}>
-                {stages.length ? (showScript ? copy.routine.hideStages : copy.routine.viewStages) : showScript ? copy.routine.hideScript : copy.routine.viewScript}
+              <Button onClick={() => setShowBody((s) => !s)} aria-expanded={showBody}>
+                {routine.kind === "actions" ? (showBody ? copy.routine.hideActions : copy.routine.viewActions) : showBody ? copy.routine.hideScript : copy.routine.viewScript}
               </Button>
-              <ButtonLink href={`/run?routine=${routine.id}`} variant="primary">
-                {copy.routine.run}
-              </ButtonLink>
+              {readOnly ? (
+                <>
+                  {!starter && <Button onClick={() => restore(routine.version)}>{copy.versions.restore}</Button>}
+                  <ButtonLink href={`/routine?id=${latest.id}`}>{copy.versions.backToCurrent}</ButtonLink>
+                </>
+              ) : (
+                <>
+                  {starter && <Button onClick={duplicate}>{copy.routine.duplicate}</Button>}
+                  <ButtonLink href={`/refine?routine=${routine.id}`}>{starter ? copy.refine.duplicateAndRefine : copy.refine.button}</ButtonLink>
+                  <ButtonLink href={`/run?routine=${routine.id}`} variant="primary">
+                    {copy.routine.run}
+                  </ButtonLink>
+                </>
+              )}
             </>
           }
         />
+        {readOnly && <Notice tone="warning">{copy.versions.readOnly(routine.version, latest.version)}</Notice>}
+        {!readOnly && !starter && blockUpdates && blockUpdates.length > 0 && (
+          <Notice
+            title={copy.blocks.improved}
+            actions={
+              <Button
+                disabled={updating}
+                onClick={async () => {
+                  setUpdating(true);
+                  setError(null);
+                  try {
+                    const creation = await doppel().updateRoutineBlocks(latest.id);
+                    router.push(`/create?task=${creation.id}`);
+                  } catch (e) {
+                    setError((e as Error).message);
+                    setUpdating(false);
+                  }
+                }}
+              >
+                {updating ? copy.blocks.updating : copy.blocks.update}
+              </Button>
+            }
+          >
+            {copy.blocks.improvedBody(blockUpdates.map((u) => `${u.call} ${u.from} → ${u.to}: ${u.summary}`).join("; "))}
+          </Notice>
+        )}
+        {!readOnly && !starter && adoptable && adoptable.length > 0 && (
+          <Notice
+            title={copy.blocks.adoptTitle}
+            actions={
+              <ButtonLink href={`/refine?routine=${latest.id}&request=${encodeURIComponent(copy.blocks.adoptRequest(adoptable.map((b) => b.call)))}`}>{copy.blocks.adopt}</ButtonLink>
+            }
+          >
+            {copy.blocks.adoptBody(adoptable.map((b) => `${b.call}: ${b.summary}`).join("; "))}
+          </Notice>
+        )}
         {params.get("saved") && <Notice>{copy.routine.savedNotice}</Notice>}
+        {params.get("refined") && <Notice>{copy.refine.refined(Number(params.get("refined")))}</Notice>}
+        {params.get("restored") && <Notice>{copy.versions.restored(Number(params.get("restored")), Number(params.get("as")))}</Notice>}
+        {params.get("duplicated") && <Notice>{copy.routine.duplicated}</Notice>}
         {repaired && <Notice>{copy.routine.repairedNotice(Number(repaired))}</Notice>}
+        {starter && <Notice>{copy.routine.starterNotice}</Notice>}
+        {legacy && <Notice tone="warning">{copy.routine.legacy}</Notice>}
+        {error && <Notice tone="error">{error}</Notice>}
         {routine.portabilityIssues?.length ? <Notice tone="warning">{copy.routine.portabilityWarning}</Notice> : null}
-        <CostLine aiCalls={routine.createdWithAiCalls} />
-        {!stages.length && (
+        {!starter && <CostLine aiCalls={routine.createdWithAiCalls} />}
+        {routine.duplicatedFrom && <p className="ui-small ui-muted">{copy.routine.copiedFrom(routine.duplicatedFrom.name, routine.duplicatedFrom.version)}</p>}
+        {routine.appVersion && (
           <p className="ui-small ui-muted">{copy.routine.environment(app?.name ?? appLabel(routine.appId), routine.appVersion, routine.requiredFonts)}</p>
         )}
       </div>
 
-      {showScript && !stages.length && (
-        <Section title={copy.routine.scriptTitle}>
-          <ScriptViewer script={routine.script} language={app?.scriptLanguage ?? ""} />
+      {showBody && (
+        <Section title={routine.kind === "actions" ? copy.routine.viewActions.replace("View ", "").replace(/^./, (c) => c.toUpperCase()) : copy.routine.scriptTitle}>
+          <ScriptViewer
+            script={routine.kind === "actions" ? JSON.stringify(routine.actions ?? [], null, 2) : routine.script}
+            language={routine.kind === "actions" ? "Doppl action list (JSON)" : (app?.scriptLanguage ?? "ExtendScript")}
+          />
         </Section>
       )}
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <Section title={stages.length ? copy.routine.stagesTitle : copy.routine.stepsTitle}>
-          {stages.length ? <StagesList stages={stages} showBodies={showScript} /> : <StepsList steps={routine.steps} />}
-        </Section>
-        <Section title={copy.routine.paramsTitle}>
-          <ParamsList params={routine.params} />
-        </Section>
-      </div>
-
-      <Section title={copy.routine.historyTitle}>
-        <RunHistory runs={routine.runs} />
+      <Section title={copy.routine.stepsTitle}>
+        <StepsList steps={routine.steps} />
       </Section>
+
+      <ContractView routine={routine} />
+
+      {!starter && !readOnly && (
+        <Section title={copy.usage.title}>
+          <RoutineUsageList routineId={routine.id} />
+        </Section>
+      )}
+
+      {!starter && !readOnly && (
+        <Section title={copy.routine.historyTitle}>
+          <RunHistory runs={routine.runs} />
+        </Section>
+      )}
 
       <Section title={copy.routine.versionsTitle}>
-        <VersionHistory versions={routine.versions} />
+        <VersionHistory routineId={latest.id} versions={latest.versions} current={latest.version} viewing={readOnly ? routine.version : undefined} onRestore={starter ? undefined : restore} />
       </Section>
+
+      {!starter && (
+        <Section title={copy.details.title}>
+          <div className="ui-label">{copy.details.madeWith}</div>
+          <RoutineDetails routine={routine} />
+        </Section>
+      )}
     </div>
   );
 }

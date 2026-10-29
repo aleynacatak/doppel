@@ -1,0 +1,13 @@
+{
+  "id": "figma-label-fill-sim",
+  "app": "figma",
+  "mode": "simulated",
+  "request": "For every product in the CSV, duplicate the Label frame, put the product's name and price into it, and export it as a PNG named by the SKU.",
+  "attachments": { "inputs": { "products": "fixtures/products.csv" }, "inspection": "fixtures/document.json" },
+  "checks": [
+    { "type": "outputCount", "port": "labels", "equals": "inputCount:products" },
+    { "type": "fileExtension", "port": "labels", "is": "png" },
+    { "type": "noRunErrors" }
+  ],
+  "tags": ["figma", "text", "simulated"]
+}

@@ -1,42 +1,13 @@
-import type { AdapterRegistry } from "../../adapters/registry";
-import type { RoutineTemplate } from "../../adapters/types";
-import type {
-  DocumentSummary,
-  EnvironmentCheck,
-  FigmaActionStep,
-  ObjectCheckDef,
-  ParamDef,
-  ParamType,
-  ParamValue,
-  QcCheck,
-  Routine,
-  RoutineDraft,
-  Run,
-  RunOutput,
-  Stage,
-  Task,
-} from "../types";
-import { newId } from "../util";
-import type { AiAccessService } from "./aiAccessService";
-import {
-  DRAFT_SCHEMA,
-  EXPLAIN_SYSTEM,
-  EXPLANATION_SCHEMA,
-  REVIEW_SCHEMA,
-  REVIEW_SYSTEM,
-  ROUTINE_SCHEMA,
-  STAGE_TURN_SCHEMA,
-  fixMessage,
-  systemPrompt,
-  taskMessage,
-} from "./aiPrompts";
-import type { AiCallContext, AiService, DraftState, ScriptFailure } from "./aiService";
-import { AiError, type ChatMessage, type ChatRequest, type ContentPart, type SegmentBox } from "./aiTransport";
-import type { StyleService } from "./styleService";
+import { codeOf } from "../ai/answer";
+import { type AiGateway, type GatewayChatRequest, type Role, isModelImage } from "../ai/gateway";
+import type { ReasoningEffort } from "../ai/registry";
+import type { ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
+import { REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
+import type { AiCallContext, AiService, TurnOptions } from "./aiService";
+import { AiError, type ChatMessage, type ContentPart, type SegmentBox } from "./aiTransport";
 
-const PARAM_TYPES: ParamType[] = ["text", "number", "boolean", "select", "formatList", "file", "folder", "dataFile"];
-const OPTION_SOURCES: Record<string, string[]> = { indesign: ["pdfExportPresets"], figma: ["frames"], photoshop: ["layers", "smartObjects"] };
-const ROUTINE_TOKENS = 8000;
+const TURN_TOKENS = 8000;
+const CODE_TOKENS = 32000;
 const SHORT_TOKENS = 1500;
 const MAX_REVIEW_IMAGES = 4;
 
@@ -46,245 +17,11 @@ export class AiOutputError extends Error {
     message: string,
     /** The answer hit the length limit (thinking counts toward it) and was cut off. */
     readonly truncated = false,
+    /** What the model answered. */
+    readonly answer?: string,
   ) {
     super(message);
   }
-}
-
-function parseJson(content: string): Record<string, any> {
-  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  try {
-    return JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned);
-  } catch {
-    throw new AiOutputError("The answer wasn't valid JSON.");
-  }
-}
-
-const strings = (v: unknown, max = 50): string[] =>
-  Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && !!s.trim()).map((s) => s.trim()).slice(0, max) : [];
-
-function toParam(raw: Record<string, any>, appId: string): ParamDef | null {
-  const key = String(raw?.key ?? "").trim();
-  const type = raw?.type as ParamType;
-  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key) || !PARAM_TYPES.includes(type)) return null;
-  const options = Array.isArray(raw.options)
-    ? raw.options
-        .filter((o: any) => o && typeof o.value === "string")
-        .map((o: any) => ({ value: o.value, label: typeof o.label === "string" && o.label ? o.label : o.value }))
-    : undefined;
-  let def: ParamValue | undefined = raw.default;
-  if (type === "number") def = Number.isFinite(Number(def)) && def !== "" && def !== null ? Number(def) : undefined;
-  else if (type === "boolean") def = def === undefined ? undefined : def === true || def === "true";
-  else if (type === "formatList") def = Array.isArray(def) ? strings(def) : options?.map((o: { value: string }) => o.value);
-  else if (type === "file" || type === "folder" || type === "dataFile") def = undefined; // locations are picked at run time
-  else if (def !== undefined && def !== null) def = String(def);
-  const source = typeof raw.optionsSource === "string" && OPTION_SOURCES[appId]?.includes(raw.optionsSource) ? raw.optionsSource : undefined;
-  return {
-    key,
-    label: String(raw.label || key),
-    type,
-    required: raw.required !== false,
-    ...(def !== undefined && def !== null ? { default: def as ParamDef["default"] } : {}),
-    ...(typeof raw.help === "string" && raw.help ? { help: raw.help } : {}),
-    ...(options?.length ? { options } : {}),
-    ...(source ? { optionsSource: source } : {}),
-    ...((type === "file" || type === "folder") && strings(raw.extensions).length ? { extensions: strings(raw.extensions).map((e) => e.replace(/^\./, "")) } : {}),
-    ...(type === "dataFile" && strings(raw.columns).length ? { columns: strings(raw.columns, 100) } : {}),
-    ...(type === "folder" && (raw.role === "input" || raw.role === "output") ? { role: raw.role } : {}),
-    ...(Number.isFinite(raw.min) ? { min: raw.min } : {}),
-    ...(Number.isFinite(raw.max) ? { max: raw.max } : {}),
-  };
-}
-
-/** Turns the model's routine JSON into a draft, or explains what's wrong with it. */
-export function toDraft(raw: Record<string, any> | undefined, appId: string, appVersion: string): RoutineDraft {
-  if (!raw || typeof raw !== "object") throw new AiOutputError("The answer didn't contain a routine.");
-  const script = typeof raw.script === "string" ? raw.script.trim() : "";
-  if (!script) throw new AiOutputError("The routine had no script.");
-  const steps = strings(raw.steps, 10);
-  if (steps.length === 0) throw new AiOutputError("The routine had no steps.");
-  const params = (Array.isArray(raw.params) ? raw.params : []).map((p: any) => toParam(p, appId));
-  if (params.some((p: ParamDef | null) => p === null)) throw new AiOutputError("Some params had an invalid key or type.");
-  const keys = new Set<string>();
-  for (const p of params as ParamDef[]) {
-    if (keys.has(p.key)) throw new AiOutputError(`Two params share the key "${p.key}".`);
-    keys.add(p.key);
-  }
-  return {
-    name: String(raw.name || "New routine").slice(0, 80),
-    description: String(raw.description || "").slice(0, 400),
-    appId,
-    steps: steps.map((s) => ({ id: newId(), plainLanguage: s })),
-    params: params as ParamDef[],
-    script,
-    appVersion,
-    requiredFonts: strings(raw.requiredFonts, 10),
-    modifiesDocument: raw.modifiesDocument !== false,
-    qcProfile: raw.qcProfile === "web" ? "web" : "print",
-    keyObjects: strings(raw.keyObjects, 2),
-  };
-}
-
-
-/** Why a Figma stage's action list couldn't be read, for the message back to the model (never saved with the routine). */
-const actionProblems = new WeakMap<Stage, string>();
-export const actionsProblem = (stage: Stage | undefined) => (stage ? actionProblems.get(stage) : undefined);
-
-type ActionsRead = { actions: FigmaActionStep[] } | { problem: string };
-
-/** An action list from parsed JSON: the list, { actions: [...] }, one action, or a list of JSON strings. */
-function actionsFrom(value: unknown): FigmaActionStep[] | null {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const v = value as { actions?: unknown; action?: unknown };
-    if (Array.isArray(v.actions)) return actionsFrom(v.actions);
-    if (typeof v.action === "string") return [value as FigmaActionStep];
-    return null;
-  }
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const list = value.map((a) => {
-    if (typeof a !== "string") return a;
-    try {
-      return JSON.parse(a);
-    } catch {
-      return a;
-    }
-  });
-  return list.every((a) => a && typeof a === "object" && !Array.isArray(a)) ? (list as FigmaActionStep[]) : null;
-}
-
-/**
- * Reads the action list the model wrote as JSON text. Small slips are repaired here (code fences, trailing commas,
- * text encoded twice); anything else comes back as a problem that says where the text breaks.
- */
-export function readActionsText(raw: string): ActionsRead {
-  let text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  if (!text) return { problem: 'its "actions" text is empty.' };
-  for (let depth = 0; depth < 2; depth++) {
-    let parsed: unknown;
-    let firstError: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      firstError = err;
-      try {
-        parsed = JSON.parse(text.replace(/,(\s*[\]}])/g, "$1"));
-        firstError = undefined;
-      } catch {
-        // Report the original error: it points at the first slip.
-      }
-    }
-    if (firstError) return { problem: describeJsonError(text, firstError) };
-    if (typeof parsed === "string") {
-      text = parsed.trim();
-      continue;
-    }
-    const actions = actionsFrom(parsed);
-    if (actions) return { actions };
-    return {
-      problem: Array.isArray(parsed)
-        ? parsed.length === 0
-          ? 'its "actions" text is an empty list.'
-          : 'its "actions" text is a list, but not of actions (each action is an object like {"action":"setText",…}).'
-        : 'its "actions" text is JSON, but not a list of actions.',
-    };
-  }
-  return { problem: 'its "actions" text is JSON text inside JSON text; write the list once.' };
-}
-
-/** Where JSON text breaks, in words the model can act on. */
-function describeJsonError(text: string, err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  const at = message.match(/position (\d+)/);
-  const pos = at ? Number(at[1]) : text.length;
-  const reason = message.replace(/\s*in JSON at position \d+.*$/, "").replace(/\s*\(line \d+ column \d+\)/, "");
-  if (pos >= text.length - 1 || /end of JSON input/i.test(message)) {
-    return (
-      `its "actions" text isn't a complete JSON list: it is ${text.length} characters long and stops at ` +
-      `"…${text.slice(-60)}". It may have been cut short, or a quote inside it wasn't escaped (inside the text, every " is written \\").`
-    );
-  }
-  return (
-    `its "actions" text isn't valid JSON (${reason}) at character ${pos + 1} of ${text.length}, right after ` +
-    `"…${text.slice(Math.max(0, pos - 60), pos)}" and before "${text.slice(pos, pos + 30)}…".`
-  );
-}
-
-/** A Figma stage's action list, wherever the model put it ("actions", "body.actions", a JSON string…). */
-function stageActions(s: Record<string, any>): ActionsRead {
-  const candidates: unknown[] = [s.actions, s.body?.actions, s.body, s.script];
-  let problem: string | undefined;
-  for (const c of candidates) {
-    if (typeof c === "string") {
-      if (!c.trim()) continue;
-      const read = readActionsText(c);
-      if ("actions" in read) return read;
-      // The model's "actions" text says most about what went wrong; a script in place of actions is named as such.
-      if (c === s.actions) problem ??= read.problem;
-      else if (c === s.script && !problem) problem = 'it has a "script", but Figma stages run an action list from the catalog, written as JSON text in "actions".';
-      continue;
-    }
-    const actions = actionsFrom(c);
-    if (actions) return { actions };
-  }
-  return { problem: problem ?? 'its "actions" text is missing or empty.' };
-}
-
-/** A script stage's ExtendScript body ("script", or "body" when the model used that name). */
-function stageScript(s: Record<string, any>): string {
-  if (typeof s.script === "string" && s.script.trim()) return s.script.trim();
-  if (typeof s.body === "string") return s.body.trim();
-  return "";
-}
-
-/** Turns the model's multi-app routine JSON into a draft. Structure is checked later by the validator. */
-export function toStagedDraft(raw: Record<string, any> | undefined, appVersions: Record<string, string>): RoutineDraft {
-  if (!raw || typeof raw !== "object") throw new AiOutputError("The answer didn't contain a routine.");
-  const rawStages: any[] = Array.isArray(raw.stages) ? raw.stages : [];
-  if (rawStages.length === 0) throw new AiOutputError("The routine had no stages.");
-  const firstApp = String(rawStages[0]?.app ?? "");
-  const params = (Array.isArray(raw.params) ? raw.params : []).map((p: any) => toParam(p, firstApp));
-  if (params.some((p: ParamDef | null) => p === null)) throw new AiOutputError("Some params had an invalid key or type.");
-  const stages: Stage[] = rawStages.map((s) => {
-    const kind = s.kind === "actions" ? "actions" : "script";
-    const read = kind === "actions" ? stageActions(s) : null;
-    const stage: Stage = {
-      id: String(s.id ?? ""),
-      name: String(s.name || s.id || "Stage").slice(0, 60),
-      appId: String(s.app ?? s.appId ?? ""),
-      kind,
-      body: read ? { actions: "actions" in read ? read.actions : [] } : stageScript(s),
-      ...(s.repeat && typeof s.repeat.over === "string" && s.repeat.over.trim() ? { repeat: { over: s.repeat.over.trim() } } : {}),
-      inputs: strings(s.inputs, 40),
-      outputs: (Array.isArray(s.outputs) ? s.outputs : [])
-        .filter((o: any) => o && typeof o.key === "string")
-        .map((o: any) => ({ key: o.key, type: o.type, ...(typeof o.label === "string" && o.label ? { label: o.label } : {}) })),
-      steps: strings(s.steps, 8),
-      document: s.document === "none" ? "none" : "open",
-      modifiesDocument: s.modifiesDocument === true,
-    };
-    if (read && "problem" in read) actionProblems.set(stage, read.problem);
-    return stage;
-  });
-  return {
-    name: String(raw.name || "New routine").slice(0, 80),
-    description: String(raw.description || "").slice(0, 400),
-    appId: stages[0].appId,
-    steps: stages.flatMap((s) => (s.steps ?? []).map((text) => ({ id: newId(), plainLanguage: text }))),
-    params: params as ParamDef[],
-    script: "",
-    appVersion: appVersions[stages[0].appId] ?? "",
-    requiredFonts: strings(raw.requiredFonts, 10),
-    modifiesDocument: stages.some((s) => s.modifiesDocument),
-    qcProfile: raw.qcProfile === "print" ? "print" : "web",
-    keyObjects: strings(raw.keyObjects, 2),
-    stages,
-    objectChecks: (Array.isArray(raw.objectChecks) ? raw.objectChecks : [])
-      .filter((c: any) => c && typeof c.object === "string" && typeof c.region === "string")
-      .slice(0, 4)
-      .map((c: any) => ({ object: c.object, region: c.region })),
-  };
 }
 
 /** Which edge (if any) a SAM box touches. */
@@ -301,164 +38,102 @@ function touchedEdge(b: SegmentBox): string | null {
 const KEY_OBJECTS_LABEL = "Key objects stay inside the frame";
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Real AI: Muse Spark for writing and reviewing routines, SAM 3.1 for key-object checks. */
+/** The model calls of creation, refine and checks, each through its role (see ai/gateway). */
 export class ModelAiService implements AiService {
+  constructor(private readonly deps: { gateway: AiGateway }) {}
 
-  constructor(
-    private readonly deps: {
-      registry: AdapterRegistry;
-      access: AiAccessService;
-      style: StyleService;
-      templates: RoutineTemplate[];
-    },
-  ) {}
-
-  private async chat(request: ChatRequest, ctx: AiCallContext): Promise<Record<string, any>> {
-    if (ctx.isCancelled()) throw new AiError("cancelled", "Cancelled.");
-    const transport = await this.deps.access.transport();
-    ctx.onAiCall();
-    const result = await transport.chat(request, { creationId: ctx.creationId, onQuota: ctx.onQuota });
-    if (result.finishReason === "length") throw new AiOutputError("The answer was cut off before it was complete.", true);
-    return parseJson(result.content);
+  private async json(role: Role, request: GatewayChatRequest, ctx: AiCallContext): Promise<Record<string, any>> {
+    const res = await this.deps.gateway.chat(role, request, ctx);
+    if (res.finishReason === "length") throw new AiOutputError("The answer was cut off before it was complete.", true);
+    if (!res.json) throw new AiOutputError("The answer wasn't valid JSON.", false, res.text);
+    return res.json;
   }
 
-  /** One retry when the answer is unusable, telling the model what was wrong. */
-  private async chatWithRetry<T>(request: ChatRequest, ctx: AiCallContext, use: (json: Record<string, any>) => T): Promise<T> {
+  /** One retry when the answer is unusable, telling the model what was wrong (and thinking less, so it fits). */
+  private async jsonWithRetry<T>(role: Role, request: GatewayChatRequest, ctx: AiCallContext, use: (json: Record<string, any>) => T): Promise<T> {
     try {
-      return use(await this.chat(request, ctx));
+      return use(await this.json(role, request, ctx));
     } catch (err) {
       if (!(err instanceof AiOutputError)) throw err;
-      const retry: ChatRequest = {
+      const retry: GatewayChatRequest = {
         ...request,
-        reasoningEffort: "low",
-        messages: [
-          ...request.messages,
-          { role: "user", content: `Your last answer couldn't be used: ${err.message} Answer again with complete JSON matching the schema.` },
-        ],
+        effortCap: "low",
+        messages: [...request.messages, { role: "user", content: `Your last answer couldn't be used: ${err.message} Answer again with complete JSON matching the schema.` }],
       };
       try {
-        return use(await this.chat(retry, ctx));
+        return use(await this.json(role, retry, ctx));
       } catch (again) {
         if (again instanceof AiOutputError && (again.truncated || err.truncated)) {
-          throw new AiError(
-            "ai_output_cut",
-            "The AI's answer was too long for one reply and got cut off, also when it tried again more briefly.",
-            "retry",
-          );
+          throw new AiError("ai_output_cut", "The AI's answer was too long for one reply and got cut off, also when it tried again more briefly.", "retry");
         }
         if (again instanceof AiOutputError) {
-          throw new AiError("ai_output", "Doppl's AI couldn't write a usable routine for this request. Try rephrasing it.", "retry");
+          const answer = again.answer ?? "";
+          throw new AiError("ai_output", "Doppl's AI couldn't write a usable routine for this request. Try rephrasing it.", "retry", `${again.message} The AI answered: ${answer.length > 800 ? `${answer.slice(0, 800)}…` : answer || "(nothing)"}`);
         }
         throw again;
       }
     }
   }
 
-  private examples(task: Task): RoutineTemplate[] {
-    const text = task.request.toLowerCase();
-    return this.deps.templates
-      .filter((t) => t.appId === task.appId)
-      .map((t) => ({ t, score: t.keywords.filter((k) => text.includes(k)).length }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 2)
-      .map((x) => x.t);
+  fieldKey(role: Role, field: string, first: string[]) {
+    return this.deps.gateway.fieldKey(role, field, first);
   }
 
-  private async baseMessages(task: Task, summary: DocumentSummary | null): Promise<ChatMessage[]> {
-    const adapter = this.deps.registry.get(task.appId);
-    const style = await this.deps.style.get().catch(() => null);
-    return [
-      { role: "system", content: systemPrompt(adapter, this.examples(task)) },
-      { role: "user", content: taskMessage(task, summary, style) },
-    ];
+  noteFailedTrial(creationId: string) {
+    this.deps.gateway.noteFailedTrial(creationId);
   }
 
-  /** One turn of the multi-app creation loop (see aiPrompts → STAGE_TURN_SCHEMA). */
-  async stageTurn(messages: ChatMessage[], ctx: AiCallContext): Promise<Record<string, any>> {
-    return this.chatWithRetry(
-      // Low effort: a whole multi-stage routine is a long answer, and thinking counts toward its length limit.
-      { messages, schema: { name: "doppl_stage_turn", schema: STAGE_TURN_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "low" },
-      ctx,
-      (json) => {
-        if (!["inspect", "preview_stage", "propose_routine", "ask_question"].includes(json.action)) {
-          throw new AiOutputError('"action" must be inspect, preview_stage, propose_routine or ask_question.');
-        }
-        return json;
-      },
+  modelFor(role: Role, creationId?: string) {
+    return this.deps.gateway.binding(role, creationId).model;
+  }
+
+  async turn(messages: ChatMessage[], schema: { name: string; schema: Record<string, unknown> }, actions: string[], ctx: AiCallContext, options: TurnOptions = {}): Promise<Record<string, any>> {
+    return this.jsonWithRetry(options.role ?? "planner", { messages, schema: { ...schema, first: options.first }, maxTokens: TURN_TOKENS }, ctx, (json) => {
+      // A mangled "action" key (see aiPrompts) still names the action.
+      const key = Object.keys(json).find((k) => k === "action") ?? Object.keys(json).find((k) => k.startsWith("action"));
+      const action = key ? json[key] : undefined;
+      if (!actions.includes(action)) throw new AiOutputError(`"action" must be ${actions.join(", ")}.`, false, JSON.stringify(json));
+      return { ...json, action };
+    });
+  }
+
+  async text(role: Role, messages: ChatMessage[], ctx: AiCallContext, maxTokens = CODE_TOKENS): Promise<string> {
+    const res = await this.deps.gateway.chat(role, { messages, maxTokens }, ctx);
+    if (res.finishReason === "length") throw new AiError("ai_output_cut", "The AI's answer was too long for one reply and got cut off.", "retry");
+    return res.text;
+  }
+
+  async writeCode(messages: ChatMessage[], language: "javascript" | "json", ctx: AiCallContext): Promise<string> {
+    const ask = async (msgs: ChatMessage[], effortCap?: ReasoningEffort) => {
+      const res = await this.deps.gateway.chat("coder", { messages: msgs, maxTokens: CODE_TOKENS, effortCap }, ctx);
+      return { code: codeOf(res.text, language), cut: res.finishReason === "length" };
+    };
+    const first = await ask(messages);
+    if (first.code && !first.cut) return first.code;
+    // Cut off (thinking counts toward the length) or empty: once more, thinking less and writing less.
+    const again = await ask(
+      [...messages, { role: "user", content: `Your last answer was ${first.cut ? "cut off" : "empty"}. Write the complete code again in one fenced block: shorter, no comments.` }],
+      "medium",
     );
+    if (again.code && !again.cut) return again.code;
+    throw new AiError("ai_output_cut", "The AI's code was too long for one reply and got cut off, also when it tried again more briefly.", "retry");
   }
 
-  async readDocument() {
-    // The document summary goes into the drafting prompt; no separate model call.
-  }
-
-  private toDraftState(json: Record<string, any>, task: Task, summary: DocumentSummary, messages: ChatMessage[]): DraftState {
-    const memory = { messages: [...messages, { role: "assistant", content: JSON.stringify(json) }] };
-    if (json.kind === "question" && json.question?.text && Array.isArray(json.question.options) && json.question.options.length) {
-      return {
-        question: {
-          id: `q-${newId()}`,
-          text: String(json.question.text),
-          options: json.question.options.slice(0, 4).map((o: any, i: number) => ({ id: String(o.id ?? i), label: String(o.label ?? o.id) })),
-        },
-        memory,
-      };
-    }
-    return { draft: toDraft(json.routine, task.appId, summary.appVersion), memory };
-  }
-
-  async draftRoutine(task: Task, summary: DocumentSummary, ctx: AiCallContext): Promise<DraftState> {
-    const messages = await this.baseMessages(task, summary);
-    return this.chatWithRetry(
-      { messages, schema: { name: "doppl_routine", schema: DRAFT_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "medium" },
-      ctx,
-      (json) => this.toDraftState(json, task, summary, messages),
-    );
-  }
-
-  async answerQuestion(task: Task, summary: DocumentSummary, state: DraftState, optionId: string, ctx: AiCallContext): Promise<DraftState> {
-    const answer = state.question?.options.find((o) => o.id === optionId)?.label ?? optionId;
-    const messages: ChatMessage[] = [
-      ...((state.memory.messages as ChatMessage[]) ?? (await this.baseMessages(task, summary))),
-      { role: "user", content: `Answer: ${answer}. Now write the routine (kind "routine").` },
-    ];
-    return this.chatWithRetry(
-      { messages, schema: { name: "doppl_routine", schema: DRAFT_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "medium" },
-      ctx,
-      (json) => {
-        const next = this.toDraftState(json, task, summary, messages);
-        // Only one question: if the model asks again, the user's answer stands and we insist on a routine.
-        if (next.question) throw new AiOutputError('Answer with kind "routine" now.');
-        return next;
-      },
-    );
-  }
-
-  async fixRoutine(task: Task, summary: DocumentSummary | null, draft: RoutineDraft, failure: ScriptFailure, ctx: AiCallContext) {
-    const adapter = this.deps.registry.get(task.appId);
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt(adapter, this.examples(task)) },
-      { role: "user", content: fixMessage(task, summary, draft, failure.messages, failure.kind) },
-    ];
-    return this.chatWithRetry(
-      { messages, schema: { name: "doppl_fixed_routine", schema: ROUTINE_SCHEMA }, maxTokens: ROUTINE_TOKENS, reasoningEffort: "medium" },
-      ctx,
-      (json) => toDraft(json, task.appId, draft.appVersion),
-    );
-  }
-
-  async reviewTrial(task: Task, draft: RoutineDraft, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
+  async reviewTrial(task: Task, draft: { name: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
     const checks: Record<string, QcCheck[]> = {};
     const add = (id: string, check: QcCheck) => (checks[id] ??= []).push(check);
     // Only outputs with a rendered preview can be looked at.
-    const withImages = outputs.filter((o) => o.status === "done" && o.preview?.kind === "image").slice(0, MAX_REVIEW_IMAGES);
+    const withImages = outputs.filter((o) => o.status === "done" && o.preview?.kind === "image" && isModelImage(o.preview.src)).slice(0, MAX_REVIEW_IMAGES);
     if (withImages.length === 0) return checks;
 
-    // Visual review: one call for all outputs.
+    // Visual review: one call for all outputs. Steps written as custom code (no tested building block) get a closer look.
+    const custom = draft.customSteps?.length
+      ? `\nThese steps are custom code written for this routine, not tested building blocks; look closely at what they do to the outputs: ${draft.customSteps.map((s) => `"${s}"`).join("; ")}`
+      : "";
     const content: ContentPart[] = [
       {
         type: "text",
-        text: `Request: "${task.request}"\nRoutine: ${draft.name}\nOutputs:\n${withImages
+        text: `Request: "${task.request}"\nRoutine: ${draft.name}${custom}\nOutputs:\n${withImages
           .map((o) => `- id ${o.id}: ${o.label}${o.qc?.checks.filter((c) => !c.passed).map((c) => ` [rule check: ${c.reason ?? c.label}]`).join("") ?? ""}`)
           .join("\n")}`,
       },
@@ -467,7 +142,8 @@ export class ModelAiService implements AiService {
         { type: "image_url", image_url: { url: o.preview!.src, detail: "low" } },
       ]),
     ];
-    const review = await this.chatWithRetry(
+    const review = await this.jsonWithRetry(
+      "reviewer",
       {
         messages: [
           { role: "system", content: REVIEW_SYSTEM },
@@ -475,7 +151,6 @@ export class ModelAiService implements AiService {
         ],
         schema: { name: "doppl_review", schema: REVIEW_SCHEMA },
         maxTokens: SHORT_TOKENS,
-        reasoningEffort: "low",
       },
       ctx,
       (json) => ({ issues: Array.isArray(json.issues) ? json.issues : [] }),
@@ -487,13 +162,11 @@ export class ModelAiService implements AiService {
 
     // Key objects: SAM finds each object; a box touching the edge means it's cut off.
     if (draft.keyObjects?.length) {
-      const transport = await this.deps.access.transport();
       for (const o of withImages) {
         let cut: string | null = null;
         try {
           for (const concept of draft.keyObjects) {
-            ctx.onAiCall();
-            const boxes = await transport.segment(o.preview!.src, concept, { creationId: ctx.creationId, onQuota: ctx.onQuota });
+            const [boxes] = await this.deps.gateway.segment(o.preview!.src, [concept], ctx);
             const edge = boxes.map(touchedEdge).find(Boolean);
             if (edge) {
               cut = `${capitalize(concept)} is cut off at the ${edge} edge`;
@@ -511,68 +184,12 @@ export class ModelAiService implements AiService {
     return checks;
   }
 
-  async explainFailure(routine: Routine, failedRun: Run | null, env: EnvironmentCheck | null, ctx: AiCallContext) {
-    const facts = [
-      `Routine: ${routine.name} (${routine.description})`,
-      failedRun ? `Error: ${failedRun.error ?? ""} ${failedRun.errorDetail ?? ""}` : "",
-      env?.versionMismatch ? `Made with app version ${env.routineVersion}; now ${env.currentVersion}.` : "",
-      env?.missingFonts.length ? `Missing fonts: ${env.missingFonts.join(", ")}` : "",
-    ].filter(Boolean);
-    const json = await this.chat(
-      {
-        messages: [
-          { role: "system", content: EXPLAIN_SYSTEM },
-          { role: "user", content: facts.join("\n") },
-        ],
-        schema: { name: "doppl_explanation", schema: EXPLANATION_SCHEMA },
-        maxTokens: SHORT_TOKENS,
-        reasoningEffort: "low",
-      },
-      ctx,
-    ).catch((err) => {
-      if (err instanceof AiOutputError) return { explanation: "" };
-      throw err;
-    });
-    return String(json.explanation || failedRun?.errorDetail || "The routine stopped on content it didn't expect.");
-  }
-
-  async repairRoutine(routine: Routine, failedRun: Run | null, env: EnvironmentCheck | null, ctx: AiCallContext) {
-    const task: Task = { id: routine.id, request: routine.description, references: [], appId: routine.appId, createdAt: routine.createdAt };
-    const problems = [
-      failedRun ? `The last run failed: ${failedRun.error ?? ""} ${failedRun.errorDetail ?? ""}`.trim() : "",
-      env?.versionMismatch ? `It was made with app version ${env.routineVersion}; the designer now has ${env.currentVersion}.` : "",
-      env?.missingFonts.length ? `These fonts are missing on this Mac: ${env.missingFonts.join(", ")}. Don't depend on them.` : "",
-      "Keep the same params unless they caused the problem, so saved inputs keep working.",
-    ].filter(Boolean);
-    const draft: RoutineDraft = {
-      name: routine.name,
-      description: routine.description,
-      appId: routine.appId,
-      steps: routine.steps,
-      params: routine.params,
-      script: routine.script,
-      appVersion: env?.currentVersion || routine.appVersion,
-      requiredFonts: routine.requiredFonts,
-      modifiesDocument: routine.modifiesDocument,
-      qcProfile: routine.qcProfile,
-      keyObjects: routine.keyObjects,
-    };
-    const repaired = await this.fixRoutine(task, null, draft, { kind: "run", messages: problems }, ctx);
-    return { ...repaired, templateId: routine.templateId, builtInQc: routine.builtInQc, experimental: routine.experimental };
-  }
-
   async checkObjectInRegion(output: RunOutput, check: ObjectCheckDef, ctx: AiCallContext): Promise<QcCheck> {
     const label = `${capitalize(check.object)} is inside ${check.region}`;
-    if (output.preview?.kind !== "image") return { level: "object", label, passed: true, reason: "No preview to check" };
-    const transport = await this.deps.access.transport();
-    const find = async (concept: string) => {
-      if (ctx.isCancelled()) throw new AiError("cancelled", "Cancelled.");
-      ctx.onAiCall();
-      return transport.segment(output.preview!.src, concept, { creationId: ctx.creationId, onQuota: ctx.onQuota });
-    };
-    const objects = await find(check.object);
+    if (output.preview?.kind !== "image" || !isModelImage(output.preview.src)) return { level: "object", label, passed: true, reason: "No preview to check" };
+    const [objects] = await this.deps.gateway.segment(output.preview.src, [check.object], ctx);
     if (objects.length === 0) return { level: "object", label, passed: false, reason: `Couldn't find ${check.object} in the image` };
-    const regions = await find(check.region);
+    const [regions] = await this.deps.gateway.segment(output.preview.src, [check.region], ctx);
     if (regions.length === 0) return { level: "object", label, passed: false, reason: `Couldn't find ${check.region} in the image` };
     const inside = (o: SegmentBox, r: SegmentBox) => {
       const t = Math.max(2, o.w * 0.005);
@@ -585,8 +202,9 @@ export class ModelAiService implements AiService {
   }
 
   async reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck> {
-    if (output.preview?.kind !== "image") return { level: "visual", label: "AI visual review", passed: true, reason: undefined };
-    const json = await this.chatWithRetry(
+    if (output.preview?.kind !== "image" || !isModelImage(output.preview.src)) return { level: "visual", label: "AI visual review", passed: true, reason: undefined };
+    const json = await this.jsonWithRetry(
+      "reviewer",
       {
         messages: [
           { role: "system", content: REVIEW_SYSTEM },
@@ -600,7 +218,6 @@ export class ModelAiService implements AiService {
         ],
         schema: { name: "doppl_review", schema: REVIEW_SCHEMA },
         maxTokens: SHORT_TOKENS,
-        reasoningEffort: "low",
       },
       ctx,
       (j) => j,

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ParamDef, ParamValue } from "@core/types";
+import type { ParamDef, ParamValue, SettingDef } from "@core/types";
 import { useEffect } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
@@ -13,12 +13,13 @@ interface Props {
   routineId: string;
   /** Selected document (options like Figma frames depend on it). */
   documentId?: string;
-  param: ParamDef;
+  /** A routine setting (or an older param). */
+  param: ParamDef | SettingDef;
   value: ParamValue | undefined;
   onChange: (value: ParamValue) => void;
 }
 
-function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "documentId">) {
+function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "documentId"> & { param: ParamDef }) {
   const pick = async () => {
     if (param.type === "folder") {
       const folder = await doppel().pickFolder();
@@ -42,7 +43,7 @@ function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "docum
 
 function SelectField({ routineId, documentId, param, value, onChange }: Props) {
   const { data: options, loading } = useAsync(
-    () => doppel().getParamOptions(routineId, param.key, documentId),
+    () => doppel().getSettingOptions(routineId, param.key, documentId),
     [routineId, param.key, documentId],
   );
   // Keep the value valid: fall back to the default or the first option the app offers.
@@ -90,7 +91,7 @@ function FormatList({ param, value, onChange }: Omit<Props, "routineId" | "docum
   );
 }
 
-/** One input generated from a ParamDef. */
+/** One field for a setting (or an older param). */
 export function ParamField(props: Props) {
   const { param, value, onChange } = props;
   const label = `${param.label}${param.required ? "" : ` (${copy.routine.optional.toLowerCase()})`}`;
@@ -112,7 +113,7 @@ export function ParamField(props: Props) {
     case "file":
     case "folder":
     case "dataFile":
-      input = <PathPicker param={param} value={value} onChange={onChange} />;
+      input = <PathPicker param={param as ParamDef} value={value} onChange={onChange} />;
       break;
     case "select":
       input = <SelectField {...props} />;

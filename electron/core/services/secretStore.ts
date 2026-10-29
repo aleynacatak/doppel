@@ -2,7 +2,8 @@ import { safeStorage } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export type SecretName = "accessCode" | "metaApiKey" | "figmaToken";
+/** Keys for other providers (Settings → Advanced → AI models) are "provider:<provider id>". */
+export type SecretName = "accessCode" | "metaApiKey" | "figmaToken" | `provider:${string}`;
 
 /**
  * The demo access code and the own Meta API key, encrypted with Electron safeStorage

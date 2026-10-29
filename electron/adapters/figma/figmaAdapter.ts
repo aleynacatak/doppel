@@ -1,10 +1,12 @@
+import { expandComposites } from "../../core/blocks/composites";
+import { blocks } from "../../core/blocks/registry";
 import { shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { CancelledError } from "../../core/util";
 import type { AppStatus, DocumentRef, DocumentSummary, FigmaActionList, FigmaFile, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
 import { bufferPreview, filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
+import type { AdapterOutput, DesignAppAdapter, ManifestOptions, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
 import { FigmaApiError, fileLink, getFile, parseFigmaLink, renderNodes, topFrames } from "./figmaRest";
 import { figmaCapabilityManifest, FIGMA_MODEL_GUIDE } from "./modelGuide";
 import { type FigmaPluginBridge, PluginCancelledError, PluginNotConnectedError } from "./pluginBridge";
@@ -202,8 +204,10 @@ export class FigmaAdapter implements DesignAppAdapter {
     return this.request(s.id, { type: "inspect", node: typeof args.node === "string" ? args.node : undefined, depth: Number(args.depth ?? 2) }, "inspect");
   }
 
-  capabilityManifest() {
-    return figmaCapabilityManifest();
+  /** The action guide and catalog; "index" adds the building blocks (composite actions), yours included. */
+  capabilityManifest(options: ManifestOptions = {}) {
+    if (options.helperDocs !== "index") return figmaCapabilityManifest() + blocks.personalText("figma");
+    return `${figmaCapabilityManifest()}\n\nBuilding blocks are composite actions: use one as { "action": "block", "name": "<name>", "args": { … }, "id"?: "<id>", "output"?: "<output key>" }; Doppl expands it into catalog actions. "$<id>" is its result.\n${blocks.indexText("figma", options.request ?? "")}`;
   }
 
   // ---------- Stages ----------
@@ -231,7 +235,10 @@ export class FigmaAdapter implements DesignAppAdapter {
     const allowed = [ctx.workDir, ...ctx.allowedFolders];
     let prepared;
     try {
-      prepared = await prepareActions((input.body as FigmaActionList).actions as Record<string, unknown>[], allowed);
+      // Building blocks (composite actions) expand into catalog actions, at the versions the routine pinned.
+      const expanded = expandComposites((input.body as FigmaActionList).actions as Record<string, unknown>[], ctx.stage.blocks?.composites ?? blocks.composites());
+      if (expanded.problems.length) throw new ItemDataError(expanded.problems.join(" "));
+      prepared = await prepareActions(expanded.actions, allowed);
     } catch (err) {
       if (err instanceof ItemDataError) {
         return { ok: false, error: err.message, outputs: [], values: {}, findings: err.finding ? [err.finding] : [], log: [] };

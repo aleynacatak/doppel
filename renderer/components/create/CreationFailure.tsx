@@ -24,10 +24,15 @@ export function CreationFailure({
   return (
     <Notice
       tone="error"
-      title={creation.mode === "repair" ? copy.create.failedRepairTitle : copy.create.failedTitle}
+      title={creation.mode === "refine" ? copy.create.failedRefineTitle : creation.mode === "repair" ? copy.create.failedRepairTitle : copy.create.failedTitle}
       actions={
         <>
           {error?.kind === "app-not-connected" && <ButtonLink href="/connect">{copy.common.connectApps}</ButtonLink>}
+          {error?.kind === "needs-flow" && (
+            <ButtonLink href="/" variant="primary">
+              {copy.refine.planFlow}
+            </ButtonLink>
+          )}
           {error?.kind === "plugin-not-connected" && creation.task.documentId && (
             <Button onClick={() => doppel().openDocument(creation.task.appId, creation.task.documentId!)}>{copy.connect.figma.openInFigma}</Button>
           )}
@@ -55,6 +60,7 @@ export function CreationFailure({
       }
     >
       <p>{error?.message}</p>
+      {creation.mode === "refine" && <p className="ui-small">{copy.refine.failedNote}</p>}
       {error?.detail && <p className="ui-muted">{error.detail}</p>}
       {creation.canContinue ? (
         <p className="ui-small ui-muted">{copy.create.continueHint}</p>

@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-// The Figma action catalog. Figma stages are declarative action lists run by a fixed interpreter in the Doppl
+// The Figma action catalog. Figma routines are declarative action lists run by a fixed interpreter in the Doppl
 // plugin (figma-plugin/src/interpreter.ts); no code strings are executed. The same schemas validate routines in
 // Doppl ("authoring": placeholders allowed, images and SVGs by reference) and requests in the plugin ("wire":
 // placeholders expanded, files already read into bytes). The model gets them as JSON Schema (figmaCatalogJsonSchema).
 
-/** A value that is only a placeholder, e.g. "{{params.columns}}". */
+/** A value that is only a placeholder, e.g. "{{settings.columns}}". */
 export const PLACEHOLDER_ONLY = /^\{\{\s*[A-Za-z_$][\w$.]*\s*\}\}$/;
 
 export const FIGMA_NODE_TYPES = [
@@ -61,15 +61,15 @@ function makeCatalog<M extends Mode>(mode: M) {
           .union([
             z.object({ file: z.string().min(1).describe("A file path from a placeholder, e.g. {{item.path}}") }),
             z.object({
-              folder: z.string().min(1).describe("A folder param, e.g. {{params.images}}"),
+              folder: z.string().min(1).describe("A folder input, e.g. {{inputs.images}}"),
               name: z.string().min(1).describe("File name in that folder, with or without extension, e.g. {{item.image}}"),
             }),
             z
               .object({
-                files: z.union([z.array(z.string()), placeholder]).describe('A list of files, e.g. "{{stage.s1.outputs.files}}"'),
+                files: z.union([z.array(z.string()), placeholder]).describe('A list of files, e.g. "{{inputs.cutouts}}"'),
                 name: z.string().min(1).describe("The file to pick, by name with or without extension, e.g. {{item.image}}"),
               })
-              .describe("Pick one file by name from a list, e.g. an earlier stage's output files"),
+              .describe("Pick one file by name from a list, e.g. a fileList input"),
           ])
           .describe("PNG, JPEG or GIF up to 4096 px; Doppl reads the file and sends it to Figma");
   const imageWire = z.object({ bytes: z.string().min(1), name: z.string().optional() });
@@ -99,14 +99,14 @@ function makeCatalog<M extends Mode>(mode: M) {
       .string()
       .regex(/^[A-Za-z][A-Za-z0-9_]*$/)
       .optional()
-      .describe("Also add this action's result to the stage output with this key (exportNode → the file path)"),
+      .describe("Also add this action's result to the routine output with this key (exportNode → the file path)"),
   };
   const action = <T extends string, S extends z.ZodRawShape>(name: T, description: string, shape: S) =>
     z.object({ action: z.literal(name), ...common, ...shape }).describe(description);
 
   const actions = [
     action("getSelection", "The nodes the designer has selected (summaries). Result: a list.", {}),
-    action("findNodes", "Nodes matching a query, searched in `within` or the stage's page. Result: a list.", {
+    action("findNodes", "Nodes matching a query, searched in `within` or the routine's page. Result: a list.", {
       query: z
         .object({
           name: z.string().optional().describe("Exact name"),
@@ -222,7 +222,7 @@ function makeCatalog<M extends Mode>(mode: M) {
       format: z.enum(EXPORT_FORMATS),
       scale: num(z.number().min(0.1).max(10)).optional().describe("PNG/JPG only (default 1)"),
       fileName: z.string().min(1).optional().describe("Without extension; default: the node's name"),
-      folder: z.string().min(1).optional().describe("A folder param ({{params.out}}); default: the stage's working folder"),
+      folder: z.string().min(1).optional().describe("A folder input ({{inputs.out}}); default: the routine's working folder"),
     }),
     action(
       "measure",

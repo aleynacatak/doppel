@@ -5,39 +5,42 @@ import type { AdapterRegistry } from "../../adapters/registry";
 import type { StageRunContext } from "../../adapters/types";
 import { validateAuthoringActions } from "../../shared/figmaActions";
 import { type BarcodeType, barcodeSvg, validateBarcode } from "../helpers/barcode";
-import { expandValue, fileItem } from "../stages/placeholders";
-import type { DevRunResult, ParamDef, Routine, SaveRoutineResult, Stage, ValidationResult } from "../types";
+import { expandValue, fileItem } from "../routines/placeholders";
+import { RoutineFormatError, errorsForModel, toRoutineDraft } from "../routines/modelRoutine";
+import type { RoutineContract } from "../routines/contract";
+import type { DevFlowOptions, DevRunResult, ExecutionPlan, InputValue, Routine, RoutineDraft, Run, RunRequest, SaveRoutineResult, Stage, ValidationResult } from "../types";
 import { errorMessage, newId, nowIso } from "../util";
-import { toStagedDraft } from "./modelAiService";
+import type { FlowService } from "./flowService";
+import type { LibraryService } from "./libraryService";
+import type { RunService } from "./runService";
+import { toStarterFile } from "./starterService";
 import type { Storage } from "./storage";
 
-// The hidden dev panel (Cmd+Shift+D): run a Figma action list or a Photoshop script once, try barcodes, and
-// validate or save a routine written by hand. Runs here are real but never call AI.
+// The hidden dev panel (Cmd+Shift+D): run a Figma action list or a Photoshop script once, try barcodes, validate or
+// save a routine written by hand, run flows with simulated apps and forced failures, see a flow's execution plan,
+// and export a routine as a starter. Nothing here calls AI.
 
 interface Deps {
   registry: AdapterRegistry;
   storage: Storage;
-  validate: (draft: { params: ParamDef[]; stages?: Stage[] }) => ValidationResult;
+  library: LibraryService;
+  flows: FlowService;
+  runs: RunService;
+  validate: (draft: RoutineContract) => ValidationResult;
+  /** Asks where to save a file (a save dialog); null when cancelled. */
+  chooseSavePath: (defaultName: string) => Promise<string | null>;
 }
 
 async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), "doppl-dev-"));
 }
 
-/** Accepts the model's format (stages with "app" and "actions"/"script") or Doppl's own ({ params, stages }). */
-function parseRoutine(json: string): { name: string; description: string; params: ParamDef[]; stages: Stage[]; qcProfile: "print" | "web" } {
+/** A routine in the model's format ({ name, app, inputs, outputs, settings, iterate, actions | script, … }). */
+function parseRoutine(json: string, registry: AdapterRegistry): RoutineDraft {
   const raw = JSON.parse(json);
-  if (Array.isArray(raw?.stages) && raw.stages.some((s: any) => s && ("app" in s || "actions" in s || "script" in s))) {
-    const d = toStagedDraft(raw, {});
-    return { name: d.name, description: d.description, params: d.params, stages: d.stages!, qcProfile: d.qcProfile };
-  }
-  return {
-    name: String(raw?.name ?? "Hand-built routine"),
-    description: String(raw?.description ?? ""),
-    params: Array.isArray(raw?.params) ? raw.params : [],
-    stages: Array.isArray(raw?.stages) ? raw.stages : [],
-    qcProfile: raw?.qcProfile === "print" ? "print" : "web",
-  };
+  const app = String(raw?.app ?? raw?.appId ?? "");
+  if (!registry.list().some((a) => a.id === app)) throw new RoutineFormatError(`"app" must be one of ${registry.list().map((a) => a.id).join(", ")}.`);
+  return toRoutineDraft(raw, app, registry.get(app).stageKind, "");
 }
 
 export class DevService {
@@ -61,7 +64,7 @@ export class DevService {
     try {
       const res = await adapter.runStageItem(
         session,
-        { key: "dev", label: "Dev run", index: 0, item, params: {}, stages: {}, body: stage.body },
+        { key: "dev", label: "Dev run", index: 0, item, params: {}, body: stage.body },
         ctx,
         () => undefined,
       );
@@ -102,13 +105,13 @@ export class DevService {
     let expanded: unknown;
     try {
       const value = typeof item === "string" && item.startsWith("/") ? fileItem(item) : item;
-      expanded = expandValue(body, { params: {}, item: value, itemIndex: value === undefined ? undefined : 0, stages: {} });
+      expanded = expandValue(body, { inputs: {}, settings: {}, item: value, itemIndex: value === undefined ? undefined : 0 });
     } catch (err) {
       return this.failure(errorMessage(err), started);
     }
     const workDir = await tempDir();
     try {
-      const stage: Stage = { id: "dev", name: "Dev run", appId: "figma", kind: "actions", body: expanded as Stage["body"], inputs: [], outputs: [{ key: "files", type: "fileList" }] };
+      const stage: Stage = { id: "dev", name: "Dev run", appId: "figma", kind: "actions", body: expanded as Stage["body"], outputs: [{ key: "files", type: "fileList" }] };
       return await this.runOnce("figma", stage, documentId, item ?? null, workDir);
     } catch (err) {
       return this.failure(errorMessage(err), started);
@@ -129,7 +132,6 @@ export class DevService {
         appId: "photoshop",
         kind: "script",
         body: script,
-        inputs: [],
         outputs: [{ key: "files", type: "fileList" }],
         document: documentId ? "open" : "none",
       };
@@ -147,7 +149,9 @@ export class DevService {
 
   validateRoutine(json: string): { validation: ValidationResult; parseError?: string } {
     try {
-      return { validation: this.deps.validate(parseRoutine(json)) };
+      const draft = parseRoutine(json, this.deps.registry);
+      const validation = this.deps.validate(draft);
+      return { validation: { ...validation, errors: errorsForModel(validation.errors, draft) } };
     } catch (err) {
       return { validation: { ok: false, errors: [] }, parseError: errorMessage(err) };
     }
@@ -155,31 +159,47 @@ export class DevService {
 
   /** Saves a routine built by hand (validated first). It reruns like any other routine, with 0 AI calls. */
   async saveRoutine(json: string): Promise<SaveRoutineResult> {
-    const r = parseRoutine(json);
-    const check = this.deps.validate(r);
-    if (!check.ok) throw new Error(check.errors.map((e) => `${e.path}: ${e.message}`).join("\n"));
+    const draft = parseRoutine(json, this.deps.registry);
+    const check = this.deps.validate(draft);
+    if (!check.ok) throw new Error(errorsForModel(check.errors, draft).map((e) => `${e.path}: ${e.message}`).join("\n"));
     const now = nowIso();
     const routine: Routine = {
+      ...draft,
       id: newId(),
-      name: r.name,
-      appId: r.stages[0].appId,
-      description: r.description,
-      steps: r.stages.flatMap((s) => (s.steps ?? [s.name]).map((text) => ({ id: newId(), plainLanguage: text }))),
-      params: r.params,
-      script: "",
       version: 1,
       createdWithAiCalls: 0,
-      appVersion: "",
-      requiredFonts: [],
       runs: [],
       createdAt: now,
       updatedAt: now,
       versions: [{ version: 1, createdAt: now, aiCalls: 0, note: "Built by hand in the dev panel" }],
-      modifiesDocument: r.stages.some((s) => s.modifiesDocument),
-      qcProfile: r.qcProfile,
-      stages: r.stages,
+      format: 2,
     };
-    await this.deps.storage.saveRoutine(routine);
+    await this.deps.library.save(routine);
     return { saved: true, routine, issues: [] };
+  }
+
+  /** Runs a flow with simulated apps (or real ones) and forced failures. */
+  runFlow(flowId: string, request: RunRequest, options: DevFlowOptions): Promise<Run> {
+    return this.deps.runs.start({ kind: "flow", id: flowId }, request, { dev: options });
+  }
+
+  /** The order, item counts and join pairs a flow would run with, from the values picked (or used last time). */
+  async executionPlan(flowId: string, inputs: Record<string, InputValue>): Promise<ExecutionPlan> {
+    const flow = await this.deps.flows.require(flowId);
+    const last = await this.deps.storage.getLastValues(`flow:${flowId}`);
+    return this.deps.flows.plan(flow, { ...(last?.inputs ?? {}), ...inputs });
+  }
+
+  /** Writes one of my routines in the starter format, to a file the developer picks (to put into resources/starters/). */
+  async exportStarter(routineId: string, options: { converter: boolean }): Promise<{ path: string | null; removed: string[] }> {
+    const routine = await this.deps.library.require(routineId);
+    if (routine.starter) throw new Error("This is a starter already.");
+    const check = this.deps.validate(routine);
+    if (!check.ok) throw new Error(`Its inputs and outputs need fixing first: ${check.errors.slice(0, 3).map((e) => `${e.path}: ${e.message}`).join(" · ")}`);
+    const { starter, removed } = toStarterFile(routine, options);
+    const file = await this.deps.chooseSavePath(`${starter.id}.json`);
+    if (!file) return { path: null, removed };
+    await fs.writeFile(file, `${JSON.stringify(starter, null, 2)}\n`, "utf8");
+    return { path: file, removed };
   }
 }

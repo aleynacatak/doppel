@@ -81,36 +81,37 @@ export interface QcCheckDef {
   label: (minPpi: number) => string;
 }
 
-// ---------- Stages (multi-app routines) ----------
+// ---------- Running a routine (begin → item × n → end) ----------
 
-/** Everything a stage run needs from the core; the same for every item of the stage. */
+/** Everything a routine run needs from the core; the same for every item. */
 export interface StageRunContext {
   runId: string;
   routineName: string;
   stage: Stage;
-  /** The document picked for this stage's app (stages with document "open"). */
+  /** The document picked for the routine's app (routines with a document input). */
   documentId?: string;
   /** "copy": on a copy (Figma: a copy of the page). "original": in place. "trial": a scratch copy that is removed afterwards. */
   target: "copy" | "original" | "trial";
-  /** This stage's working folder (runs/<runId>/<stageId>/): files handed to later stages go here. */
+  /** The node's working folder (runs/<runId>/<nodeId>/): files handed to later routines go here. */
   workDir: string;
   /** Where copies of unsaved documents go (they have no folder of their own). */
   copiesDir: string;
-  /** Where the stage may write files: the working folder and the folder params picked for the run. */
+  /** Where the routine may write files besides its working folder: folder inputs picked for the run. */
   allowedFolders: string[];
   isCancelled: () => boolean;
 }
 
-/** One item of a stage (the whole stage when it doesn't repeat). Placeholders are already expanded. */
+/** One item of a routine run (the whole run when it doesn't iterate). Placeholders are already expanded. */
 export interface StageItemInput {
   key: string;
   label: string;
-  /** 0-based position among the stage's items. */
+  /** 0-based position among the items. */
   index: number;
   item: unknown;
+  /** Per joined list input: the item paired with this one (ctx.matched.<key> in scripts). */
+  matched?: Record<string, unknown>;
+  /** Inputs and settings by key (params.<key> in scripts). */
   params: Record<string, unknown>;
-  /** Outputs of earlier stages: stages.<id>.outputs.<key>. */
-  stages: Record<string, { outputs: Record<string, unknown[]> }>;
   /** Action list (Figma) or script (ExtendScript) for this item. */
   body: unknown;
 }
@@ -121,7 +122,7 @@ export interface StageItemResult {
   /** The routine's own code failed (as opposed to the app being unavailable). */
   scriptFailure?: boolean;
   outputs: AdapterOutput[];
-  /** Values for the stage's named outputs, e.g. { files: ["/…/label-1.png"] }. */
+  /** Values for the routine's named outputs, e.g. { files: ["/…/label-1.png"] }. */
   values: Record<string, unknown[]>;
   findings: RuleFinding[];
   log: string[];
@@ -129,7 +130,7 @@ export interface StageItemResult {
   data?: unknown;
 }
 
-/** Adapter-owned state for one stage run (a working copy, a page, documents opened along the way). */
+/** Adapter-owned state for one routine run (a working copy, a page, documents opened along the way). */
 export interface StageSession {
   state: Record<string, unknown>;
   /** What the stage runs on, for the Run screen, e.g. "Campaign · Labels (Doppl copy)". */
@@ -157,6 +158,12 @@ export interface RoutineTemplate {
   builtInQc?: boolean;
   experimental?: boolean;
   requiredFonts: string[];
+}
+
+export interface ManifestOptions {
+  helperDocs?: "full" | "index";
+  /** The designer's request, to rank building blocks by. */
+  request?: string;
 }
 
 export interface DesignAppAdapter {
@@ -204,17 +211,20 @@ export interface DesignAppAdapter {
   /** Reads house-style facts from a file (InDesign path or Figma link). */
   readStyleFacts?(source: string): Promise<StyleFacts>;
 
-  // Stages of multi-app routines: the core calls begin → item × n → end.
-  /** Kind of stage this app runs. */
+  // Running a routine: the core calls begin → item × n → end.
+  /** What this app's routines are: an action list (Figma) or a script. */
   stageKind: "actions" | "script";
   beginStage(ctx: StageRunContext): Promise<StageSession>;
   runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult>;
   /** Always called, also after failures or cancel. Closes working copies. */
   endStage(session: StageSession, ctx: StageRunContext): Promise<void>;
-  /** After the last stage of a run (also after failures): removes scratch copies of trial runs. */
+  /** After the last routine of a run (also after failures): removes scratch copies of trial runs. */
   endRun?(runId: string): Promise<void>;
-  /** What the model needs to write stages for this app (action catalog, or script guide and helper library). */
-  capabilityManifest(): string;
+  /**
+   * What the model needs to write routines for this app (action catalog, or script guide and helper library).
+   * helperDocs "index": a ranked index of the building blocks (by relevance to the request) instead of all their docs.
+   */
+  capabilityManifest(options?: ManifestOptions): string;
   /** Deeper look for the model ("inspect_<app>" tool), e.g. one Figma node with its children. */
   inspectForModel(docId: string, args: Record<string, unknown>): Promise<unknown>;
 }

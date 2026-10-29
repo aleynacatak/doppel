@@ -1,0 +1,14 @@
+{
+  "id": "ps-cutout-white-bg",
+  "app": "photoshop",
+  "request": "Remove the white background from each product image and save transparent PNGs.",
+  "attachments": { "inputs": { "images": "fixtures/images" } },
+  "checks": [
+    { "type": "outputCount", "port": "pngs", "equals": "inputCount:images" },
+    { "type": "fileExtension", "port": "pngs", "is": "png" },
+    { "type": "hasTransparency", "port": "pngs" },
+    { "type": "outerWhiteRemoved", "port": "pngs" },
+    { "type": "noRunErrors" }
+  ],
+  "tags": ["photoshop", "masking"]
+}

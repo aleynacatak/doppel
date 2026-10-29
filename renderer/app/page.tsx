@@ -62,7 +62,7 @@ export default function NewTaskPage() {
       {error && <Notice tone="error">{error}</Notice>}
       <div>
         <Button variant="primary" onClick={create} disabled={!request.trim() || picked.length === 0 || starting}>
-          {starting ? copy.newTask.creating : copy.newTask.create}
+          {starting ? copy.newTask.creating : picked.length > 1 ? copy.newTask.planFlow : copy.newTask.create}
         </Button>
       </div>
     </div>

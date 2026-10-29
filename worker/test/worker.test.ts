@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEMO_LIMITS } from "../src/models";
 import { today } from "../src/quota";
 import { auth, call, chatBody, env, makeCode, mockUpstream, newCreation, usage } from "./helpers";
 
@@ -98,7 +99,7 @@ describe("creation counting", () => {
     const { code } = await makeCode();
     mockUpstream();
     const creation = newCreation();
-    const limit = Number(env.MAX_CALLS_PER_CREATION);
+    const limit = DEMO_LIMITS.maxCallsPerCreation;
     for (let i = 0; i < limit; i++) expect((await chat(code, creation)).status).toBe(200);
     const over = await chat(code, creation);
     expect(over.status).toBe(403);

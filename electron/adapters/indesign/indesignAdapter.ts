@@ -1,23 +1,12 @@
+import { indesignLibrary } from "./library";
+import { blocks } from "../../core/blocks/registry";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AppStatus, DocumentRef, DocumentSummary, ParamOption, PreviewImage } from "../../core/types";
 import { shortVersion } from "../../core/util";
 import { filePreview } from "../previews";
-import type {
-  AdapterOutput,
-  DesignAppAdapter,
-  Progress,
-  RuleCheckOptions,
-  RuleFinding,
-  ScriptContext,
-  ScriptResult,
-  StageItemInput,
-  StageItemResult,
-  StageRunContext,
-  StageSession,
-  StyleFacts,
-} from "../types";
+import type { AdapterOutput, DesignAppAdapter, ManifestOptions, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
 import { AdobeConnection } from "../adobe/connection";
 import { BridgeError, indesignBridge } from "./bridge";
 import { lintExtendScript } from "./lint";
@@ -70,8 +59,8 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 
   /** Runs a script and keeps the permission state up to date. */
-  private call<T>(main: string, input: unknown, timeoutSec?: number): Promise<T> {
-    return this.adobe.call<T>(main, input, timeoutSec);
+  private call<T>(main: string, input: unknown, timeoutSec?: number, library?: string): Promise<T> {
+    return this.adobe.call<T>(main, input, timeoutSec, undefined, library);
   }
 
   getStatus(): Promise<AppStatus> {
@@ -253,8 +242,10 @@ export class InDesignAdapter implements DesignAppAdapter {
 
   // ---------- Stages of multi-app routines ----------
 
-  capabilityManifest() {
-    return `${INDESIGN_MODEL_GUIDE}\n\n${STAGE_NOTES}`;
+  /** The guide (it documents the ctx helpers); "index" adds the ranked building blocks, yours included. */
+  capabilityManifest(options: ManifestOptions = {}) {
+    const guide = `${INDESIGN_MODEL_GUIDE}\n\n${STAGE_NOTES}`;
+    return options.helperDocs === "index" ? `${guide}\n\n${blocks.indexText("indesign", options.request ?? "")}` : guide + blocks.personalText("indesign");
   }
 
   async inspectForModel(docId: string) {
@@ -295,9 +286,9 @@ export class InDesignAdapter implements DesignAppAdapter {
         params: input.params,
         item: input.item,
         itemIndex: input.index,
-        stages: input.stages,
+        matched: input.matched ?? {},
         workDir: ctx.workDir,
-      });
+      }, undefined, ctx.stage.blocks?.code ? indesignLibrary(ctx.stage.blocks.code) : undefined);
     } catch (err) {
       if (err instanceof BridgeError && err.kind === "script") {
         return { ok: false, error: `${err.message}${err.line ? ` (script line ${err.line})` : ""}`, scriptFailure: true, outputs: [], values: {}, findings: [], log: [] };
@@ -335,10 +326,12 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 }
 
-const STAGE_NOTES = `In a multi-app routine, an InDesign stage's script also gets:
-  ctx.item (the current item when the stage repeats: a data row object, or for files { path, name, stem, ext }),
-  ctx.itemIndex (0-based), ctx.stages.<stageId>.outputs.<key> (arrays from earlier stages),
-  ctx.workDir (this stage's working folder; put files that later stages need here),
-  ctx.stageOutput(key, value) (adds a value to one of the stage's declared outputs; exported files listed with
-  ctx.output({ filePath }) go to the stage's first fileList output automatically).
-doc is null for stages with document "none" (open files with app.open(File(params.someFile)) yourself then).`;
+const STAGE_NOTES = `An InDesign routine's script also gets:
+  params.<key>: every input and setting by key (file and folder inputs are paths, fileList inputs arrays of paths,
+  rows inputs { rows, columns, name, path }),
+  ctx.item (the current item when the routine iterates: a data row object, or for files { path, name, stem, ext }),
+  ctx.itemIndex (0-based), ctx.matched.<input> (the item of a second list that pairs with ctx.item),
+  ctx.workDir (this routine's working folder; files other routines need go here),
+  ctx.stageOutput(key, value) (adds a value to one of the routine's declared outputs; exported files listed with
+  ctx.output({ filePath }) go to the first file output automatically).
+doc is null for routines without a document input (open files with app.open(File(params.someFile)) yourself then).`;

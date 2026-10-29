@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AiAccessSettings } from "@/components/settings/AiAccessSettings";
+import { AiModelsSettings } from "@/components/settings/AiModelsSettings";
 import { AppStatusChip } from "@/components/shell/AppStatusChip";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
@@ -69,6 +70,16 @@ export default function SettingsPage() {
         <Link href="/connect" className="ui-link">
           {copy.settings.appsLink}
         </Link>
+      </Section>
+
+      <Section title={copy.settings.advancedTitle}>
+        <details>
+          <summary className="ui-link">{copy.aiModels.title}</summary>
+          <div className="flex flex-col gap-3 pt-4">
+            <p className="ui-small ui-muted">{copy.settings.advancedHint}</p>
+            <AiModelsSettings />
+          </div>
+        </details>
       </Section>
     </div>
   );

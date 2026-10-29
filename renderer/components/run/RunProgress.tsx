@@ -1,46 +1,50 @@
-import type { Run } from "@core/types";
+"use client";
+
+import type { Flow, FlowContext, Run } from "@core/types";
+import { useEffect, useState } from "react";
 import { copy } from "@/copy";
+import { doppel } from "@/lib/doppel";
+import { useShell } from "@/lib/store";
+import { FlowCanvas } from "../flow/FlowCanvas";
 import { AiCallCounter } from "../ui/AiCallCounter";
 import { Button } from "../ui/Button";
-import { ProgressBar, Spinner } from "../ui/Progress";
-import { StageProgressList } from "./StageProgressList";
+import { Spinner } from "../ui/Progress";
+import { NodeProgressList } from "./NodeProgressList";
 
-/** Live progress of a run: phase, per-output status, cancel, AI-call counter. */
-export function RunProgress({ run, onCancel }: { run: Run; onCancel: () => void }) {
-  const total = run.outputs.length;
-  const done = run.outputs.filter((o) => o.status === "done" || o.status === "failed").length;
+/** Live progress of a run: phase, the flow canvas in run mode (flows), progress per node and item, cancel. */
+export function RunProgress({ run, flow, onCancel }: { run: Run; flow?: Flow | null; onCancel: () => void }) {
+  const apps = useShell((s) => s.apps);
+  const [ctx, setCtx] = useState<FlowContext | null>(null);
+  useEffect(() => {
+    if (!flow) return;
+    doppel().getFlowContext(flow).then(setCtx).catch(() => undefined);
+  }, [flow]);
   return (
     <div className="flex flex-col gap-6">
-      <AiCallCounter
-        count={run.aiCalls}
-        label={copy.run.aiCounterLabel}
-        hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero}
-      />
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Spinner />
-            <span>{run.phase ?? copy.run.progressTitle}</span>
-          </div>
-          <Button onClick={onCancel}>{copy.run.cancelRun}</Button>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <Spinner />
+          <span>{run.phase ?? copy.run.progressTitle}</span>
         </div>
-        {!run.stages?.length && <ProgressBar value={total ? done / total : undefined} label={copy.run.progressTitle} />}
-        {total > 0 && !run.stages?.length && <div className="ui-small ui-muted">{copy.run.outputsDone(done, total)}</div>}
+        <Button onClick={onCancel}>{copy.run.cancelRun}</Button>
       </div>
-      {run.stages?.length ? <StageProgressList stages={run.stages} /> : null}
-      {total > 0 && !run.stages?.length && (
-        <ul className="ui-card flex flex-col">
-          {run.outputs.map((o) => (
-            <li key={o.id} className="ui-divider flex items-center justify-between gap-4 px-3 py-2 first:border-t-0">
-              <span>{o.label}</span>
-              <span className="ui-small ui-muted flex items-center gap-2">
-                {o.status === "running" && <Spinner />}
-                {copy.run.outputStatus[o.status]}
-              </span>
-            </li>
-          ))}
-        </ul>
+      <AiCallCounter count={run.aiCalls} label={copy.run.aiCounterLabel} hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
+      {run.mocked && <p className="ui-small ui-muted">{copy.results.simulated}</p>}
+      {flow && (
+        <FlowCanvas
+          className="h-[480px]"
+          flow={flow}
+          ctx={ctx}
+          apps={apps}
+          mode="run"
+          run={run}
+          updates={{}}
+          selection={null}
+          onSelect={() => undefined}
+          overlay={<div className="ui-card ui-small absolute right-3 top-3 px-2 py-1">{copy.flow.aiCalls(run.aiCalls)}</div>}
+        />
       )}
+      <NodeProgressList nodes={run.nodes} />
     </div>
   );
 }

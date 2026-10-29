@@ -1,5 +1,5 @@
 import { AdobeBridge, BridgeError } from "../adobe/bridge";
-import { DOPPL_LIB } from "./jsx/lib";
+import { indesignLibrary } from "./library";
 
 // InDesign on the shared Adobe bridge (adapters/adobe/bridge.ts): `do script … language javascript`, with
 // dialogs suppressed while a script runs.
@@ -15,7 +15,7 @@ export const indesignBridge = new AdobeBridge({
   folderPrefix: "Adobe InDesign",
   runCommand: "do script",
   delivery: "file",
-  library: DOPPL_LIB,
+  library: indesignLibrary(),
   prologue: [
     "var previousLevel = app.scriptPreferences.userInteractionLevel;",
     "app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;",

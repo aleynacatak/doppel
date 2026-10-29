@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // The repo root (one package.json for Electron and Next).
   outputFileTracingRoot: path.join(__dirname, ".."),
+  // Pure code shared with the main process (port types, flow graph): electron/shared/.
+  experimental: { externalDir: true },
 };
 
 export default nextConfig;

@@ -1,147 +1,23 @@
 "use client";
 
-import type { ParamValue, ParamValues, QcMode, QcOptions, Routine, RunOptions } from "@core/types";
-import Link from "next/link";
+import type { RunTarget } from "@core/types";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
-import { EnvironmentWarning } from "@/components/run/EnvironmentWarning";
-import { ParamForm, initialValues } from "@/components/run/ParamForm";
-import { QcModePicker } from "@/components/run/QcModePicker";
+import { Suspense, useEffect } from "react";
 import { RunProgress } from "@/components/run/RunProgress";
-import { StagedRunForm } from "@/components/run/StagedRunForm";
-import { TargetOptions } from "@/components/run/TargetOptions";
-import { AiCallCounter } from "@/components/ui/AiCallCounter";
-import { Button, ButtonLink } from "@/components/ui/Button";
+import { RunSetupForm } from "@/components/run/RunSetupForm";
+import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Loading } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { useAsync, useOpenDocuments, useRun } from "@/lib/hooks";
-import { useAiReviewAvailable } from "@/lib/store";
+import { useAsync, useRun } from "@/lib/hooks";
 
-const DEFAULT_QC: QcOptions = { minPpiPrint: 300, minPpiWeb: 150 };
-
-function RunForm({ routine }: { routine: Routine }) {
-  const router = useRouter();
-  const aiReviewAvailable = useAiReviewAvailable();
-  const { data: docs = [], connected, app } = useOpenDocuments(routine.appId);
-  const [values, setValues] = useState<ParamValues>(() => initialValues(routine.params, routine.lastParams));
-  const [qcMode, setQcMode] = useState<QcMode>("auto");
-  const [qcOptions, setQcOptions] = useState<QcOptions>(DEFAULT_QC);
-  const [target, setTarget] = useState<RunOptions["target"]>("copy");
-  const [documentId, setDocumentId] = useState<string>();
-  const [envAccepted, setEnvAccepted] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const { data: env } = useAsync(() => doppel().checkEnvironment(routine.id), [routine.id, app?.status]);
-  useEffect(() => {
-    if (qcMode === "auto_ai" && !aiReviewAvailable) setQcMode("auto");
-  }, [qcMode, aiReviewAvailable]);
-  const envProblem = !!env && (env.versionMismatch || env.missingFonts.length > 0);
-  useEffect(() => setEnvAccepted(false), [env]);
-
-  const setValue = useCallback((key: string, value: ParamValue) => setValues((v) => ({ ...v, [key]: value })), []);
-
-  const repair = async () => {
-    const creation = await doppel().repairRoutine(routine.id);
-    router.push(`/create?task=${creation.id}`);
-  };
-
-  const start = async () => {
-    setStarting(true);
-    setError(null);
-    try {
-      const run = await doppel().runRoutine(routine.id, values, qcMode, { target, documentId, qcOptions });
-      router.replace(`/run?routine=${routine.id}&run=${run.id}`);
-    } catch (e) {
-      setError((e as Error).message);
-      setStarting(false);
-    }
-  };
-
-  const figma = app?.connection === "links-and-plugin";
-  const doc = docs.find((d) => d.id === documentId);
-  // Figma routines run in the Doppl plugin, which has to be open on the chosen file.
-  const pluginOnDoc = !figma || !!doc?.active;
-  const blocked = !connected || docs.length === 0 || !pluginOnDoc || (envProblem && !envAccepted);
-
-  return (
-    <div className="flex flex-col gap-8">
-      {app && !connected && (
-        <Notice tone="warning">
-          <span>
-            {copy.run.appNotConnected(app.name)}{" "}
-            <Link href="/connect" className="ui-link">
-              {copy.common.connectApps}
-            </Link>
-          </span>
-        </Notice>
-      )}
-      {app && connected && docs.length === 0 && (
-        <Notice tone="warning">{figma ? copy.newTask.addFigmaFile : copy.run.noDocument(app.name)}</Notice>
-      )}
-      {figma && doc && (
-        <Notice
-          tone={pluginOnDoc ? "info" : "warning"}
-          actions={!pluginOnDoc && <Button onClick={() => doppel().openDocument("figma", doc.id)}>{copy.connect.figma.openInFigma}</Button>}
-        >
-          {pluginOnDoc ? copy.run.figmaPluginOn(doc.name, app?.detail?.split(" · ").pop() ?? "") : copy.run.figmaPluginNeeded(doc.name)}
-        </Notice>
-      )}
-      {envProblem && !envAccepted && env && (
-        <EnvironmentWarning env={env} appName={app?.name ?? ""} onRunAnyway={() => setEnvAccepted(true)} onRepair={repair} />
-      )}
-
-      <Section title={copy.run.inputsTitle}>
-        <ParamForm routineId={routine.id} documentId={documentId} params={routine.params} values={values} onChange={setValue} />
-      </Section>
-
-      {app && (
-        <Section title={copy.run.targetTitle}>
-          <TargetOptions
-            app={app}
-            docs={docs}
-            documentId={documentId}
-            onDocumentChange={setDocumentId}
-            target={target}
-            onTargetChange={setTarget}
-            modifiesDocument={routine.modifiesDocument}
-          />
-        </Section>
-      )}
-
-      <Section title={copy.run.qcTitle}>
-        <QcModePicker
-          mode={qcMode}
-          onModeChange={setQcMode}
-          options={qcOptions}
-          onOptionsChange={setQcOptions}
-          showResolution={routine.appId === "indesign" && !routine.builtInQc}
-          aiReviewAvailable={aiReviewAvailable}
-        />
-      </Section>
-
-      {error && <Notice tone="error">{error}</Notice>}
-
-      <div className="flex flex-wrap items-center gap-4">
-        <Button variant="primary" onClick={start} disabled={blocked || starting}>
-          {starting ? copy.run.starting : copy.run.runButton}
-        </Button>
-        <div className="w-72">
-          <AiCallCounter count={0} label={copy.run.aiCounterLabel} hint={qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RunInProgress({ routineId, runId }: { routineId: string; runId: string }) {
+function RunInProgress({ target, runId }: { target: RunTarget; runId: string }) {
   const router = useRouter();
   const { data: run, loading } = useRun(runId);
+  const { data: flow } = useAsync(() => (target.kind === "flow" ? doppel().getFlow(target.id) : Promise.resolve(null)), [target.id]);
 
   useEffect(() => {
     if (run && run.status !== "running" && run.status !== "cancelled") router.replace(`/results?run=${run.id}`);
@@ -151,32 +27,31 @@ function RunInProgress({ routineId, runId }: { routineId: string; runId: string 
   if (!run) return <EmptyState title={copy.common.notFound} />;
   if (run.status === "cancelled") {
     return (
-      <Notice title={copy.run.cancelledTitle} actions={<ButtonLink href={`/run?routine=${routineId}`}>{copy.run.runAgain}</ButtonLink>} />
+      <Notice title={copy.run.cancelledTitle} actions={<ButtonLink href={`/run?${target.kind}=${target.id}`}>{copy.run.runAgain}</ButtonLink>}>
+        {run.workDir && <p className="ui-small ui-muted">{copy.results.runFolder(run.workDir)}</p>}
+      </Notice>
     );
   }
   if (run.status !== "running") return <Loading />;
-  return <RunProgress run={run} onCancel={() => doppel().cancelRun(run.id)} />;
+  return <RunProgress run={run} flow={flow} onCancel={() => doppel().cancelRun(run.id)} />;
 }
 
 function RunScreen() {
   const params = useSearchParams();
-  const routineId = params.get("routine");
+  const flowId = params.get("flow");
+  const target: RunTarget | null = flowId ? { kind: "flow", id: flowId } : params.get("routine") ? { kind: "routine", id: params.get("routine")! } : null;
   const runId = params.get("run");
-  const { data: routine, loading } = useAsync(() => (routineId ? doppel().getRoutine(routineId) : Promise.resolve(null)), [routineId]);
+  const { data: setup, loading, error } = useAsync(() => (target ? doppel().getRunSetup(target) : Promise.resolve(null)), [target?.kind, target?.id]);
 
-  if (loading && routine === undefined) return <Loading />;
-  if (!routine) return <EmptyState title={copy.common.notFound} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
+  if (!target) return <EmptyState title={copy.common.notFound} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
+  if (loading && setup === undefined) return <Loading />;
+  if (error || !setup) return <EmptyState title={copy.common.notFound} body={error ?? undefined} action={<ButtonLink href="/routines">{copy.nav.library}</ButtonLink>} />;
 
+  const back = target.kind === "flow" ? `/flow?id=${target.id}` : `/routine?id=${target.id}`;
   return (
     <div className="flex flex-col gap-2">
-      <PageHeader back={{ href: `/routine?id=${routine.id}`, label: routine.name }} title={copy.run.title(routine.name)} />
-      {runId ? (
-        <RunInProgress routineId={routine.id} runId={runId} />
-      ) : routine.stages?.length ? (
-        <StagedRunForm key={routine.id} routine={routine} />
-      ) : (
-        <RunForm key={routine.id} routine={routine} />
-      )}
+      <PageHeader back={{ href: back, label: setup.name }} title={copy.run.title(setup.name)} />
+      {runId ? <RunInProgress target={target} runId={runId} /> : <RunSetupForm key={`${target.kind}:${target.id}`} setup={setup} keepPicks={params.get("picked") === "1"} />}
     </div>
   );
 }

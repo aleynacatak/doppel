@@ -1,6 +1,7 @@
 import { type AccessCode, nowIso } from "./codes";
 import { type Env, num } from "./env";
 import { ApiError, MESSAGES } from "./errors";
+import { DEMO_LIMITS } from "./models";
 
 // Every limit is enforced with a single conditional UPDATE … RETURNING, so concurrent
 // requests can never spend the same unit twice (D1 runs each statement atomically).
@@ -43,7 +44,7 @@ export async function assertRateLimit(env: Env, code: AccessCode) {
 
 /**
  * Charges one model call to a creation. The first call with a new creation id consumes one of the
- * code's creations; later calls only count against MAX_CALLS_PER_CREATION.
+ * code's creations; later calls only count against the demo's calls per creation (the app's model registry).
  */
 export async function chargeCreationCall(env: Env, code: AccessCode, creationId: string): Promise<void> {
   const db = env.DB;
@@ -75,7 +76,7 @@ export async function chargeCreationCall(env: Env, code: AccessCode, creationId:
 
   const counted = await db
     .prepare("UPDATE creations SET calls = calls + 1 WHERE id = ? AND code_id = ? AND calls < ? RETURNING calls")
-    .bind(creationId, code.id, num(env.MAX_CALLS_PER_CREATION, 15))
+    .bind(creationId, code.id, DEMO_LIMITS.maxCallsPerCreation)
     .first();
   if (!counted) throw new ApiError("creation_call_limit", MESSAGES.creation_call_limit);
 }

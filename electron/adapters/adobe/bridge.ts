@@ -220,16 +220,17 @@ export class AdobeBridge {
    * Runs `main` (an ExtendScript `function (input) {…}`) in the app and returns its data.
    * Throws BridgeError with a plain-language message on failure. `label` names the call in the connection log.
    */
-  runJsx<T>(main: string, input: unknown, timeoutSec: number, label = "script"): Promise<T> {
-    const job = this.queue.then(() => this.execute<T>(main, input, timeoutSec, label));
+  runJsx<T>(main: string, input: unknown, timeoutSec: number, label = "script", library?: string): Promise<T> {
+    const job = this.queue.then(() => this.execute<T>(main, input, timeoutSec, label, library));
     this.queue = job.catch(() => undefined);
     return job;
   }
 
-  private async execute<T>(main: string, input: unknown, timeoutSec: number, label: string): Promise<T> {
+  private async execute<T>(main: string, input: unknown, timeoutSec: number, label: string, library?: string): Promise<T> {
     this.busy = true;
     const started = Date.now();
-    const { source, routineStartLine } = assembleScript(this.spec, main);
+    // A routine runs with the helper versions it pinned; everything else with the default library.
+    const { source, routineStartLine } = assembleScript(library ? { ...this.spec, library } : this.spec, main);
     const dir = path.join(os.tmpdir(), "doppl-jsx");
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${newId()}.jsx`);

@@ -34,9 +34,9 @@ export class AdobeConnection {
   ) {}
 
   /** Runs a script and keeps the permission state up to date. */
-  async call<T>(main: string, input: unknown, timeoutSec = this.timeoutSec(), label?: string): Promise<T> {
+  async call<T>(main: string, input: unknown, timeoutSec = this.timeoutSec(), label?: string, library?: string): Promise<T> {
     try {
-      const data = await this.bridge.runJsx<T>(main, input, timeoutSec, label);
+      const data = await this.bridge.runJsx<T>(main, input, timeoutSec, label, library);
       this.permissionDenied = false;
       this.probed = true;
       return data;

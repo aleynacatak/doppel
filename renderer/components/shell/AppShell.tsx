@@ -45,11 +45,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (settings && !settings.onboarded && pathname !== "/connect") router.replace("/connect");
   }, [settings, pathname, router]);
 
+  // The flow editor uses the whole window.
+  const wide = pathname === "/flow";
   return (
     <div className="flex h-screen">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-8 py-8">
+        <div className={wide ? "px-6 py-6" : "mx-auto max-w-5xl px-8 py-8"}>
           {!ready ? (
             <Loading />
           ) : bridgeMissing ? (
