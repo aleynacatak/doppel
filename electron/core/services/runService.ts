@@ -12,6 +12,7 @@ import type {
   DevFlowOptions,
   Flow,
   PreflightReport,
+  RunFix,
   InputValue,
   MatchRule,
   QcOptions,
@@ -209,7 +210,7 @@ export class RunService {
     return checkReadiness(source, adapters ? { statusOf: async () => "connected" as const } : this.deps.apps, units, documents);
   }
 
-  async start(target: RunTarget, request: RunRequest, opts: { onlyItems?: Set<string>; dev?: DevFlowOptions } = {}): Promise<Run> {
+  async start(target: RunTarget, request: RunRequest, opts: { onlyItems?: Set<string>; dev?: DevFlowOptions; autoFixOf?: string } = {}): Promise<Run> {
     const { storage } = this.deps;
     const { flow, info, routine } = await this.resolve(target, request.matches);
     if (routine) {
@@ -262,6 +263,7 @@ export class RunService {
       edges: [],
       workDir: path.join(this.deps.runsDir, id),
       ...(opts.onlyItems ? { onlyItems: [...opts.onlyItems] } : {}),
+      ...(opts.autoFixOf ? { autoFixOf: opts.autoFixOf } : {}),
       ...(mocked ? { mocked: true } : {}),
     };
     if (!mocked) {
@@ -435,7 +437,10 @@ export class RunService {
     void (async () => {
       let filled = 0;
       for (const o of missing) {
-        o.preview = await adapter.renderPreview(`file:${o.filePath}`).catch(() => undefined);
+        // An app that can't render previews (or one that throws) just leaves the output without one.
+        o.preview = await Promise.resolve()
+          .then(() => adapter.renderPreview?.(`file:${o.filePath}`))
+          .catch(() => undefined);
         if (o.preview) {
           filled++;
           this.deps.emit(run);
@@ -452,7 +457,16 @@ export class RunService {
   }
 
   /** A new run with only the items that failed (everything again when no single item failed). */
-  async retryFailed(runId: string): Promise<Run> {
+  /** Records Doppl's fix of a run's routine on the run, and tells the screens. */
+  async setFix(runId: string, fix: RunFix) {
+    const run = this.active.get(runId)?.run ?? (await this.deps.storage.getRun(runId));
+    if (!run) return;
+    run.fix = fix;
+    await this.deps.storage.saveRun(run);
+    this.deps.emit(run);
+  }
+
+  async retryFailed(runId: string, opts: { autoFixOf?: string } = {}): Promise<Run> {
     const run = await this.requireRun(runId);
     if (run.status === "running") return run;
     const failed = new Set(run.outputs.filter((o) => o.status === "failed" && o.itemKey && o.itemKey !== "all").map((o) => o.itemKey!));
@@ -465,7 +479,7 @@ export class RunService {
       qcMode: run.qcMode,
       options: run.options,
     };
-    return this.start(run.target, request, { onlyItems: failed.size ? failed : undefined, ...(run.mocked ? { dev: { mocked: true, failNodes: [], failItems: {} } } : {}) });
+    return this.start(run.target, request, { onlyItems: failed.size ? failed : undefined, ...opts, ...(run.mocked ? { dev: { mocked: true, failNodes: [], failItems: {} } } : {}) });
   }
 
   async markOutputOk(runId: string, outputId: string): Promise<Run> {

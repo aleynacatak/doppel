@@ -216,6 +216,8 @@ interface CreationState {
   inputs?: { analysis: InputAnalysis; decisions: InputDecision[] };
   /** Partners the designer picked during trials, per input key: an item's pair key → the file. Saved with the routine. */
   trialPairs?: Record<string, Record<string, string>>;
+  /** Doppl started this itself (fixing a routine after a run): no questions, no AI review, at most maxCalls AI calls. */
+  auto?: { maxCalls: number };
 }
 
 /** The item a trial ran on, and the partners it has none for (with the files that could be them, likeliest first). */
@@ -551,11 +553,11 @@ export class RoutineService {
   }
 
   /** Refine: changes an existing routine as the designer asks; nothing changes until they save it as a new version. */
-  async refine(input: RefineInput): Promise<Creation> {
+  async refine(input: RefineInput, opts: { auto?: { maxCalls: number } } = {}): Promise<Creation> {
     if (!input.request.trim()) throw new Error("Describe what should change first.");
     const routine = await this.deps.library.require(input.routineId);
     if (routine.starter) throw new Error("Starter routines can't be refined directly. Duplicate it first (Duplicate and refine).");
-    if (input.problem) this.deps.onFeedback?.([routine.id], "notRight");
+    if (input.problem && !opts.auto) this.deps.onFeedback?.([routine.id], "notRight");
     const setup = await this.refineSetup(routine.id, input.problem, input.flowLink);
     const run = await this.refineRun(routine, input.problem);
     const keys = input.testItems.filter((k) => setup.items.some((i) => i.key === k)).slice(0, MAX_TEST_ITEMS);
@@ -591,6 +593,7 @@ export class RoutineService {
       ...(input.flowLink ? { flowLink: input.flowLink } : {}),
     };
     const state = this.newState(creation);
+    if (opts.auto) state.auto = opts.auto;
     state.repair = { routine, previous: await this.refineInputs(routine, run, input.problem, input.flowLink), problems: [] };
     state.refine = {
       input,
@@ -929,7 +932,17 @@ export class RoutineService {
         createdAt: latest.createdAt,
         updatedAt: nowIso(),
         runs: latest.runs,
-        versions: [...latest.versions, { version, createdAt: nowIso(), aiCalls: c.aiCalls, note: c.refine?.changeSummary || "Refined", request: c.task.request, ...withProvenance(this.provenance(state)) }],
+        versions: [
+          ...latest.versions,
+          {
+            version,
+            createdAt: nowIso(),
+            aiCalls: c.aiCalls,
+            note: state.auto ? `Adapted by Doppl after a run: ${c.refine?.changeSummary || "made the failed items work"}` : c.refine?.changeSummary || "Refined",
+            request: c.task.request,
+            ...withProvenance(this.provenance(state)),
+          },
+        ],
         portabilityIssues: undefined,
         format: 2,
       };
@@ -1465,7 +1478,7 @@ export class RoutineService {
     spec: { appId: AppId; planned?: PlannedRoutine },
     ai: AiCallContext,
   ): Promise<{ res: NodeRunResult; workDir: string; sample?: TrialSample }> {
-    for (let tries = 0; tries < 3; tries++) {
+    for (let tries = 0; tries < 3 && !state.auto; tries++) {
       const failed = attempt.res.items.filter((i) => !i.ok);
       if (attempt.res.cancelled || !failed.length || failed.some((i) => i.cause !== "files")) return attempt;
       const sample = attempt.sample;
@@ -1692,7 +1705,9 @@ export class RoutineService {
     const turnSchema = routineTurnSchema(!!spec.revision, format);
     const codeKind = adapter.stageKind === "actions" ? "actions" : "script";
     // The demo Worker counts real calls per creation id; a step with separate code makes two.
-    const callCap = this.deps.access.callLimit?.();
+    // Doppl's own fixes get a small budget (the review it skips doesn't need its reserve).
+    const limit = this.deps.access.callLimit?.();
+    const callCap = state.auto ? Math.min(limit ?? Infinity, state.auto.maxCalls + REVIEW_RESERVE) : limit;
     let p = state.loop;
     if (!p || p.key !== key || !spec.resume) {
       if (p && p.key !== key) state.pastMessages.push(...p.messages);
@@ -1932,7 +1947,8 @@ export class RoutineService {
     }
 
     this.setStage(state, "check", "active");
-    if (result.res) {
+    // Doppl's own fixes are checked by whether the items work, not by an AI review.
+    if (result.res && !state.auto) {
       // Steps written as custom code get a closer look from the reviewer (rule checks already ran on every output).
       const customSteps = result.draft.steps.filter((s) => s.kind === "custom").map((s) => s.plainLanguage);
       const extra = await this.deps.ai.reviewTrial(c.task, { ...result.draft, customSteps }, c.outputs, ai);
@@ -1973,7 +1989,8 @@ export class RoutineService {
     const c = state.creation;
     const q = recoverKeys((t.question ?? {}) as Record<string, any>, ["options", "text"]);
     const options = Array.isArray(q.options) ? q.options.slice(0, 4) : [];
-    if (progress.asked || turn > 1 || inFlow || !q.text || options.length < 2) return null;
+    // Doppl's own fixes don't wait for the designer: the AI decides.
+    if (state.auto || progress.asked || turn > 1 || inFlow || !q.text || options.length < 2) return null;
     progress.asked = true;
     c.question = { id: `q-${newId()}`, text: String(q.text), options: options.map((o: any, i: number) => ({ id: String(o?.id ?? i), label: String(o?.label ?? o?.id ?? o) })) };
     c.status = "waiting";

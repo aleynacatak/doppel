@@ -5,6 +5,7 @@ import { InDesignAdapter } from "../adapters/indesign/indesignAdapter";
 import { PhotoshopAdapter } from "../adapters/photoshop/photoshopAdapter";
 import { AdapterRegistry } from "../adapters/registry";
 import { BlockService } from "./blocks/candidates";
+import { AutoFixService } from "./services/autoFixService";
 import { blocks } from "./blocks/registry";
 import { runHelperTests } from "./blocks/testRunner";
 import { newId } from "./util";
@@ -102,6 +103,8 @@ export async function createServices(
   const flows = new FlowService({ storage, library, starters, registry });
   // Building block candidates grow from saved routines; evidence comes from runs and feedback (never AI on reruns).
   let blockService: BlockService | null = null;
+  // Routines that fail on new files are fixed by Doppl on its own (see AutoFixService).
+  let autoFix: AutoFixService | null = null;
   const runs = new RunService({
     storage,
     library,
@@ -113,7 +116,10 @@ export async function createServices(
     emit: emit.run,
     runsDir: path.join(paths.userData, "runs"),
     copiesDir,
-    onRunFinished: (run, routineOfNode) => void blockService?.recordRun(run, routineOfNode).catch(() => undefined),
+    onRunFinished: (run, routineOfNode) => {
+      void blockService?.recordRun(run, routineOfNode).catch(() => undefined);
+      void autoFix?.consider(run).catch(() => undefined);
+    },
     onFeedback: (ids, kind) => void blockService?.noteFeedback(ids, kind).catch(() => undefined),
   });
   const routines = new RoutineService({
@@ -132,6 +138,7 @@ export async function createServices(
     onSaved: (routine, info, previous) => void blockService?.capture(routine, info, previous).catch((err) => console.error("[blocks]", err)),
     onFeedback: (ids, kind) => void blockService?.noteFeedback(ids, kind).catch(() => undefined),
   });
+  autoFix = new AutoFixService({ routines, runs, library, access });
   blockService = new BlockService({
     dir: path.join(paths.userData, "helpers", "candidates"),
     registry: blocks,

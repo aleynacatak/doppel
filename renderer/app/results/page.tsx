@@ -3,6 +3,7 @@
 import type { NodeProgress, Run, RunOutput } from "@core/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { FixNotice } from "@/components/results/FixNotice";
 import { OutputCard } from "@/components/results/OutputCard";
 import { OutputGrid } from "@/components/results/OutputGrid";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -177,6 +178,7 @@ function ResultsScreen() {
       />
       {run.mocked && <Notice>{copy.results.simulated}</Notice>}
       <p className="ui-h2">{copy.results.itemsSummary(summary)}</p>
+      <FixNotice run={run} />
       {run.status === "failed" && (run.error || run.errorDetail) && (
         <Notice tone="error" title={run.error ?? copy.results.failedTitle}>
           {run.errorDetail && <p>{run.errorDetail}</p>}
@@ -187,7 +189,7 @@ function ResultsScreen() {
           <Spinner /> {run.phase ?? copy.results.running}
         </div>
       )}
-      {failedCount > 0 && run.status !== "running" && (
+      {failedCount > 0 && run.status !== "running" && run.fix?.status !== "fixing" && run.fix?.status !== "fixed" && (
         <Notice
           tone="warning"
           title={copy.results.partialTitle(failedCount)}

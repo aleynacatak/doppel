@@ -399,6 +399,22 @@ export const copy = {
   },
 
   results: {
+    fix: {
+      fixingTitle: "Doppl is adapting the routine to these files",
+      fixingBody: "Some items failed because of the routine. Doppl is changing it with AI and will run them again.",
+      fixedTitle: "Doppl adapted the routine to these files",
+      details: (version: number, calls: number) => `Version ${version} · ${calls} AI ${calls === 1 ? "call" : "calls"}`,
+      newResults: "See the new results",
+      restore: (version: number) => `Restore version ${version}`,
+      restored: (version: number) => `Version ${version} restored.`,
+      notFixedTitle: "Doppl couldn't adapt the routine",
+      unchanged: "The routine wasn't changed.",
+      reviewTitle: "Doppl has a fix that changes what the routine takes or makes",
+      review: "Look at it",
+      rerunTitle: "The failed items, again",
+      rerunBody: (version: number) => `Doppl adapted the routine to these files (version ${version}) and ran the items that failed again.`,
+      firstRun: "See the first run",
+    },
     cause: {
       files: "Check this item's file or data.",
       routine: "The routine couldn't handle this item.",

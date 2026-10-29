@@ -643,6 +643,27 @@ export type PreflightIssue =
   /** A file that can't be read at all. */
   | { kind: "file"; id: string; inputNodeId: string; text: string };
 
+/**
+ * After a run where items failed because of the routine, Doppl adapts the routine with AI on its own: tried on the
+ * failed items and one that worked, saved as a new version only if they all work and the routine's inputs and
+ * outputs stay the same; then the failed items run again. The previous version stays restorable.
+ */
+export interface RunFix {
+  status: "fixing" | "fixed" | "not-fixed" | "needs-review";
+  routineId: string;
+  fromVersion: number;
+  toVersion?: number;
+  /** What changed, in one plain sentence. */
+  summary?: string;
+  aiCalls?: number;
+  /** Why it wasn't fixed (not-fixed) or what needs a look (needs-review). */
+  reason?: string;
+  /** The refine that made the fix (needs-review: open it to look and save). */
+  creationId?: string;
+  /** The run of the failed items again, with the fixed version. */
+  rerunId?: string;
+}
+
 /** Everything the Run screen asks for, for a routine or a flow. */
 export interface RunSetup {
   target: RunTarget;
@@ -738,6 +759,10 @@ export interface Run {
   matches?: Record<string, MatchRule>;
   /** Columns picked per input node (see RunRequest). */
   columns?: Record<string, Record<string, string>>;
+  /** Doppl's fix after this run, when items failed because of the routine (see RunFix). */
+  fix?: RunFix;
+  /** This run is the failed items of another run, again, after Doppl fixed the routine. */
+  autoFixOf?: string;
   qcMode: QcMode;
   options: RunOptions;
   status: RunStatus;
