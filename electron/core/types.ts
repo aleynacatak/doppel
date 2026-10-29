@@ -629,12 +629,16 @@ export interface PreflightReport {
   fixed: PreflightNote[];
   needs: PreflightIssue[];
   skipped: PreflightNote[];
+  /** Columns Doppl matched with AI, per input node (expected → the file's column): kept like picked ones. */
+  columns?: Record<string, Record<string, string>>;
 }
 
 export interface PreflightNote {
   text: string;
   /** Technical detail, shown on request ("windows-1254"). */
   detail?: string;
+  /** A column Doppl matched on its own that the designer can change. */
+  change?: { inputNodeId: string; column: string; candidates: string[] };
 }
 
 export type PreflightIssue =
@@ -653,6 +657,9 @@ export type PreflightIssue =
 export interface RunFix {
   status: "fixing" | "fixed" | "not-fixed" | "needs-review";
   routineId: string;
+  /** Flow runs: the flow and the routine node that was fixed (the flow now uses the new version). */
+  flowId?: string;
+  nodeId?: string;
   fromVersion: number;
   toVersion?: number;
   /** What changed, in one plain sentence. */
@@ -1001,6 +1008,8 @@ export interface Creation {
     message: string;
     /** The inputs that have no sample yet. */
     inputs: { key: string; label: string; type: PortType; extensions?: string[] }[];
+    /** What the designer added so far (from as many places as needed), and which inputs each fills; nothing goes on until they confirm. */
+    added?: { path: string; isFolder: boolean; fills: { key: string; label: string; count: number }[] }[];
   };
   /** Flow creation: the plan, shown for confirmation before anything is created. */
   plan?: FlowPlan;
@@ -1208,7 +1217,10 @@ export interface DoppelApi {
   /** Flow creation: creates the plan's routines one after another, then saves the flow. */
   confirmPlan(creationId: string): Promise<Creation>;
   /** Sample files or folders attached while creation waits for them; it goes on without asking the AI again. */
+  /** Adds sample files or folders to the list the creation waits for (see Creation.needs); confirmSamples goes on with them. */
   addSamples(creationId: string, samples: { files: string[]; folders: string[] }): Promise<Creation>;
+  removeSample(creationId: string, path: string): Promise<Creation>;
+  confirmSamples(creationId: string): Promise<Creation>;
   cancelCreation(id: string): Promise<void>;
   retryCreation(id: string): Promise<Creation>;
   /** Continues a failed creation where it stopped, with a fresh AI budget (one more demo creation). */
@@ -1237,6 +1249,8 @@ export interface DoppelApi {
   duplicateRoutine(id: string): Promise<Routine>;
   /** A new version with an earlier version's content (history is never rewritten). */
   restoreRoutineVersion(id: string, version: number): Promise<Routine>;
+  /** Makes a flow's routine node use another version of its routine (Restore after Doppl's own fix). */
+  pinFlowNodeVersion(flowId: string, nodeId: string, version: number): Promise<Flow>;
   /** Flows that use the routine, with the versions they pin. */
   getRoutineUsage(id: string): Promise<RoutineUsage[]>;
   /** Moves every flow node to the routine's newest version where that keeps the connections working. */

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Run } from "@core/types";
+import type { Run, RunFix } from "@core/types";
 import { useState } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
@@ -15,34 +15,38 @@ import { Spinner } from "../ui/Progress";
 export function FixNotice({ run }: { run: Run }) {
   const [restored, setRestored] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const restore = async (routineId: string, version: number) => {
+  // Restore: the routine's previous version again; in a flow, the flow's node uses it again.
+  const restore = async (fix: Pick<RunFix, "routineId" | "flowId" | "nodeId">, version: number) => {
     setError(null);
     try {
-      await doppel().restoreRoutineVersion(routineId, version);
+      if (fix.flowId && fix.nodeId) await doppel().pinFlowNodeVersion(fix.flowId, fix.nodeId, version);
+      else await doppel().restoreRoutineVersion(fix.routineId, version);
       setRestored(version);
     } catch (e) {
       setError((e as Error).message);
     }
   };
-  const restoreButton = (routineId: string, version: number) =>
+  const restoreButton = (fix: Pick<RunFix, "routineId" | "flowId" | "nodeId">, version: number) =>
     restored === version ? (
       <span className="ui-small">{copy.results.fix.restored(version)}</span>
     ) : (
-      <Button onClick={() => restore(routineId, version)}>{copy.results.fix.restore(version)}</Button>
+      <Button onClick={() => restore(fix, version)}>{copy.results.fix.restore(version)}</Button>
     );
 
-  if (run.autoFixOf && run.target.kind === "routine") {
+  if (run.autoFixOf) {
+    // The rerun after a fix: what it is, the first run, and Restore.
+    const fix = run.fix ?? (run.target.kind === "routine" ? { routineId: run.target.id, fromVersion: run.version - 1, toVersion: run.version } : null);
     return (
       <Notice
         title={copy.results.fix.rerunTitle}
         actions={
           <>
             <ButtonLink href={`/results?run=${run.autoFixOf}`}>{copy.results.fix.firstRun}</ButtonLink>
-            {run.version > 1 && restoreButton(run.target.id, run.version - 1)}
+            {fix && fix.fromVersion > 0 && restoreButton(fix, fix.fromVersion)}
           </>
         }
       >
-        {copy.results.fix.rerunBody(run.version)}
+        {copy.results.fix.rerunBody(fix?.toVersion ?? run.version)}
         {error && <p className="ui-small">{error}</p>}
       </Notice>
     );
@@ -69,7 +73,7 @@ export function FixNotice({ run }: { run: Run }) {
                 {copy.results.fix.newResults}
               </ButtonLink>
             )}
-            {restoreButton(fix.routineId, fix.fromVersion)}
+            {restoreButton(fix, fix.fromVersion)}
           </>
         }
       >

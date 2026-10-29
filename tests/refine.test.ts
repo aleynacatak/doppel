@@ -467,6 +467,7 @@ describe("refining with the AI", () => {
     // A copy that never ran asks for sample photos to try the change on.
     await until(c.id, (x) => x.status === "waiting" && !!x.needs);
     await service.addSamples(c.id, { files: [], folders: [path.join(dir, "samples")] });
+    await service.confirmSamples(c.id);
     const ready = await until(c.id, (x) => x.status === "ready");
     expect(ready.refine!.routineId).toBe(copy.id);
     const saved = await service.save(c.id, { name: "" });

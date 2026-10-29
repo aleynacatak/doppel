@@ -74,6 +74,23 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
     [target.id, JSON.stringify(inputs), JSON.stringify(matches), JSON.stringify(columns)],
   );
   const unusable = (preflight?.needs ?? []).filter((i) => i.kind !== "partner");
+  // Columns Doppl matched with AI are kept like picked ones: the next check and the run use them without AI.
+  useEffect(() => {
+    const found = preflight?.columns;
+    if (!found) return;
+    setColumns((c) => {
+      const next = { ...c };
+      let changed = false;
+      for (const [node, map] of Object.entries(found)) {
+        for (const [expected, header] of Object.entries(map)) {
+          if (next[node]?.[expected] !== undefined) continue;
+          next[node] = { ...(next[node] ?? {}), [expected]: header };
+          changed = true;
+        }
+      }
+      return changed ? next : c;
+    });
+  }, [preflight]);
 
   const appIds = useMemo(() => new Set(Object.values(setup.routines).map((r) => r.appId)), [setup.routines]);
   const canChooseTarget = [...appIds].some((a) => a === "figma" || a === "indesign") && Object.values(setup.routines).some((r) => r.inputs.some((p) => p.type === "document"));

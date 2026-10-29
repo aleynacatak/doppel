@@ -69,8 +69,9 @@ export class JsonStorage implements Storage {
 
   private async writeJson(file: string, data: unknown) {
     await fs.mkdir(path.dirname(file), { recursive: true });
-    // Write to a temp file first so a crash never leaves half a routine on disk.
-    const tmp = `${file}.tmp`;
+    // Write to a temp file first so a crash never leaves half a routine on disk; its own name per write, so two
+    // saves of the same file at once (a run's progress and its fix) don't collide.
+    const tmp = `${file}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
     await fs.rename(tmp, file);
   }

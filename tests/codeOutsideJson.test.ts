@@ -228,7 +228,10 @@ describe("code outside the JSON", () => {
       const update = await service.updateBlocks(routine!.id);
       // It never ran, so there are no test items yet: like Refine, it asks for a sample.
       const waiting = await until(update.id, (x) => x.status === "waiting" || x.status === "ready");
-      if (waiting.status === "waiting") await service.addSamples(update.id, { files: [path.join(dir, "fig.jpg")], folders: [] });
+      if (waiting.status === "waiting") {
+        await service.addSamples(update.id, { files: [path.join(dir, "fig.jpg")], folders: [] });
+        await service.confirmSamples(update.id);
+      }
       const ready = await until(update.id, (x) => x.status === "ready");
       expect(ready.error).toBeUndefined();
       expect(ready.status).toBe("ready");

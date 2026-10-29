@@ -121,6 +121,11 @@ export async function createServices(
       void autoFix?.consider(run).catch(() => undefined);
     },
     onFeedback: (ids, kind) => void blockService?.noteFeedback(ids, kind).catch(() => undefined),
+    // Columns the rules can't find, matched with one small AI call before a run.
+    matchColumns: async (input) => {
+      await access.ensureReady();
+      return ai.matchColumns(input, { onAiCall: () => undefined, isCancelled: () => false, creationId: `columns-${newId()}` });
+    },
   });
   const routines = new RoutineService({
     storage,
@@ -138,7 +143,7 @@ export async function createServices(
     onSaved: (routine, info, previous) => void blockService?.capture(routine, info, previous).catch((err) => console.error("[blocks]", err)),
     onFeedback: (ids, kind) => void blockService?.noteFeedback(ids, kind).catch(() => undefined),
   });
-  autoFix = new AutoFixService({ routines, runs, library, access });
+  autoFix = new AutoFixService({ routines, runs, library, flows, access });
   blockService = new BlockService({
     dir: path.join(paths.userData, "helpers", "candidates"),
     registry: blocks,

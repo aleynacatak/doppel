@@ -9,6 +9,27 @@ import type { AppId, FlowPlanRoutine, StyleProfile } from "../types";
 // the answer's top-level fields, the examples list them alphabetically, and the routine and plan are free
 // objects (their fields can come in the order that reads naturally). Doppl's validators check their structure.
 
+/** Which column of a file holds each column a routine expects. Fields in alphabetical order (see the top of this file). */
+export const COLUMNS_SCHEMA = {
+  type: "object",
+  properties: {
+    pairs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { column: { type: "string", description: "The file's column, exactly as written, or \"\" when none holds it" }, expected: { type: "string" } },
+        required: ["column", "expected"],
+      },
+    },
+  },
+  required: ["pairs"],
+};
+
+export const COLUMNS_SYSTEM = `A design routine reads columns of a data file by name, and a designer picked a file whose columns are
+named differently: another language, abbreviations, other words ("Ürün Adı" for "Flavor", "Fiyat" for "Price"). For
+each expected column, give the file's column that holds the same information, judging by the names, the routine and
+the sample values. Use "" when no column holds it; don't guess. Never give one file column for two expected columns.`;
+
 export const REVIEW_SCHEMA = {
   type: "object",
   properties: {

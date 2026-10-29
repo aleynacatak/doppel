@@ -10,9 +10,16 @@ const out = (itemKey: string, status: "done" | "failed", cause?: RunOutput["caus
 
 const run = (outputs: RunOutput[], extra: Partial<Run> = {}): Run => ({ id: "run-1", target: { kind: "routine", id: "r1" }, status: "partial", outputs, ...extra }) as unknown as Run;
 
-function setup(opts: { result?: Partial<Creation>; access?: boolean } = {}) {
+function setup(opts: { result?: Partial<Creation>; access?: boolean; pinned?: number } = {}) {
   const fixes: RunFix[] = [];
-  const calls: { refine?: { input: RefineInput; auto?: { maxCalls: number } }; discarded?: string; saved?: string; rerun?: { id: string; autoFixOf?: string } } = {};
+  const rerunFixes: RunFix[] = [];
+  const calls: {
+    refine?: { input: RefineInput; auto?: { maxCalls: number } };
+    discarded?: string;
+    saved?: string;
+    rerun?: { id: string; autoFixOf?: string };
+    pinned?: [string, string, number];
+  } = {};
   const creation = {
     id: "c1",
     status: "ready",
@@ -25,6 +32,13 @@ function setup(opts: { result?: Partial<Creation>; access?: boolean } = {}) {
   const service = new AutoFixService({
     pollMs: 1,
     library: { get: async () => ({ id: "r1", name: "Jam labels", version: 3 }) as Routine } as never,
+    flows: {
+      require: async () => ({ id: "f1", nodes: [{ id: "n-labels", kind: "routine", routineId: "r1", routineVersion: opts.pinned ?? 3 }] }) as never,
+      pinVersion: async (flowId: string, nodeId: string, version: number) => {
+        calls.pinned = [flowId, nodeId, version];
+        return {} as never;
+      },
+    },
     access: { ensureReady: async () => (opts.access === false ? Promise.reject(new Error("No access code is set.")) : undefined) },
     routines: {
       refine: async (input: RefineInput, o: { auto?: { maxCalls: number } }) => {
@@ -41,8 +55,8 @@ function setup(opts: { result?: Partial<Creation>; access?: boolean } = {}) {
       },
     } as never,
     runs: {
-      setFix: async (_id: string, fix: RunFix) => {
-        fixes.push(structuredClone(fix));
+      setFix: async (id: string, fix: RunFix) => {
+        (id === "run-2" ? rerunFixes : fixes).push(structuredClone(fix));
       },
       retryFailed: async (id: string, o: { autoFixOf?: string }) => {
         calls.rerun = { id, autoFixOf: o.autoFixOf };
@@ -50,7 +64,7 @@ function setup(opts: { result?: Partial<Creation>; access?: boolean } = {}) {
       },
     } as never,
   });
-  return { service, fixes, calls };
+  return { service, fixes, rerunFixes, calls };
 }
 
 describe("Doppl's own fix after a run", () => {
@@ -71,7 +85,6 @@ describe("Doppl's own fix after a run", () => {
     const { service, fixes, calls } = setup();
     await service.consider(run([out("fig", "failed", "files", "No photo for Fig."), out("plum", "failed", "app", "Photoshop isn't running.")]));
     await service.consider(run([out("fig", "failed", "routine")], { autoFixOf: "run-0" }));
-    await service.consider(run([out("fig", "failed", "routine")], { target: { kind: "flow", id: "f1" } }));
     expect(fixes).toEqual([]);
     expect(calls.refine).toBeUndefined();
   });
@@ -89,6 +102,26 @@ describe("Doppl's own fix after a run", () => {
     await service.consider(run([out("fig", "failed", "routine", "Error 21")]));
     expect(fixes.at(-1)).toMatchObject({ status: "needs-review", creationId: "c1", summary: "Takes a logo too.", reason: "New required input “Logo”." });
     expect(calls.saved).toBeUndefined();
+  });
+
+  it("fixes a routine inside a flow, and the flow uses the fixed version from then on", async () => {
+    const { service, fixes, rerunFixes, calls } = setup();
+    const node = (o: RunOutput) => ({ ...o, id: `n-labels:${o.itemKey}`, node: "n-labels" }) as RunOutput;
+    await service.consider(run([node(out("fig", "failed", "routine", "Error 21")), node(out("plum", "done"))], { target: { kind: "flow", id: "f1" } }));
+    expect(calls.refine?.input).toMatchObject({ routineId: "r1", testItems: ["fig", "plum"], flowLink: { flowId: "f1", nodeId: "n-labels" } });
+    expect(calls.pinned).toEqual(["f1", "n-labels", 4]);
+    expect(fixes.at(-1)).toMatchObject({ status: "fixed", flowId: "f1", nodeId: "n-labels", fromVersion: 3, toVersion: 4, rerunId: "run-2" });
+    // The rerun knows what was fixed, for its own Restore.
+    expect(rerunFixes.at(-1)).toMatchObject({ flowId: "f1", nodeId: "n-labels", fromVersion: 3, toVersion: 4 });
+  });
+
+  it("doesn't fix a flow that uses an older version than the newest", async () => {
+    const { service, fixes, calls } = setup({ pinned: 2 });
+    await service.consider(run([{ ...out("fig", "failed", "routine", "Error 21"), node: "n-labels" } as RunOutput], { target: { kind: "flow", id: "f1" } }));
+    expect(fixes).toEqual([
+      { status: "not-fixed", routineId: "r1", fromVersion: 2, flowId: "f1", nodeId: "n-labels", reason: "The flow uses version 2 of “Jam labels”, and there's a newer one. Update the flow to it, then run again; Doppl fixes the newest version." },
+    ]);
+    expect(calls.refine).toBeUndefined();
   });
 
   it("says so when there's no AI to fix with", async () => {

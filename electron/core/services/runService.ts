@@ -29,7 +29,7 @@ import { FlowInvalidError, FlowRunner } from "../flows/flowRunner";
 import { simulatedApps } from "../flows/mockAdapters";
 import type { AdapterSource } from "../flows/nodeRunner";
 import { checkReadiness } from "../flows/readiness";
-import { preflight } from "../inputs/preflight";
+import { type ColumnMatcher, preflight } from "../inputs/preflight";
 import { type FlowRoutines, routineOf, validateFlow } from "../flows/validateFlow";
 import type { AppStatusService } from "./appStatusService";
 import { ROUTINE_NODE, type FlowService, routineFlow } from "./flowService";
@@ -117,6 +117,8 @@ export function summarizeRun(run: Run, flow: Flow): RunSummary {
 interface ActiveRun {
   run: Run;
   cancelled: boolean;
+  /** Something changed while the run was saving its end (Doppl's fix): saved again once it has ended. */
+  saveAgain?: boolean;
 }
 
 /** Runs of routines and flows. A routine runs as a flow of one node; either way a run uses no AI unless AI review is on. */
@@ -138,6 +140,8 @@ export class RunService {
       copiesDir: string;
       /** A run finished (not simulated): building block evidence, by the routine each node ran. */
       onRunFinished?: (run: Run, routineOfNode: Record<string, string>) => void;
+      /** AI that matches columns the rules can't find, before a run (see inputs/preflight). */
+      matchColumns?: ColumnMatcher;
       /** "Mark as OK" on an output of these routines. */
       onFeedback?: (routineIds: string[], kind: "ok") => void;
     },
@@ -164,7 +168,7 @@ export class RunService {
   /** The check before a run: the picked inputs read as the run will read them (see inputs/preflight). */
   async preflight(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">): Promise<PreflightReport> {
     const { flow, info } = await this.resolve(target, request.matches);
-    return preflight(flow, info, request.inputs, request.columns ?? {});
+    return preflight(flow, info, request.inputs, request.columns ?? {}, { matchColumns: this.deps.matchColumns });
   }
 
   async setup(target: RunTarget): Promise<RunSetup> {
@@ -384,8 +388,10 @@ export class RunService {
     } finally {
       run.phase = undefined;
       run.finishedAt = nowIso();
-      this.active.delete(run.id);
+      // Still "running" for others until its end is saved; then anything recorded meanwhile is saved too.
       await this.persist(run, flow);
+      this.active.delete(run.id);
+      if (entry.saveAgain) await this.deps.storage.saveRun(run).catch(() => undefined);
       emit();
       if (!run.mocked && run.status !== "cancelled") this.deps.onRunFinished?.(run, routinesOfNodes(flow));
     }
@@ -459,10 +465,13 @@ export class RunService {
   /** A new run with only the items that failed (everything again when no single item failed). */
   /** Records Doppl's fix of a run's routine on the run, and tells the screens. */
   async setFix(runId: string, fix: RunFix) {
-    const run = this.active.get(runId)?.run ?? (await this.deps.storage.getRun(runId));
+    // A run still going is saved when it ends; one that ended is saved now.
+    const entry = this.active.get(runId);
+    const run = entry?.run ?? (await this.deps.storage.getRun(runId));
     if (!run) return;
     run.fix = fix;
-    await this.deps.storage.saveRun(run);
+    if (entry) entry.saveAgain = true;
+    else await this.deps.storage.saveRun(run);
     this.deps.emit(run);
   }
 

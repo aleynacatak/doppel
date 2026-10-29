@@ -37,6 +37,8 @@ export interface AiService {
   fieldKey?(role: Role, field: string, first: string[]): string;
   /** A trial failed: escalation rules count these per creation. */
   noteFailedTrial?(creationId: string): void;
+  /** Which of a file's columns holds each column a routine expects, when the names don't say (see ModelAiService). */
+  matchColumns?(input: { routine: string; expected: string[]; columns: string[]; rows: Record<string, unknown>[] }, ctx: AiCallContext): Promise<Record<string, string | null>>;
   /** Which model serves a role now (for provenance). */
   modelFor?(role: Role, creationId?: string): string;
   /** Look at a trial run's result (stage "Checking result"). Returns extra checks per output id. */

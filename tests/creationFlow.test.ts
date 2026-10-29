@@ -197,10 +197,22 @@ describe("creating with the AI", () => {
       inputs: [{ key: "photos", label: "Photos", type: "fileList", extensions: ["jpg"] }],
     });
     expect(waiting.stages.find((s) => s.key === "run")).toMatchObject({ status: "active", detail: "Waiting for sample files" });
+    // From two places: a folder of notes (fills nothing) and the photos; the designer removes the first and goes on.
+    const notes = path.join(dir, "notes");
+    await fs.mkdir(notes);
+    await fs.writeFile(path.join(notes, "todo.txt"), "x");
     const photos = path.join(dir, "photos");
     await fs.mkdir(photos);
     await fs.writeFile(path.join(photos, "plum.jpg"), "jpg");
-    await service.addSamples(c.id, { files: [], folders: [photos] });
+    await service.addSamples(c.id, { files: [], folders: [notes] });
+    const added = await service.addSamples(c.id, { files: [], folders: [photos] });
+    expect(added.status).toBe("waiting");
+    expect(added.needs!.added).toEqual([
+      { path: notes, isFolder: true, fills: [] },
+      { path: photos, isFolder: true, fills: [{ key: "photos", label: "Photos", count: 1 }] },
+    ]);
+    await service.removeSample(c.id, notes);
+    await service.confirmSamples(c.id);
     const ready = await until(c.id, (x) => x.status === "ready");
     expect(ready.needs).toBeUndefined();
     expect(aiLog).toEqual(["photoshop"]);

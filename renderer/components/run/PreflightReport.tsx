@@ -22,7 +22,7 @@ export function PreflightReport({
   /** Whether partners can be picked here (both routine and flow runs can). */
   canPickPartners: boolean;
   onPickPartner: (issue: Extract<PreflightIssue, { kind: "partner" }>, file: string) => void;
-  onPickColumn: (issue: Extract<PreflightIssue, { kind: "column" }>, column: string) => void;
+  onPickColumn: (pick: { inputNodeId: string; column: string }, header: string) => void;
 }) {
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState(false);
@@ -68,9 +68,20 @@ export function PreflightReport({
       {report.fixed.length > 0 && (
         <ul className="ui-small flex flex-col gap-1">
           {report.fixed.map((n, k) => (
-            <li key={k}>
-              ✓ {n.text}
-              {details && n.detail && <span className="ui-muted"> · {n.detail}</span>}
+            <li key={k} className="flex flex-wrap items-center gap-2">
+              <span>
+                ✓ {n.text}
+                {details && n.detail && <span className="ui-muted"> · {n.detail}</span>}
+              </span>
+              {/* A column Doppl matched on its own: the designer can pick another. */}
+              {n.change && (
+                <select className="ui-select ui-small max-w-xs" value="" aria-label={copy.run.preflight.changeColumn} onChange={(e) => e.target.value && onPickColumn(n.change!, e.target.value)}>
+                  <option value="">{copy.run.preflight.changeColumn}</option>
+                  {n.change.candidates.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+              )}
             </li>
           ))}
         </ul>

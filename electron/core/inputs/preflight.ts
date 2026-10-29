@@ -35,16 +35,27 @@ function neededColumns(flow: Flow, info: FlowRoutines, node: Input, which: "colu
   return [...columns];
 }
 
-export async function preflight(flow: Flow, info: FlowRoutines, inputs: Record<string, InputValue>, columns: Record<string, Record<string, string>> = {}): Promise<PreflightReport> {
+/** AI that tells which of a file's columns holds each column a routine expects, when the names don't say. */
+export type ColumnMatcher = (input: { routine: string; expected: string[]; columns: string[]; rows: Record<string, unknown>[] }) => Promise<Record<string, string | null>>;
+
+export async function preflight(
+  flow: Flow,
+  info: FlowRoutines,
+  inputs: Record<string, InputValue>,
+  columns: Record<string, Record<string, string>> = {},
+  opts: { matchColumns?: ColumnMatcher } = {},
+): Promise<PreflightReport> {
   const fixed: PreflightNote[] = [];
   const needs: PreflightIssue[] = [];
   const skipped: PreflightNote[] = [];
   const values = new Map<string, PortValue>();
+  // Columns matched with AI here, for the screen to keep (and the run to use).
+  const matched: Record<string, Record<string, string>> = {};
 
   for (const node of flow.nodes.filter((n): n is Input => n.kind === "input")) {
     const raw = inputs[node.id];
     if (isEmpty(raw) || !flow.edges.some((e) => e.from.nodeId === node.id)) continue;
-    const picked = columns[node.id] ?? {};
+    const picked = { ...(columns[node.id] ?? {}) };
 
     if (node.port.type === "rows" && typeof raw === "string") {
       const file = path.basename(raw);
@@ -55,9 +66,25 @@ export async function preflight(flow: Flow, info: FlowRoutines, inputs: Record<s
         needs.push({ kind: "file", id: `file:${node.id}`, inputNodeId: node.id, text: err instanceof DataFileError ? err.message : `${file} couldn't be read.` });
         continue;
       }
-      // A column the routine needs that isn't there under any spelling, and wasn't picked: the designer picks it.
+      // A column the routine needs that isn't there under any spelling, and wasn't picked: Doppl asks the AI which
+      // column holds it ("Ürün Adı" for "Flavor"); what the AI can't place, the designer picks.
       const needed = neededColumns(flow, info, node);
-      const missing = needed.filter((c) => !table.columns.some((h) => nameKey(h) === nameKey(picked[c] ?? c)));
+      let missing = needed.filter((c) => !table.columns.some((h) => nameKey(h) === nameKey(picked[c] ?? c)));
+      if (missing.length && opts.matchColumns) {
+        const free = table.columns.filter((h) => !needed.some((n) => nameKey(n) === nameKey(h)) && !Object.values(picked).includes(h));
+        const routines = flow.edges.filter((e) => e.from.nodeId === node.id).map((e) => routineOf(info, e.to.nodeId)).filter((r): r is NonNullable<typeof r> => !!r);
+        const found = await opts
+          .matchColumns({ routine: routines.map((r) => [r.name, ...(r.steps ?? []).map((s) => s.plainLanguage)].join(": ")).join(" / "), expected: missing, columns: free, rows: table.rows.slice(0, 5) })
+          .catch(() => ({}) as Record<string, string | null>);
+        for (const c of missing) {
+          const header = found[c];
+          if (!header) continue;
+          picked[c] = header;
+          (matched[node.id] ??= {})[c] = header;
+          fixed.push({ text: `Matched “${header}” in ${file} to “${c}” with AI`, change: { inputNodeId: node.id, column: c, candidates: ranked(c, free) } });
+        }
+        missing = missing.filter((c) => !picked[c]);
+      }
       for (const c of missing) {
         const free = table.columns.filter((h) => !needed.some((n) => nameKey(n) === nameKey(h)));
         needs.push({ kind: "column", id: `column:${node.id}:${c}`, inputNodeId: node.id, column: c, text: `${file} has no column “${c}”. Which column holds it?`, candidates: ranked(c, free) });
@@ -76,6 +103,7 @@ export async function preflight(flow: Flow, info: FlowRoutines, inputs: Record<s
       if (readAs?.encoding && ENCODINGS[readAs.encoding]) fixed.push({ text: `Read ${file} as ${ENCODINGS[readAs.encoding]}`, detail: readAs.encoding });
       if (readAs?.delimiter && DELIMITERS[readAs.delimiter]) fixed.push({ text: `${file} separates its columns with ${DELIMITERS[readAs.delimiter]}` });
       for (const [expected, actual] of Object.entries(readAs?.renamed ?? {})) {
+        if (matched[node.id]?.[expected]) continue;
         fixed.push({ text: picked[expected] !== undefined ? `Used “${actual}” for “${expected}” in ${file}, as you picked` : `Read the column “${actual}” in ${file} as “${expected}”` });
       }
       for (const p of resolved.problems) skipped.push({ text: `${p.error} It will be skipped.` });
@@ -146,7 +174,7 @@ export async function preflight(flow: Flow, info: FlowRoutines, inputs: Record<s
       }
     }
   }
-  return { fixed, needs, skipped };
+  return { fixed, needs, skipped, ...(Object.keys(matched).length ? { columns: matched } : {}) };
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));

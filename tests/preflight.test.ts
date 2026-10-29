@@ -85,6 +85,29 @@ describe("the check before a run", () => {
     ]);
   });
 
+  it("matches a column the rules can't find with AI, and keeps it", async () => {
+    await fs.writeFile(path.join(dir, "jams.csv"), "Ürün Adı,Fiyat\nStrawberry Vanilla,4\n");
+    const asked: unknown[] = [];
+    const matchColumns = async (input: { expected: string[]; columns: string[] }) => {
+      asked.push(input);
+      return { Flavor: "Ürün Adı" };
+    };
+    const inputs = { [inputNodeId("jams")]: path.join(dir, "jams.csv"), [inputNodeId("pictures")]: path.join(dir, "pics") };
+    const report = await preflight(routineFlow(routine), info, inputs, {}, { matchColumns });
+    expect(asked).toEqual([expect.objectContaining({ expected: ["Flavor"], columns: ["Ürün Adı", "Fiyat"] })]);
+    expect(report.needs).toEqual([]);
+    expect(report.columns).toEqual({ "input-jams": { Flavor: "Ürün Adı" } });
+    expect(report.fixed[0]).toEqual({ text: "Matched “Ürün Adı” in jams.csv to “Flavor” with AI", change: { inputNodeId: "input-jams", column: "Flavor", candidates: ["Fiyat", "Ürün Adı"] } });
+    expect(report.fixed.map((n) => n.text)).toContain("Matched 1 picture by name despite different spelling: strawberryvanilla.png → Strawberry Vanilla");
+    // Kept: the next check uses it without AI.
+    const again = await preflight(routineFlow(routine), info, inputs, report.columns, { matchColumns });
+    expect(asked).toHaveLength(1);
+    expect(again.fixed[0].text).toBe("Used “Ürün Adı” for “Flavor” in jams.csv, as you picked");
+    // What the AI can't place, the designer picks.
+    const none = await preflight(routineFlow(routine), info, inputs, {}, { matchColumns: async () => ({ Flavor: null }) });
+    expect(none.needs.map((i) => i.kind)).toEqual(["column"]);
+  });
+
   it("explains a file it can't read, and items that will be made without a partner when that's set", async () => {
     const broken = await check("");
     expect(broken.needs).toEqual([{ kind: "file", id: "file:input-jams", inputNodeId: "input-jams", text: "jams.csv is empty." }]);

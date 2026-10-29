@@ -3,7 +3,7 @@ import path from "node:path";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { RoutineTemplate } from "../../adapters/types";
 import { layoutLeftToRight, topoOrder } from "../../shared/flowGraph";
-import { compatible, describeSpec, inputSpec, isListType, outputSpec, typeTag } from "../../shared/ports";
+import { compatible, describeSpec, fileAllowed, inputSpec, isListType, outputSpec, typeTag } from "../../shared/ports";
 import { DataFileError, listFolderFiles, readDataFile } from "../helpers/dataFiles";
 import { itemName, pairItems, pairKey, singular, suggestMatch } from "../flows/match";
 import { rankByLikeness } from "../../shared/names";
@@ -823,11 +823,58 @@ export class RoutineService {
   }
 
   /** Sample files attached while the creation waits for them; the trial goes on with them. */
+  /**
+   * Sample files or folders the designer adds while the creation waits for them, from as many places as needed:
+   * each is listed with the inputs it fills. Nothing goes on until they confirm.
+   */
   async addSamples(id: string, added: { files: string[]; folders: string[] }): Promise<Creation> {
     const state = this.requireState(id);
-    if (!added.files.length && !added.folders.length) return state.creation;
-    state.attach?.(added);
+    const needs = state.creation.needs;
+    if (!needs || (!added.files.length && !added.folders.length)) return state.creation;
+    const list = [...(needs.added ?? [])];
+    for (const [p, isFolder] of [...added.files.map((f) => [f, false] as const), ...added.folders.map((f) => [f, true] as const)]) {
+      if (list.some((a) => a.path === p)) continue;
+      list.push({ path: p, isFolder, fills: await this.fills(p, isFolder, needs.inputs) });
+    }
+    needs.added = list;
+    this.emit(state.creation);
     return state.creation;
+  }
+
+  async removeSample(id: string, p: string): Promise<Creation> {
+    const state = this.requireState(id);
+    const needs = state.creation.needs;
+    if (needs?.added) {
+      needs.added = needs.added.filter((a) => a.path !== p);
+      this.emit(state.creation);
+    }
+    return state.creation;
+  }
+
+  /** The designer is done adding samples: the creation goes on with them (the same trial, no new AI call). */
+  async confirmSamples(id: string): Promise<Creation> {
+    const state = this.requireState(id);
+    const added = state.creation.needs?.added ?? [];
+    if (!added.length) return state.creation;
+    state.attach?.({ files: added.filter((a) => !a.isFolder).map((a) => a.path), folders: added.filter((a) => a.isFolder).map((a) => a.path) });
+    return state.creation;
+  }
+
+  /** Which of the waiting inputs a sample file or folder fills, and with how many items. */
+  private async fills(p: string, isFolder: boolean, inputs: NonNullable<Creation["needs"]>["inputs"]) {
+    const files = isFolder ? (await listFolderFiles(p).catch(() => [])).map((f) => f.path) : [p];
+    const isData = (f: string) => DATA_EXTENSIONS.includes(path.extname(f).slice(1).toLowerCase());
+    return inputs.flatMap((input) => {
+      const count =
+        input.type === "rows"
+          ? files.filter(isData).length
+          : input.type === "folder"
+            ? (isFolder ? 1 : 0)
+            : input.type === "file" || input.type === "fileList"
+              ? files.filter((f) => !isData(f) && fileAllowed(f, input.extensions)).length
+              : 0;
+      return count ? [{ key: input.key, label: input.label, count }] : [];
+    });
   }
 
   /** Flow creation: the designer confirmed the plan. */

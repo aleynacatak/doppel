@@ -1,7 +1,7 @@
-import type { Creation, Run, RunFix } from "../types";
+import type { Creation, Run, RunFix, RunOutput } from "../types";
 import { errorMessage } from "../util";
 import type { AiAccessService } from "./aiAccessService";
-import { ROUTINE_NODE } from "./flowService";
+import { type FlowService, ROUTINE_NODE } from "./flowService";
 import type { LibraryService } from "./libraryService";
 import type { RoutineService } from "./routineService";
 import type { RunService } from "./runService";
@@ -21,26 +21,48 @@ export class AutoFixService {
       routines: RoutineService;
       runs: RunService;
       library: LibraryService;
+      flows: Pick<FlowService, "require" | "pinVersion">;
       access: Pick<AiAccessService, "ensureReady">;
       /** For tests: how often to look at the fix's progress. */
       pollMs?: number;
     },
   ) {}
 
-  /** The routine's own failures in a routine run, or none. A rerun after a fix, or a flow run, isn't fixed again here. */
-  private failures(run: Run) {
-    if (run.target.kind !== "routine" || run.mocked || run.autoFixOf || run.status === "cancelled") return [];
-    return run.outputs.filter((o) => o.status === "failed" && o.node === ROUTINE_NODE && o.cause === "routine" && o.itemKey);
+  /** A routine's own failures in a run (in a flow: the first routine node with some), or none. A rerun after a fix isn't fixed again. */
+  private failures(run: Run): { nodeId: string; outputs: RunOutput[] } | null {
+    if (run.mocked || run.autoFixOf || run.status === "cancelled") return null;
+    const failed = run.outputs.filter((o) => o.status === "failed" && o.cause === "routine" && o.itemKey && o.node && (run.target.kind === "flow" || o.node === ROUTINE_NODE));
+    if (!failed.length) return null;
+    const nodeId = failed[0].node!;
+    return { nodeId, outputs: failed.filter((o) => o.node === nodeId) };
   }
 
-  /** Called when a run ends: fixes the routine when its items failed because of it. */
+  /** Called when a run ends: fixes the routine (in a flow, the routine of a node) when its items failed because of it. */
   async consider(run: Run): Promise<void> {
-    const failed = this.failures(run);
-    if (!failed.length) return;
-    const routine = await this.deps.library.get(run.target.id);
+    const found = this.failures(run);
+    if (!found) return;
+    const failed = found.outputs;
+    // In a flow, the node's routine: only the version the flow uses now, when it's the newest (a fix of a newer one
+    // would bring its other changes into the flow too).
+    let flowLink: { flowId: string; nodeId: string } | undefined;
+    let routineId = run.target.id;
+    let pinned: number | undefined;
+    if (run.target.kind === "flow") {
+      const flow = await this.deps.flows.require(run.target.id).catch(() => null);
+      const node = flow?.nodes.find((n) => n.id === found.nodeId);
+      if (node?.kind !== "routine") return;
+      flowLink = { flowId: run.target.id, nodeId: node.id };
+      routineId = node.routineId;
+      pinned = node.routineVersion;
+    }
+    const routine = await this.deps.library.get(routineId);
     if (!routine || routine.starter) return;
-    const fix: RunFix = { status: "fixing", routineId: routine.id, fromVersion: routine.version };
+    const fix: RunFix = { status: "fixing", routineId: routine.id, fromVersion: pinned ?? routine.version, ...(flowLink ?? {}) };
     const set = (patch: Partial<RunFix>) => this.deps.runs.setFix(run.id, Object.assign(fix, patch));
+    if (pinned !== undefined && pinned !== routine.version) {
+      await set({ status: "not-fixed", reason: `The flow uses version ${pinned} of “${routine.name}”, and there's a newer one. Update the flow to it, then run again; Doppl fixes the newest version.` });
+      return;
+    }
     try {
       await this.deps.access.ensureReady();
     } catch (err) {
@@ -51,14 +73,17 @@ export class AutoFixService {
 
     // The failed items (two at most) and one that worked, so the fix doesn't break what worked.
     const failedKeys = [...new Set(failed.map((o) => o.itemKey!))];
-    const goodKey = run.outputs.find((o) => o.status === "done" && o.node === ROUTINE_NODE && o.itemKey && !failedKeys.includes(o.itemKey))?.itemKey;
+    const goodKey = run.outputs.find((o) => o.status === "done" && o.node === found.nodeId && o.itemKey && !failedKeys.includes(o.itemKey))?.itemKey;
     const testItems = [...failedKeys.slice(0, 2), ...(goodKey ? [goodKey] : [])];
     const errors = failed.slice(0, 3).map((o) => `${o.itemLabel ?? o.label}: ${o.error ?? "failed"}`);
     const request = `This routine ran on new files and failed on ${failedKeys.length === 1 ? "an item" : `${failedKeys.length} items`}. Make it work for ${failedKeys.length === 1 ? "it" : "them"} without changing what it does for the items that worked. ${errors.join(" · ")}`;
 
     let creation: Creation;
     try {
-      creation = await this.deps.routines.refine({ routineId: routine.id, request, images: [], problem: { runId: run.id, outputId: failed[0].id }, testItems }, { auto: { maxCalls: AUTO_FIX_CALLS } });
+      creation = await this.deps.routines.refine(
+        { routineId: routine.id, request, images: [], problem: { runId: run.id, outputId: failed[0].id }, testItems, ...(flowLink ? { flowLink } : {}) },
+        { auto: { maxCalls: AUTO_FIX_CALLS } },
+      );
     } catch (err) {
       await set({ status: "not-fixed", reason: errorMessage(err) });
       return;
@@ -90,9 +115,15 @@ export class AutoFixService {
       await set({ status: "not-fixed", aiCalls, reason: "The fix couldn't be saved." });
       return;
     }
+    // A flow uses the fixed version from now on (Restore puts the previous one back).
+    if (flowLink) await this.deps.flows.pinVersion(flowLink.flowId, flowLink.nodeId, saved.routine.version);
     await set({ status: "fixed", aiCalls, summary, toVersion: saved.routine.version });
     const rerun = await this.deps.runs.retryFailed(run.id, { autoFixOf: run.id }).catch(() => null);
-    if (rerun) await set({ rerunId: rerun.id });
+    if (rerun) {
+      await set({ rerunId: rerun.id });
+      // The rerun knows what was fixed, for its own Restore.
+      await this.deps.runs.setFix(rerun.id, { ...fix });
+    }
   }
 
   /** The creation once it's ready, failed or cancelled; null after the wait. */

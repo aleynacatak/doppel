@@ -48,7 +48,8 @@ describe("access codes", () => {
     expect(sent.url).toBe("https://meta.test/v1/chat/completions");
     const headers = new Headers(sent.init.headers);
     expect(headers.get("authorization")).toBe("Bearer test-meta-key-do-not-ship");
-    expect(sent.body.max_completion_tokens).toBe(8000);
+    // Clamped to the demo's limit from the app's model list.
+    expect(sent.body.max_completion_tokens).toBe(DEMO_LIMITS.maxOutputTokens);
     expect(sent.body.max_tokens).toBeUndefined();
     expect(sent.body.store).toBe(false);
     expect(sent.body.tools).toBeUndefined();

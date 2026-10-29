@@ -15,7 +15,7 @@
       "kind": "doppl-demo",
       "displayName": "Doppl demo access",
       "serves": "meta",
-      "maxOutputTokens": 8000,
+      "maxOutputTokens": 24000,
       "maxCallsPerCreation": 15
     }
   ],

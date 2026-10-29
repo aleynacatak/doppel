@@ -168,6 +168,7 @@ describe("the input check in a creation", () => {
     await fs.mkdir(path.join(dir, "camera"));
     await fs.writeFile(path.join(dir, "camera", "IMG_2041.png"), "img");
     await service.addSamples(c.id, { files: [], folders: [path.join(dir, "camera")] });
+    await service.confirmSamples(c.id);
     const asked = structuredClone(await until(c.id, (x) => x.status === "waiting" && !!x.question));
     expect(asked.question).toMatchObject({
       kind: "inputs",

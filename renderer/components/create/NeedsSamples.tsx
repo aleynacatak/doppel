@@ -9,7 +9,10 @@ import { Notice } from "../ui/Notice";
 
 const DATA_EXTENSIONS = ["csv", "tsv", "txt", "json", "xlsx"];
 
-/** Creation is waiting for sample files: attach files or a folder, and it goes on (no new AI call). */
+/**
+ * Creation is waiting for sample files: the designer adds files or folders from as many places as needed, sees what
+ * each fills, removes mistakes, and goes on with them (no new AI call).
+ */
 export function NeedsSamples({ creation, onChange }: { creation: Creation; onChange: (c: Creation) => void }) {
   const needs = creation.needs!;
   const [busy, setBusy] = useState(false);
@@ -33,15 +36,32 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
       setBusy(false);
     }
   };
+  const added = needs.added ?? [];
+  const filled = new Set(added.flatMap((a) => a.fills.map((f) => f.key)));
+  const ready = added.length > 0 && needs.inputs.every((i) => filled.has(i.key));
+  const act = async (call: () => Promise<Creation>) => {
+    setError(null);
+    setBusy(true);
+    try {
+      onChange(await call());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <Notice
       tone="warning"
       title={copy.create.needsSamplesTitle}
       actions={
         <>
+          <Button variant="primary" disabled={busy || !ready} onClick={() => act(() => doppel().confirmSamples(creation.id))}>
+            {copy.create.useSamples}
+          </Button>
           {canPickFiles && (
             <Button
-              variant="primary"
+              variant="secondary"
               disabled={busy}
               onClick={() =>
                 attach(async () => ({ files: await doppel().pickFiles({ extensions: extensions.length ? extensions : undefined, multiple: true }), folders: [] }))
@@ -52,7 +72,7 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
           )}
           {canPickFolder && (
             <Button
-              variant={canPickFiles ? "secondary" : "primary"}
+              variant="secondary"
               disabled={busy}
               onClick={() =>
                 attach(async () => {
@@ -68,6 +88,27 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
       }
     >
       <p>{needs.message}</p>
+      <ul className="ui-small flex flex-col gap-1">
+        {needs.inputs.map((i) => (
+          <li key={i.key}>
+            {filled.has(i.key) ? "✓" : "–"} {i.label}
+            {!filled.has(i.key) && <span className="ui-muted"> · {copy.create.samplesMissing}</span>}
+          </li>
+        ))}
+      </ul>
+      {added.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {added.map((a) => (
+            <li key={a.path} className="flex flex-wrap items-center gap-2">
+              <span>{a.path.split("/").pop()}</span>
+              <span className="ui-small ui-muted">{a.fills.length ? a.fills.map((f) => copy.create.samplesFills(f.label, f.count)).join(" · ") : copy.create.samplesFillsNothing}</span>
+              <Button size="small" disabled={busy} onClick={() => act(() => doppel().removeSample(creation.id, a.path))}>
+                {copy.create.removeSample}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
       {extensions.length > 0 && <p className="ui-small ui-muted">{copy.create.needsTypes(extensions)}</p>}
       <p className="ui-small ui-muted">{copy.create.needsHint}</p>
       {error && <p className="ui-small">{error}</p>}

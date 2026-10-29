@@ -2,7 +2,7 @@ import { codeOf } from "../ai/answer";
 import { type AiGateway, type GatewayChatRequest, type Role, isModelImage } from "../ai/gateway";
 import type { ReasoningEffort } from "../ai/registry";
 import type { ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
-import { REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
+import { COLUMNS_SCHEMA, COLUMNS_SYSTEM, REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
 import type { AiCallContext, AiService, TurnOptions } from "./aiService";
 import { AiError, type ChatMessage, type ContentPart, type SegmentBox } from "./aiTransport";
 
@@ -199,6 +199,33 @@ export class ModelAiService implements AiService {
     return outside.length
       ? { level: "object", label, passed: false, reason: `${capitalize(check.object)} sticks out of ${check.region}` }
       : { level: "object", label, passed: true };
+  }
+
+  /** Which of a file's columns holds each column a routine expects, when the names don't say; null where none does. */
+  async matchColumns(input: { routine: string; expected: string[]; columns: string[]; rows: Record<string, unknown>[] }, ctx: AiCallContext): Promise<Record<string, string | null>> {
+    const json = await this.jsonWithRetry(
+      "reviewer",
+      {
+        messages: [
+          { role: "system", content: COLUMNS_SYSTEM },
+          { role: "user", content: JSON.stringify({ routine: input.routine, expected: input.expected, columns: input.columns, sampleRows: input.rows.slice(0, 5) }) },
+        ],
+        schema: { name: "doppl_columns", schema: COLUMNS_SCHEMA },
+        maxTokens: SHORT_TOKENS,
+      },
+      ctx,
+      (j) => j,
+    );
+    const pairs = Array.isArray(json.pairs) ? json.pairs : [];
+    const used = new Set<string>();
+    const out: Record<string, string | null> = {};
+    for (const e of input.expected) {
+      const column = String(pairs.find((p: any) => p?.expected === e)?.column ?? "");
+      // Only the file's own columns, each once.
+      out[e] = input.columns.includes(column) && !used.has(column) ? column : null;
+      if (out[e]) used.add(column);
+    }
+    return out;
   }
 
   async reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck> {
