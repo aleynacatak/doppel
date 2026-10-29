@@ -1,0 +1,17 @@
+task,profile,repeat,created,passed,category,aiCalls,previews,proposals,questions,inputTokens,cachedTokens,outputTokens,costUsd,wallSec,contextChars,rerunAiCalls,error,checks,questionLog,variants
+ps-flavor-cards,spark-blocks,1,true,true,,11,0,4,2,45878,9186,22855,0.2124,273.7,15384,0,,"ok askedAbout: asked: How should each row in flavors.csv find its image in flavor pics?; ok outputCount: 3 files in ""cards"", expected 3; ok imageSize: 3 images fit; ok colorAt: 3 outputs have the right color; ok outputNames: 3 outputs named as expected; ok noRunErrors: run partial (1 expected)","{""kind"":""inputs"",""text"":""How should each row in flavors.csv find its image in flavor pics?"",""answer"":""By “Flavor”""}
+{""kind"":""inputs"",""text"":""1 of 4 rows has no image in flavor pics: Fig. What should Doppl do with it?"",""answer"":""Skip it""}","{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
+ps-logo-two-folders,spark-blocks,1,true,true,,9,0,3,0,36931,23989,15363,0.1191,179.5,15208,0,,"ok noQuestions: no questions; ok outputCount: 3 files in ""watermarked"", expected 3; ok fileExtension: all .jpg; ok colorAt: 3 outputs have the right color; ok colorAt: 3 outputs have the right color; ok noRunErrors: run succeeded",,"{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
+ps-resize-jpg,spark-blocks,1,true,true,,4,0,1,0,12922,3953,3528,0.0268,37.2,14684,0,,"ok outputCount: 2 files in ""resized"", expected 2; ok fileExtension: all .jpg; ok imageSize: 2 images fit; ok fileNamePattern: names match; ok noRunErrors: run succeeded",,"{""id"":""names"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""squashed"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""spreadsheet"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""stray"",""passed"":true,""rerunAiCalls"":0}
+{""id"":""everything"",""passed"":true,""rerunAiCalls"":0}"
