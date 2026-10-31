@@ -8,7 +8,7 @@ import { fileAllowed } from "../../shared/ports";
 import type { AppId, FailureCause, MatchRule, NodeProgress, ParamValue, PortDef, Routine, RuleFinding, RunOutput, Stage, StageItemProgress } from "../types";
 import { CancelledError, errorMessage } from "../util";
 import { expandValue, PlaceholderError, plain } from "../routines/placeholders";
-import { failureCause } from "./failures";
+import { failureCause, plainError } from "./failures";
 import { pairItems } from "./match";
 import { type ListItem, type PortValue, fileKey, itemValue, scopeValue, scriptValue } from "./values";
 
@@ -45,8 +45,6 @@ export interface NodeRunSpec {
   /** runs/<runId>/<nodeId>/: the routine's files go here. */
   workDir: string;
   copiesDir: string;
-  /** Folders the routine may write to besides its working folder (folder inputs). */
-  allowedFolders: string[];
   isCancelled: () => boolean;
   /** Items that failed earlier in the run; they are skipped here. Failures here are added. */
   failed: Map<string, FailureInfo>;
@@ -115,6 +113,7 @@ export function stageFor(routine: Routine, nodeId: string, name: string): Stage 
     document: routine.inputs.some((p) => p.type === "document") ? "open" : "none",
     modifiesDocument: routine.modifiesDocument,
     blocks: blocks.resolve(routine.appId, routine.helpers),
+    ...(routine.figmaPage ? { page: routine.figmaPage } : {}),
   };
 }
 
@@ -129,8 +128,8 @@ async function previewOf(adapter: DesignAppAdapter, target: string) {
   }
 }
 
-/** What a routine produced for one output port, collected over its items. */
-function collect(port: PortDef, iterates: boolean, produced: { itemKey: string; values: unknown[] }[], nodeId: string): PortValue | null {
+/** What a routine produced for one output port, collected over its items (made per row: the rows' origin). */
+function collect(port: PortDef, iterates: boolean, produced: { itemKey: string; values: unknown[] }[], nodeId: string, origin?: string): PortValue | null {
   const entries: ListItem[] = [];
   for (const p of produced) {
     p.values.forEach((v, i) => {
@@ -143,14 +142,14 @@ function collect(port: PortDef, iterates: boolean, produced: { itemKey: string; 
   if (port.type === "file" || port.type === "fileList") {
     const files = entries.filter((e) => typeof e.value === "string");
     if (port.type === "file" && !iterates) return files[0] ? { kind: "value", type: "file", value: String(files[0].value) } : null;
-    return { kind: "list", type: "fileList", items: files };
+    return { kind: "list", type: "fileList", items: files, ...(origin ? { origin } : {}) };
   }
   if (port.type === "rows" || iterates) {
     const rows = entries.flatMap((e) =>
       Array.isArray(e.value) ? e.value.map((v, i) => ({ key: `${e.key}-${i + 1}`, label: e.label, value: asRow(v) })) : [{ ...e, value: asRow(e.value) }],
     );
     const columns = port.type === "rows" ? (port.columns ?? [...new Set(rows.flatMap((r) => Object.keys(r.value as object)))]) : [port.key];
-    return { kind: "list", type: "rows", items: rows, columns };
+    return { kind: "list", type: "rows", items: rows, columns, ...(origin ? { origin } : {}) };
   }
   const first = entries[0]?.value;
   if (first === undefined) return null;
@@ -171,21 +170,27 @@ export class NodeRunner {
     const produced: Record<string, { itemKey: string; values: unknown[] }[]> = Object.fromEntries(routine.outputs.map((o) => [o.key, []]));
     let cancelled = false;
     const emit = (phase: string) => hooks.onProgress(progress, phase);
+    // What the routine makes per item keeps the item's key, and so its list's origin.
+    const iterated = routine.iterate ? spec.inputs[routine.iterate.input] : undefined;
+    const origin = iterated?.kind === "list" ? iterated.origin : undefined;
     const finish = (): NodeRunResult => {
       const values: Record<string, PortValue> = {};
       for (const port of routine.outputs) {
-        const v = collect(port, !!routine.iterate, produced[port.key], spec.nodeId);
+        const v = collect(port, !!routine.iterate, produced[port.key], spec.nodeId, origin);
         if (v) values[port.key] = v;
       }
       return { progress, outputs, findings, items, values, log, cancelled };
     };
-    const failItem = (ip: StageItemProgress, item: { key: string; label: string }, error: string, cause: FailureCause) => {
+    // An app's raw error reads plainly; the raw text stays as the detail.
+    const shown = (raw: string | undefined) => plainError(raw, adapter.name);
+    const failItem = (ip: StageItemProgress, item: { key: string; label: string }, raw: string, cause: FailureCause) => {
+      const said = shown(raw);
       ip.status = "failed";
-      ip.error = error;
+      Object.assign(ip, said);
       ip.cause = cause;
       progress.failed++;
-      spec.failed.set(item.key, { node: spec.name, reason: error });
-      outputs.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: "failed", error, cause, node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
+      spec.failed.set(item.key, { node: spec.name, reason: said.error ?? raw });
+      outputs.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: "failed", ...said, cause, node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
     };
 
     let prepared: PreparedItem[];
@@ -193,7 +198,7 @@ export class NodeRunner {
       prepared = this.itemsFor(spec);
     } catch (err) {
       progress.status = "failed";
-      progress.error = errorMessage(err);
+      Object.assign(progress, shown(errorMessage(err)));
       emit(`${shortApp(adapter)} · ${progress.error}`);
       return finish();
     }
@@ -236,7 +241,6 @@ export class NodeRunner {
       target: spec.target,
       workDir: spec.workDir,
       copiesDir: spec.copiesDir,
-      allowedFolders: spec.allowedFolders,
       isCancelled: spec.isCancelled,
     };
     // Placeholder values and script params, once for all items.
@@ -264,7 +268,9 @@ export class NodeRunner {
         const where = runnable.length > 1 ? `${shortApp(adapter)} · item ${n + 1} of ${runnable.length}` : shortApp(adapter);
         emit(where);
         const res = await this.runItem(adapter, session, routine, item, index, ctx, spec, inputsScope, params, (text) => emit(`${where} · ${text}`));
-        const cause = res.ok ? undefined : failureCause(res.error, false);
+        // The app going away mid-item (the plugin closed) is the app's, like the items after it.
+        const cause = res.ok ? undefined : res.fatal ? "app" : (res.cause ?? failureCause(res.error, false));
+        const said = res.ok ? {} : shown(res.error);
         const record: ItemRecord = { key: item.key, label: item.label, ok: res.ok, error: res.error, ...(cause ? { cause } : {}), scriptFailure: res.scriptFailure, data: res.data, log: res.log, findings: res.findings, outputIds: [] };
         items.push(record);
         log.push(...res.log.map((l) => `${spec.name} · ${item.label}: ${l}`));
@@ -272,7 +278,7 @@ export class NodeRunner {
           id: `${spec.nodeId}:${o.key}`,
           label: o.label,
           status: res.ok ? "done" : "failed",
-          error: res.ok ? undefined : res.error,
+          ...said,
           ...(cause ? { cause } : {}),
           preview: o.preview,
           filePath: o.filePath,
@@ -286,7 +292,7 @@ export class NodeRunner {
           itemLabel: item.label,
         }));
         if (mine.length === 0) {
-          mine.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: res.ok ? "done" : "failed", error: res.error, ...(cause ? { cause } : {}), node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
+          mine.push({ id: `${spec.nodeId}:${item.key}`, label: item.label, status: res.ok ? "done" : "failed", ...said, ...(cause ? { cause } : {}), node: spec.nodeId, itemKey: item.key, itemLabel: item.label });
         }
         // Adapters preview documents they render; files the routine saved (and Figma frames) get theirs here.
         for (const o of mine) {
@@ -296,17 +302,20 @@ export class NodeRunner {
         }
         record.outputIds = mine.map((o) => o.id);
         outputs.push(...mine);
-        for (const f of res.findings) for (const o of mine) findings.push({ ...f, outputKey: o.id });
+        // A finding on a page belongs to that page's output; the rest to every output of the item.
+        for (const f of res.findings) {
+          for (const o of mine) if (f.pageIndex === undefined || o.pageIndex === undefined || f.pageIndex === o.pageIndex) findings.push({ ...f, outputKey: o.id });
+        }
         if (res.ok) {
           ip.status = "done";
           progress.done++;
           for (const [key, values] of Object.entries(res.values)) if (produced[key]) produced[key].push({ itemKey: item.key, values });
         } else {
           ip.status = "failed";
-          ip.error = res.error;
+          Object.assign(ip, said);
           ip.cause = cause;
           progress.failed++;
-          spec.failed.set(item.key, { node: spec.name, reason: res.error ?? "It failed." });
+          spec.failed.set(item.key, { node: spec.name, reason: said.error ?? "It failed." });
         }
         hooks.onOutputs(outputs);
         emit(where);
@@ -321,10 +330,11 @@ export class NodeRunner {
         cancelled = true;
       } else {
         // The routine couldn't start (app not connected, document not open): every item fails with that reason.
-        progress.error = errorMessage(err);
+        const raw = errorMessage(err);
+        Object.assign(progress, shown(raw));
         for (const [i, ip] of progress.items.entries()) {
           if (ip.status !== "pending" && ip.status !== "running") continue;
-          failItem(ip, prepared[i], progress.error, failureCause(progress.error, false));
+          failItem(ip, prepared[i], raw, failureCause(raw, false));
         }
       }
     } finally {
@@ -352,24 +362,22 @@ export class NodeRunner {
     let source = list.items;
     if (spec.sampleIndex !== undefined) source = source.slice(spec.sampleIndex, spec.sampleIndex + 1);
     if (spec.onlyItems) {
-      const only = spec.onlyItems;
-      source = source.filter((i) => only.has(i.key) || [...only].some((k) => i.key.startsWith(`${k}-`)));
+      // Running failed items again: only those items, unless this list holds another kind of item (photos, when rows
+      // failed further on). Then all of it, since the later steps need what it makes.
+      const only = [...spec.onlyItems];
+      const kind = (key: string) => key.split("-")[0];
+      if (source.some((i) => only.some((k) => kind(k) === kind(i.key)))) source = source.filter((i) => spec.onlyItems!.has(i.key) || only.some((k) => i.key.startsWith(`${k}-`)));
     }
-    const missing = (row: unknown) => (port.columns ?? []).find((c) => {
-      const v = (row as Record<string, unknown> | null)?.[c];
-      return v === undefined || v === null || String(v).trim() === "";
-    });
     const prepared: PreparedItem[] = source.map((item) => ({
       key: item.key,
       label: item.label,
       value: itemValue(list.type, item),
       matched: {},
+      // An empty cell doesn't stop a row: the routine makes it without that value.
       preError:
         list.type === "fileList" && !fileAllowed(String(item.value), port.extensions)
           ? `${item.label} isn't a ${port.extensions!.map((e) => e.toUpperCase()).join(" or ")} file, which ${port.label} takes.`
-          : list.type === "rows" && missing(item.value)
-            ? `${item.label}: "${missing(item.value)}" is empty.`
-            : undefined,
+          : undefined,
     }));
     // A second list pairs with each item through its match rule; an item without a partner can't run.
     for (const [key, rule] of Object.entries(spec.joins)) {
@@ -377,7 +385,7 @@ export class NodeRunner {
       const joined = spec.inputs[key];
       if (!joinedPort || !joined || joined.kind !== "list") continue;
       // Over the whole list: an item's partner doesn't change when only some items run (a trial, a refine).
-      const pairs = pairItems(rule, { type: list.type, items: list.items }, { type: joined.type, items: joined.items, label: joinedPort.label });
+      const pairs = pairItems(rule, { type: list.type, items: list.items, origin: list.origin }, { type: joined.type, items: joined.items, label: joinedPort.label, origin: joined.origin });
       for (const p of prepared) {
         const pair = pairs.get(p.key);
         if (pair?.matched) p.matched[key] = itemValue(joined.type, pair.matched);

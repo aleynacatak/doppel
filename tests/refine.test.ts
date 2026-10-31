@@ -17,6 +17,7 @@ import { StarterService, toStarterFile } from "../electron/core/services/starter
 import { JsonStorage } from "../electron/core/services/storage";
 import type { Creation, Flow, Routine, Run } from "../electron/core/types";
 import { contractChanges, diffSteps, isBreaking } from "../electron/shared/routineDiff";
+import { fakeImage } from "./helpers/images";
 
 // Refine: changing a saved routine with the AI, versions and restore, and what a new version does to flows.
 // Every routine, run and starter here is a test fixture in a temporary folder.
@@ -86,7 +87,8 @@ function fakePhotoshop(): DesignAppAdapter {
       await fs.mkdir(ctx.workDir, { recursive: true });
       const item = input.item as { stem: string };
       const file = path.join(ctx.workDir, `${item.stem}.png`);
-      await fs.writeFile(file, "png");
+      // Another script makes another picture.
+      await fs.writeFile(file, `png made by ${String(ctx.stage.body)}`);
       return { ok: true, outputs: [{ key: `${input.key}-1`, label: path.basename(file), filePath: file }], values: { cutouts: [file] }, findings: [], log: [] };
     },
   } as unknown as DesignAppAdapter;
@@ -140,7 +142,7 @@ beforeEach(async () => {
     workRoot: path.join(dir, "work"),
     templates: [],
   });
-  for (const name of ["apricot.jpg", "fig.jpg", "plum.jpg"]) await fs.writeFile(path.join(dir, name), "jpg");
+  for (const name of ["apricot.jpg", "fig.jpg", "plum.jpg"]) await fs.writeFile(path.join(dir, name), fakeImage(name));
 });
 
 /** A routine run of the cutout routine on three photos; the fig cutout was flagged. */
@@ -431,6 +433,19 @@ describe("refining with the AI", () => {
     expect(again.refine!.before).toHaveLength(1);
   });
 
+  it("doesn't offer a change whose results are the same as the current version's", async () => {
+    await library.save(cutout());
+    await savedRun();
+    // Only a setting changes; the script, so every picture, stays the same.
+    answer = () => ({ action: "propose_revision", changeSummary: "Removes the gaps.", reason: "Gaps", routine: revision({ script: SCRIPT }) });
+    const c = await service.refine({ routineId: "cutout", request: "Remove the white gaps", images: [], testItems: [] });
+    const failed = await until(c.id, (x) => x.status === "failed", true);
+    expect(textOf(seen[1].messages.at(-1)!)).toContain("identical, file for file, to version 1's");
+    expect(failed.error?.message).toMatch(/^The change didn't change the results: they're the same as version 1's\. Try describing/);
+    expect(failed.activity?.some((a) => a.includes("same results as version 1"))).toBe(true);
+    expect(await library.getVersion("cutout", 2)).toBeNull();
+  });
+
   it("keeps the original untouched when no revision passes within the limit", async () => {
     await library.save(cutout());
     await savedRun();
@@ -462,7 +477,7 @@ describe("refining with the AI", () => {
     const copy = await library.duplicate(starterId);
     expect(copy.starter).toBeFalsy();
     await fs.mkdir(path.join(dir, "samples"));
-    await fs.writeFile(path.join(dir, "samples", "pear.jpg"), "jpg");
+    await fs.writeFile(path.join(dir, "samples", "pear.jpg"), fakeImage("pear.jpg"));
     const c = await service.refine({ routineId: copy.id, request: "Add a border", images: [], testItems: [] });
     // A copy that never ran asks for sample photos to try the change on.
     await until(c.id, (x) => x.status === "waiting" && !!x.needs);

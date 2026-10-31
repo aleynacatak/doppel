@@ -5,8 +5,10 @@ import { topoOrder } from "../../shared/flowGraph";
 import { countLabel, isListType } from "../../shared/ports";
 import type { DesignAppAdapter } from "../../adapters/types";
 import type { AppId, EdgeProgress, Flow, FlowIssue, FlowNode, InputValue, MatchRule, NodeProgress, ParamValue, Routine, RuleFinding, RunOutput, StageItemProgress } from "../types";
+import { readImageInfo } from "../helpers/imageInfo";
 import { errorMessage } from "../util";
 import { type AdapterSource, type FailureInfo, type ItemRecord, NodeRunner } from "./nodeRunner";
+import { plainError } from "./failures";
 import { type FlowRoutines, routineOf, sourceSpec, validateFlow } from "./validateFlow";
 import { InputValueError, type PortValue, adaptValue, countOf, resolveInput } from "./values";
 
@@ -88,6 +90,26 @@ async function freeName(folder: string, name: string): Promise<string> {
 }
 
 const safeName = (s: string) => s.replace(/[/\\:*?"<>|]/g, "-").trim() || "result";
+
+/**
+ * Results of one run that share a file name (one image saved at three sizes) are named by their size when that tells
+ * them apart: "apricot-1080x1350.jpg" rather than "apricot-2.jpg". By source path; files left out keep their name.
+ */
+async function resultNames(files: string[]): Promise<Map<string, string>> {
+  const groups = new Map<string, string[]>();
+  for (const f of files) groups.set(path.basename(f).toLowerCase(), [...(groups.get(path.basename(f).toLowerCase()) ?? []), f]);
+  const out = new Map<string, string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sizes = (await Promise.all(group.map(readImageInfo))).map((i) => (i?.width && i.height ? `${i.width}x${i.height}` : null));
+    if (sizes.some((s) => !s) || new Set(sizes).size < sizes.length) continue;
+    group.forEach((f, k) => {
+      const ext = path.extname(f);
+      out.set(f, `${path.basename(f, ext)}-${sizes[k]}${ext}`);
+    });
+  }
+  return out;
+}
 
 export class FlowRunner {
   private readonly nodes: NodeRunner;
@@ -192,11 +214,6 @@ export class FlowRunner {
         const documentId = docValue?.kind === "value" && docValue.value ? String(docValue.value) : spec.documents[routine.appId];
         const settings: Record<string, ParamValue> = {};
         for (const s of routine.settings) settings[s.key] = (node.settings?.[s.key] ?? s.default ?? null) as ParamValue;
-        const allowedFolders = routine.inputs
-          .filter((p) => p.type === "folder")
-          .map((p) => inputs[p.key])
-          .filter((v): v is Extract<PortValue, { kind: "value" }> => v?.kind === "value" && typeof v.value === "string")
-          .map((v) => String(v.value));
         usedAdapters.add(this.adapters.get(routine.appId));
         // A sample run takes one item of the lists picked for the flow; what follows has only that item already.
         const iterEdge = routine.iterate ? flow.edges.find((e) => e.to.nodeId === id && e.to.port === routine.iterate!.input) : undefined;
@@ -214,7 +231,6 @@ export class FlowRunner {
             target: spec.target,
             workDir: path.join(spec.runDir, id),
             copiesDir: spec.copiesDir,
-            allowedFolders,
             isCancelled: spec.isCancelled,
             failed,
             sampleIndex: fromInput ? spec.sampleIndex : undefined,
@@ -295,11 +311,9 @@ export class FlowRunner {
       sp.error = sp.status === "failed" ? `Nothing was picked for “${node.port.label}”.` : undefined;
       return;
     }
-    let value = resolved.value;
-    if (value.kind === "list" && spec.onlyItems) {
-      const only = spec.onlyItems;
-      value = { ...value, items: value.items.filter((i) => only.has(i.key) || [...only].some((k) => i.key.startsWith(`${k}-`))) };
-    }
+    // Running failed items again: every list stays whole. Each routine runs only those items of the list it goes
+    // through (so earlier steps make their part again), and the other lists stay there to find partners in.
+    const value = resolved.value;
     values[node.id] = { [node.port.key]: value };
     // Rows with problems fail here (not in a sample run, which only takes one item).
     const problems = spec.sampleIndex !== undefined ? [] : resolved.problems.filter((p) => !spec.onlyItems || spec.onlyItems.has(p.key));
@@ -341,12 +355,14 @@ export class FlowRunner {
     try {
       await fs.mkdir(folder, { recursive: true });
       const saved: { key: string; label: string; file: string; from?: string }[] = [];
+      let named = new Map<string, string>();
       const copy = async (from: string, key: string) => {
-        const to = await freeName(folder, path.basename(from));
+        const to = await freeName(folder, named.get(from) ?? path.basename(from));
         await fs.copyFile(from, to);
         saved.push({ key, label: path.basename(to), file: to, from });
       };
       if (value.kind === "list" && value.type === "fileList") {
+        named = await resultNames(value.items.map((i) => String(i.value)));
         for (const item of value.items) await copy(String(item.value), item.key);
       } else if (value.kind === "list") {
         const to = await freeName(folder, `${safeName(node.port.label)}.csv`);
@@ -367,6 +383,20 @@ export class FlowRunner {
       sp.items = saved.map((s) => ({ key: s.key, label: s.label, status: "done" }));
       sp.total = sp.done = saved.length;
       sp.status = "done";
+      // Several results with one name: say how they're told apart.
+      const nameOf = (f: string) => path.basename(f).toLowerCase();
+      const sources = saved.flatMap((s) => (s.from ? [s.from] : []));
+      const shared = sources.filter((f) => sources.filter((o) => nameOf(o) === nameOf(f)).length > 1);
+      const bySize = shared.filter((f) => named.has(f)).length;
+      const byOrder = shared.length - bySize;
+      if (shared.length) {
+        sp.note = [
+          bySize ? `${bySize} results with the same name end with their size in pixels.` : "",
+          byOrder ? `${byOrder} results with the same name end in -2, -3… in the order they were made.` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
       sp.documentName = folder;
       for (const s of saved) {
         // A copy looks like the file it copied: reuse that output's preview.
@@ -375,7 +405,10 @@ export class FlowRunner {
       }
     } catch (err) {
       sp.status = "failed";
-      sp.error = `Couldn't save to ${path.basename(folder)}: ${errorMessage(err)}`;
+      const raw = errorMessage(err);
+      const said = plainError(raw);
+      sp.error = `Couldn't save to ${path.basename(folder)}. ${said.error ?? raw}`;
+      if (said.errorDetail) sp.errorDetail = said.errorDetail;
     }
   }
 }

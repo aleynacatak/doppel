@@ -278,6 +278,30 @@ describe("provider adapters", () => {
     await expect(p.chat({ model: "spark", messages: [], maxTokens: 10 }, { creationId: "c9" })).rejects.toMatchObject({ code: "creation_call_limit", action: "start-over" });
   });
 
+  it("asks once more when the connection drops mid-answer, then says it was the connection", async () => {
+    const dropped = () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new TypeError("net::ERR_QUIC_GOAWAY_REQUEST_CAN_BE_RETRIED"));
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    const ok = () => sse([{ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }]);
+    const once = mockFetch([dropped, ok]);
+    const p = new DopplDemoProvider("https://worker.example", async () => "DOPPL-CODE", { fetch: once.fetchImpl, backoffMs: 1 });
+    expect((await p.chat({ model: "spark", messages: [], maxTokens: 10 }, { creationId: "c9" })).content).toBe("ok");
+    expect(once.calls).toHaveLength(2);
+    const twice = new OpenAICompatibleProvider(meta, async () => "k", { fetch: mockFetch([dropped, dropped]).fetchImpl, backoffMs: 1 });
+    const err = await twice.chat({ model: "m", messages: [], maxTokens: 5 }, {}).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "connection_dropped", action: "retry", detail: expect.stringContaining("ERR_QUIC_GOAWAY") });
+    expect((err as Error).message).toBe("Doppl lost its connection to the AI service while the answer came in. Check your internet connection and try again.");
+    // A raw network error that reaches a run is the connection's, not the app's.
+    const { toExecutionError } = await import("../electron/core/services/runService");
+    expect(toExecutionError(new TypeError("net::ERR_CONNECTION_RESET"), "Adobe Photoshop").message).toBe("The connection dropped while Doppl was working. Check your internet connection and try again.");
+  });
+
   it("segments with SAM through the Responses API", async () => {
     const { fetchImpl, calls } = mockFetch([() => sse([{ type: "response.output_text.delta", delta: "<|box;x1=1;y1=2;x2=30;y2=40;w=100;h=80|>" }])]);
     const p = new OpenAICompatibleProvider(meta, async () => "k", { fetch: fetchImpl });

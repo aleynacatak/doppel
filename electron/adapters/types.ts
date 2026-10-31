@@ -3,6 +3,7 @@ import type {
   AppStatus,
   DocumentRef,
   DocumentSummary,
+  FailureCause,
   OutputDetail,
   OutputStatus,
   ParamDef,
@@ -53,8 +54,6 @@ export interface ScriptContext {
   copiesDir: string;
   /** The routine edits the document (vs. only reading/exporting it). */
   modifiesDocument: boolean;
-  /** Folders the designer picked for this run; routines may only write files there. */
-  allowedFolders: string[];
   isCancelled: () => boolean;
 }
 
@@ -96,8 +95,6 @@ export interface StageRunContext {
   workDir: string;
   /** Where copies of unsaved documents go (they have no folder of their own). */
   copiesDir: string;
-  /** Where the routine may write files besides its working folder: folder inputs picked for the run. */
-  allowedFolders: string[];
   isCancelled: () => boolean;
 }
 
@@ -121,6 +118,8 @@ export interface StageItemResult {
   error?: string;
   /** The routine's own code failed (as opposed to the app being unavailable). */
   scriptFailure?: boolean;
+  /** Whose problem a failure is, when the adapter knows (a wrong barcode in the data is the files'). */
+  cause?: FailureCause;
   outputs: AdapterOutput[];
   /** Values for the routine's named outputs, e.g. { files: ["/…/label-1.png"] }. */
   values: Record<string, unknown[]>;
@@ -218,7 +217,7 @@ export interface DesignAppAdapter {
   runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult>;
   /** Always called, also after failures or cancel. Closes working copies. */
   endStage(session: StageSession, ctx: StageRunContext): Promise<void>;
-  /** After the last routine of a run (also after failures): removes scratch copies of trial runs. */
+  /** After the last routine of a run (also after failures): removes scratch copies of trial runs and copies that kept nothing. */
   endRun?(runId: string): Promise<void>;
   /**
    * What the model needs to write routines for this app (action catalog, or script guide and helper library).

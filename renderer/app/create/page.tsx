@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import type { Creation } from "@core/types";
+import { Suspense, useState } from "react";
 import { ClarifyingQuestion } from "@/components/create/ClarifyingQuestion";
 import { CreationFailure } from "@/components/create/CreationFailure";
 import { CreationResult } from "@/components/create/CreationResult";
@@ -19,11 +20,14 @@ import { Loading } from "@/components/ui/Progress";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useCreation } from "@/lib/hooks";
+import { useShell } from "@/lib/store";
 
 function CreateScreen() {
   const id = useSearchParams().get("task");
   const router = useRouter();
   const { data: creation, loading, setData } = useCreation(id);
+  // A button that failed (the app couldn't reach Doppl's service, say): said here instead of nothing happening.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (loading && creation === undefined) return <Loading />;
   if (!id || !creation) {
@@ -31,10 +35,20 @@ function CreateScreen() {
   }
 
   const api = doppel();
-  const discard = async () => {
-    await api.discardCreation(creation.id);
-    router.push(creation.flowLink ? `/flow?id=${creation.flowLink.flowId}` : (creation.mode === "repair" || creation.mode === "refine") && creation.routineId ? `/routine?id=${creation.routineId}` : "/");
+  const attempt = async (work: () => Promise<unknown>) => {
+    setActionError(null);
+    try {
+      await work();
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
   };
+  const run = (next: Promise<Creation>) => attempt(async () => setData(await next));
+  const discard = () =>
+    attempt(async () => {
+      await api.discardCreation(creation.id);
+      router.push(creation.flowLink ? `/flow?id=${creation.flowLink.flowId}` : (creation.mode === "repair" || creation.mode === "refine") && creation.routineId ? `/routine?id=${creation.routineId}` : "/");
+    });
   const save = async (name: string, acceptPortabilityIssues: boolean) => {
     const result = await api.saveRoutine(creation.id, { name, acceptPortabilityIssues });
     if (!result.saved) return result.issues;
@@ -47,20 +61,21 @@ function CreateScreen() {
     router.push(`/routine?id=${result.routine!.id}&${notice}`);
     return null;
   };
-  const startOver = async () => {
-    // "Make compatible" and Refine keep their place: start them over as they are.
-    if (creation.flowLink || creation.mode === "refine") {
-      setData(await api.retryCreation(creation.id));
-      return;
-    }
-    const t = creation.task;
-    const next =
-      creation.mode === "repair" && creation.routineId
-        ? await api.repairRoutine(creation.routineId, creation.failedRunId)
-        : await api.createRoutine({ request: t.request, references: t.references, folders: t.folders, appId: t.appId, documentId: t.documentId, apps: t.apps });
-    await api.discardCreation(creation.id);
-    router.replace(`/create?task=${next.id}`);
-  };
+  const startOver = () =>
+    attempt(async () => {
+      // "Make compatible" and Refine keep their place: start them over as they are.
+      if (creation.flowLink || creation.mode === "refine") {
+        setData(await api.retryCreation(creation.id));
+        return;
+      }
+      const t = creation.task;
+      const next =
+        creation.mode === "repair" && creation.routineId
+          ? await api.repairRoutine(creation.routineId, creation.failedRunId)
+          : await api.createRoutine({ request: t.request, references: t.references, folders: t.folders, appId: t.appId, documentId: t.documentId, apps: t.apps });
+      await api.discardCreation(creation.id);
+      router.replace(`/create?task=${next.id}`);
+    });
   const running = creation.status === "running" || creation.status === "waiting";
   const planWaiting = creation.kind === "flow" && creation.status === "waiting" && !!creation.plan && !creation.planConfirmed && !creation.question && !creation.needs;
 
@@ -76,6 +91,7 @@ function CreateScreen() {
           ) : undefined
         }
       />
+      {actionError && <Notice tone="error">{actionError}</Notice>}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_auto]">
         <StageList creation={creation} />
@@ -110,7 +126,7 @@ function CreateScreen() {
           <p className="ui-muted">{copy.create.planHint}</p>
           <FlowPlanView plan={creation.plan!} />
           <div className="flex gap-2">
-            <Button variant="primary" onClick={async () => setData(await api.confirmPlan(creation.id))}>
+            <Button variant="primary" onClick={() => run(api.confirmPlan(creation.id))}>
               {copy.create.planConfirm}
             </Button>
             <Button onClick={discard}>{copy.common.discard}</Button>
@@ -143,19 +159,23 @@ function CreateScreen() {
       {creation.status === "waiting" && creation.question && (
         <ClarifyingQuestion
           question={creation.question}
-          onAnswer={async (optionId) => {
-            setData(await api.answerQuestion(creation.id, creation.question!.id, optionId));
-          }}
+          onAnswer={(optionId) => run(api.answerQuestion(creation.id, creation.question!.id, optionId))}
         />
       )}
 
       {creation.status === "failed" && (
         <CreationFailure
           creation={creation}
-          onRetry={async () => setData(await api.retryCreation(creation.id))}
-          onContinue={async () => setData(await api.continueCreation(creation.id))}
+          onRetry={() => run(api.retryCreation(creation.id))}
+          onContinue={() => run(api.continueCreation(creation.id))}
           onStartOver={startOver}
           onDiscard={discard}
+          onChangeRequest={async () => {
+            const t = creation.task;
+            useShell.getState().setDraftTask({ request: t.request, references: t.references, folders: t.folders, appId: t.appId, documentId: t.documentId, apps: t.apps });
+            await api.discardCreation(creation.id);
+            router.push("/");
+          }}
         />
       )}
 
@@ -165,11 +185,11 @@ function CreateScreen() {
           actions={
             <>
               {creation.canContinue && (
-                <Button variant="primary" onClick={async () => setData(await api.continueCreation(creation.id))}>
+                <Button variant="primary" onClick={() => run(api.continueCreation(creation.id))}>
                   {copy.create.continue}
                 </Button>
               )}
-              <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={async () => setData(await api.retryCreation(creation.id))}>
+              <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={() => run(api.retryCreation(creation.id))}>
                 {creation.canContinue ? copy.create.startOver : copy.common.tryAgain}
               </Button>
               <ButtonLink href="/">{copy.create.newTask}</ButtonLink>
@@ -186,7 +206,7 @@ function CreateScreen() {
             const v = result.routine!.version;
             router.push(creation.flowLink ? `/flow?id=${creation.flowLink.flowId}&node=${creation.flowLink.nodeId}&refined=${v}` : `/routine?id=${result.routine!.id}&refined=${v}`);
           }}
-          onTryAgain={async (instruction) => setData(await api.refineFollowUp(creation.id, instruction))}
+          onTryAgain={(instruction) => run(api.refineFollowUp(creation.id, instruction))}
           onDiscard={discard}
         />
       )}

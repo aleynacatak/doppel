@@ -69,7 +69,6 @@ async function runOne(def: HelperDef, test: HelperTest, deps: TestDeps): Promise
     target: "trial",
     workDir,
     copiesDir: path.join(workDir, "copies"),
-    allowedFolders: [],
     isCancelled: () => false,
   };
   const session = await adapter.beginStage(ctx);

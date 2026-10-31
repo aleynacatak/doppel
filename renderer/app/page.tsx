@@ -17,10 +17,17 @@ import { useShell } from "@/lib/store";
 export default function NewTaskPage() {
   const router = useRouter();
   const apps = useShell((s) => s.apps);
-  const [request, setRequest] = useState("");
-  const [references, setReferences] = useState<string[]>([]);
-  const [folders, setFolders] = useState<string[]>([]);
+  // A request Doppl declined comes back here to be changed, with its files and apps.
+  const [draft] = useState(() => {
+    const task = useShell.getState().draftTask;
+    useShell.getState().setDraftTask(null);
+    return task;
+  });
+  const [request, setRequest] = useState(draft?.request ?? "");
+  const [references, setReferences] = useState<string[]>(draft?.references ?? []);
+  const [folders, setFolders] = useState<string[]>(draft?.folders ?? []);
   const [picked, setPicked] = useState<TaskApp[]>(() => {
+    if (draft) return draft.apps?.length ? draft.apps : [{ appId: draft.appId, documentId: draft.documentId }];
     const first = apps.find((a) => a.status === "connected") ?? apps[0];
     return first ? [{ appId: first.id }] : [];
   });

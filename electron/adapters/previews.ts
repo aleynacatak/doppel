@@ -34,9 +34,10 @@ function onCheckerboard(image: Electron.NativeImage): Electron.NativeImage | nul
   return nativeImage.createFromBitmap(out, { width, height });
 }
 
-function toPreview(image: Electron.NativeImage, label: string): PreviewImage | undefined {
+function toPreview(image: Electron.NativeImage, label: string, max = MAX_PREVIEW): PreviewImage | undefined {
   if (image.isEmpty()) return undefined;
-  if (image.getSize().width > MAX_PREVIEW) image = image.resize({ width: MAX_PREVIEW, quality: "good" });
+  const { width, height } = image.getSize();
+  if (width > max || height > max) image = image.resize(width >= height ? { width: max, quality: "good" } : { height: max, quality: "good" });
   const size = image.getSize();
   const flat = onCheckerboard(image);
   return {
@@ -55,11 +56,22 @@ const quickLook = (filePath: string) => nativeImage.createThumbnailFromPath(file
  * Preview of a file on disk: PNG and JPEG are downscaled; PDFs, SVGs and what Electron can't read itself (PSD, TIFF,
  * WebP…) use the macOS Quick Look thumbnail.
  */
-export async function filePreview(filePath: string, label = path.basename(filePath)): Promise<PreviewImage | undefined> {
+export async function filePreview(filePath: string, label = path.basename(filePath), max = MAX_PREVIEW): Promise<PreviewImage | undefined> {
   const ext = path.extname(filePath).toLowerCase();
   let image = ext === ".pdf" || ext === ".svg" ? await quickLook(filePath) : nativeImage.createFromPath(filePath);
   if (image.isEmpty() && ext !== ".pdf" && ext !== ".svg") image = await quickLook(filePath).catch(() => image);
-  return toPreview(image, label);
+  return toPreview(image, label, max);
+}
+
+/** Small pictures of files the designer picked (to choose one by its picture), by path; files that aren't images are left out. */
+export async function filePreviews(paths: string[], max = 160): Promise<Record<string, PreviewImage>> {
+  const out: Record<string, PreviewImage> = {};
+  for (const p of paths.slice(0, 40)) {
+    if (!/\.(png|jpe?g|gif|webp|tiff?|psd|psb|heic|bmp)$/i.test(p)) continue;
+    const preview = await filePreview(p, path.basename(p), max).catch(() => undefined);
+    if (preview) out[p] = preview;
+  }
+  return out;
 }
 
 /** Preview of image bytes (PNG/JPEG), e.g. a Figma frame export. */

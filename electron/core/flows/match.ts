@@ -1,4 +1,4 @@
-import { compactKey, coreKey, nameKey } from "../../shared/names";
+import { compactKey, contentWords, coreKey, nameKey, squashedFrom, wordsWithin } from "../../shared/names";
 import type { MatchPreview, MatchRule } from "../types";
 import type { ListItem } from "./values";
 
@@ -28,9 +28,10 @@ const within = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every((t
 /**
  * Each wanted name's partner among the candidates, from the surest way to the loosest: the same name; (loose) the
  * same name written as one word ("strawberryvanilla"); the same name without noise ("mango_v2_final", "Mango (1)");
- * the only candidate whose words contain the name's words or are contained in them; the only one whose one-word
- * form contains the other's. A candidate another name already took at a surer level isn't taken again. Null: none,
- * or more than one, fits.
+ * the only candidate whose words contain the name's words or are contained in them; the same with words in another
+ * form or with "and"/"&" ("salt caramel pear" for "Salted Caramel Pear"); the only one whose one-word form contains
+ * the other's; the only one written as one word out of the other's words ("pearcaramelsalt"). A candidate another
+ * name already took at a surer level isn't taken again. Null: none, or more than one, fits.
  */
 export function partnersByName<T extends object>(wanted: string[], candidates: { name: string; item: T }[], loose: boolean): (T | null)[] {
   const keys = candidates.map((c) => ({ key: nameKey(c.name), compact: compactKey(c.name), core: coreKey(c.name), item: c.item }));
@@ -48,9 +49,16 @@ export function partnersByName<T extends object>(wanted: string[], candidates: {
         return within(t, tokens(c.key)) || within(tokens(c.key), t);
       },
       (w, c) => {
+        const a = contentWords(w);
+        const b = contentWords(c.core);
+        return wordsWithin(a, b) || wordsWithin(b, a);
+      },
+      (w, c) => {
         const a = compactKey(w);
         return a.length >= 4 && c.compact.length >= 4 && (c.compact.includes(a) || a.includes(c.compact));
       },
+      // One word of the file ("pearcaramelsalt-label") may be the squashed name.
+      (w, c) => squashedFrom(c.core, w) || contentWords(c.core).some((x) => squashedFrom(x, w)) || squashedFrom(w, c.core),
     );
   }
   for (const fits of levels) {
@@ -102,19 +110,37 @@ export function itemName(item: ListItem, type: ListType, rule?: MatchRule): stri
 /** The key of a hand-picked pair for an item. */
 export const pairKey = (item: ListItem, type: ListType, rule: MatchRule) => nameKey(itemName(item, type, rule));
 
-/** Pairs every iterated item with one item of the joined list: by hand where the designer picked, else by the rule. */
+/**
+ * Pairs every iterated item with one item of the joined list. Lists from the same data file pair by the row their
+ * items came from (a cutout made for row 3 goes with row 3, whatever its file is called); otherwise by hand where
+ * the designer picked, else by the rule.
+ */
 export function pairItems(
   rule: MatchRule,
-  iter: { type: ListType; items: ListItem[] },
-  joined: { type: ListType; items: ListItem[]; label: string },
+  iter: { type: ListType; items: ListItem[]; origin?: string },
+  joined: { type: ListType; items: ListItem[]; label: string; origin?: string },
 ): Map<string, Pairing> {
+  if (iter.origin && iter.origin === joined.origin) return pairBySource(iter, joined);
   const out = pairByRule(rule, iter, joined);
   if (!rule.pairs || Object.keys(rule.pairs).length === 0) return out;
   const partners = joined.items.map((j) => ({ j, key: nameKey(itemName(j, joined.type)) }));
+  // A file picked before the run for what an earlier step makes from it ("pearcaramelsalt.jpg" for its cutout): the
+  // cutout carries that file's key.
+  const madeFrom = (j: ListItem, file: string) => j.key === `file-${file}` || j.key.startsWith(`file-${file}-`);
   for (const item of iter.items) {
     const wanted = rule.pairs[pairKey(item, iter.type, rule)];
-    const partner = wanted !== undefined ? partners.find((p) => p.key === nameKey(wanted)) : undefined;
+    const partner = wanted !== undefined ? (partners.find((p) => p.key === nameKey(wanted)) ?? partners.find((p) => madeFrom(p.j, wanted))) : undefined;
     if (partner) out.set(item.key, { matched: partner.j });
+  }
+  return out;
+}
+
+/** Items that came from the same row: the same key, or one of the files made for it ("row-3-1"). */
+function pairBySource(iter: { items: ListItem[] }, joined: { items: ListItem[]; label: string }): Map<string, Pairing> {
+  const out = new Map<string, Pairing>();
+  for (const item of iter.items) {
+    const matched = joined.items.find((j) => j.key === item.key) ?? joined.items.find((j) => j.key.startsWith(`${item.key}-`));
+    out.set(item.key, matched ? { matched } : { matched: null, problem: `No ${singular(joined.label)} for ${item.label}: it wasn't made, or failed earlier.` });
   }
   return out;
 }

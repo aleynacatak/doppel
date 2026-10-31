@@ -47,6 +47,7 @@ export class InDesignAdapter implements DesignAppAdapter {
     { level: "rule" as const, types: ["overset" as const], label: () => "Text fits its frames" },
     { level: "rule" as const, types: ["link-missing" as const, "link-modified" as const], label: () => "Links are present and up to date" },
     { level: "rule" as const, types: ["font-missing" as const], label: () => "Fonts are installed" },
+    { level: "rule" as const, types: ["glyph-missing" as const], label: () => "Fonts have every letter" },
     { level: "rule" as const, types: ["low-res" as const], label: (ppi: number) => `Images are at least ${ppi} ppi` },
     { level: "object" as const, types: ["off-page" as const], label: () => "Text stays inside the page" },
     { level: "object" as const, types: ["short-of-bleed" as const], label: () => "Images reach the bleed" },
@@ -274,9 +275,18 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 
   async runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult> {
-    const st = session.state as { docId: string | null; sourceName?: string };
+    const st = session.state as { docId: string | null; sourceName?: string; findings?: RuleFinding[] | null };
     onProgress(`Running in InDesign · ${input.label}`);
-    let res: { result: unknown; outputs: AdapterOutput[]; log: string[]; values?: Record<string, unknown[]> };
+    let res: {
+      result: unknown;
+      outputs: AdapterOutput[];
+      log: string[];
+      values?: Record<string, unknown[]>;
+      /** Rule findings from documents the routine opened, checked before they closed. */
+      findings?: RuleFinding[];
+      checked?: number;
+      unchecked?: number;
+    };
     try {
       res = await this.call(wrapRoutine(String(input.body)), {
         docId: st.docId,
@@ -295,6 +305,7 @@ export class InDesignAdapter implements DesignAppAdapter {
       }
       throw err;
     }
+    const log = [...(res.log ?? [])];
     const outputs = (res.outputs ?? []).map((o, i) => ({ ...o, key: `${input.key}-${o.key || i + 1}` }));
     for (const o of outputs.filter((x) => x.filePath && !x.preview)) o.preview = await filePreview(o.filePath!).catch(() => undefined);
     const pages = outputs.filter((x) => !x.filePath && x.pageIndex);
@@ -308,11 +319,24 @@ export class InDesignAdapter implements DesignAppAdapter {
     const fileList = ctx.stage.outputs.find((o) => o.type === "fileList" || o.type === "file");
     const files = outputs.filter((o) => o.filePath).map((o) => o.filePath!);
     if (fileList && !values[fileList.key] && files.length) values[fileList.key] = files;
-    let findings: RuleFinding[] = [];
-    if (st.docId && ctx.stage.modifiesDocument) {
-      findings = await this.ruleChecks(st.docId, { minPpi: 300, outputs }).catch(() => []);
+    const findings: RuleFinding[] = [...(res.findings ?? [])];
+    let checked = (res.checked ?? 0) > 0;
+    if (st.docId) {
+      // A document the stage changes is checked after every item; one it only reads, once.
+      const found = ctx.stage.modifiesDocument
+        ? await this.ruleChecks(st.docId, { minPpi: 300, outputs }).catch(() => null)
+        : st.findings !== undefined
+          ? st.findings
+          : (st.findings = await this.ruleChecks(st.docId, { minPpi: 300, outputs }).catch(() => null));
+      if (found) {
+        findings.push(...found);
+        checked = true;
+      }
     }
-    return { ok: true, outputs, values, findings, log: res.log ?? [], data: res.result };
+    // No findings from documents Doppl never saw would read as a pass.
+    if (!checked && outputs.length) findings.push({ type: "not-checked", message: NOT_CHECKED });
+    if (res.unchecked) log.push(`${res.unchecked} document${res.unchecked === 1 ? " was" : "s were"} closed before Doppl could check ${res.unchecked === 1 ? "it" : "them"}.`);
+    return { ok: true, outputs, values, findings, log, data: res.result };
   }
 
   async endStage(session: StageSession, ctx: StageRunContext): Promise<void> {
@@ -326,6 +350,8 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 }
 
+const NOT_CHECKED = "The routine closed its document before Doppl could check it.";
+
 const STAGE_NOTES = `An InDesign routine's script also gets:
   params.<key>: every input and setting by key (file and folder inputs are paths, fileList inputs arrays of paths,
   rows inputs { rows, columns, name, path }),
@@ -334,4 +360,5 @@ const STAGE_NOTES = `An InDesign routine's script also gets:
   ctx.workDir (this routine's working folder; files other routines need go here),
   ctx.stageOutput(key, value) (adds a value to one of the routine's declared outputs; exported files listed with
   ctx.output({ filePath }) go to the first file output automatically).
-doc is null for routines without a document input (open files with app.open(File(params.someFile)) yourself then).`;
+doc is null for routines without a document input: open the files they work on with ctx.open(params.someFile) and close
+them with ctx.close(d), which checks them first (overset text, fonts, links, images).`;

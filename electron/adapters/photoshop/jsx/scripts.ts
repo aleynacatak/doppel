@@ -158,7 +158,10 @@ export const RENDER_PREVIEW = String.raw`function (input) {
       dup.resizeImage(UnitValue(input.width, "px"), UnitValue(Math.max(1, Math.round(h * input.width / w)), "px"), dup.resolution, ResampleMethod.BICUBIC);
     }
     DopplPS.ensureFolder(file.parent);
-    dup.saveAs(file, new PNGSaveOptions(), true, Extension.LOWERCASE);
+    var png = new PNGSaveOptions();
+    png.compression = 6;
+    png.interlaced = false;
+    dup.saveAs(file, png, true, Extension.LOWERCASE);
   } finally {
     dup.close(SaveOptions.DONOTSAVECHANGES);
     if (previous) { try { app.activeDocument = previous; } catch (e2) {} }

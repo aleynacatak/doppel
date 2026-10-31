@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BarcodeError, type BarcodeType, barcodeSvg, validateBarcode } from "../../core/helpers/barcode";
 import { DataFileError, resolveFileInFolder } from "../../core/helpers/dataFiles";
-import type { RuleFinding } from "../../core/types";
+import type { FailureCause, RuleFinding } from "../../core/types";
 
 // Turns an expanded action list into what the plugin receives: images and SVG files are read into the message,
 // barcodes are drawn as SVG, export folders are checked. Problems with the item's data (a missing image, a wrong
@@ -17,6 +17,8 @@ export class ItemDataError extends Error {
   constructor(
     message: string,
     readonly finding?: RuleFinding,
+    /** Mostly the designer's files or data; a few are the routine's (an export outside the run's folders). */
+    readonly fault: FailureCause = "files",
   ) {
     super(message);
     this.name = "ItemDataError";
@@ -162,7 +164,7 @@ export async function prepareActions(actions: Record<string, unknown>[], allowed
         throw new ItemDataError(`${where}: the SVG is empty.`);
       }
     } else if (a.action === "exportNode" && typeof a.folder === "string" && !insideAny(a.folder, allowedFolders)) {
-      throw new ItemDataError(`${where}: exports can only go into folders picked for this run.`);
+      throw new ItemDataError(`${where}: exports can only go into the routine's working folder (leave out "folder"); Doppl never writes into the designer's folders.`, undefined, "routine");
     }
     out.push(a);
   }

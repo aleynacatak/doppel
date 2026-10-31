@@ -1,4 +1,4 @@
-import type { AiAccess, App, Settings } from "@core/types";
+import type { AiAccess, App, NewTaskInput, Settings } from "@core/types";
 import { create } from "zustand";
 
 interface ShellState {
@@ -12,6 +12,9 @@ interface ShellState {
   setApps: (apps: App[]) => void;
   setSettings: (settings: Settings) => void;
   setAiAccess: (aiAccess: AiAccess) => void;
+  /** A request to change on New task (Doppl declined it as it was), taken by the page when it opens. */
+  draftTask: NewTaskInput | null;
+  setDraftTask: (task: NewTaskInput | null) => void;
 }
 
 export const useShell = create<ShellState>((set) => ({
@@ -25,6 +28,8 @@ export const useShell = create<ShellState>((set) => ({
   setApps: (apps) => set({ apps }),
   setSettings: (settings) => set({ settings }),
   setAiAccess: (aiAccess) => set({ aiAccess }),
+  draftTask: null,
+  setDraftTask: (draftTask) => set({ draftTask }),
 }));
 
 export const useApp = (appId: string | undefined) => useShell((s) => s.apps.find((a) => a.id === appId));

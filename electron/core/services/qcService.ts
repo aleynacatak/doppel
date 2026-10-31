@@ -1,5 +1,5 @@
 import type { DesignAppAdapter } from "../../adapters/types";
-import type { ObjectCheckDef, QcCheck, QcMode, QcOptions, RuleFinding, RunOutput } from "../types";
+import type { ObjectCheckDef, QcCheck, QcMode, QcOptions, QcResult, RuleFinding, RunOutput } from "../types";
 import type { AiCallContext, AiService } from "./aiService";
 
 export interface QcSubject {
@@ -55,13 +55,19 @@ export class QcService {
         const mine = this.findingsFor(output, findings, outputs);
         const profile = output.profile ?? subject.qcProfile;
         const minPpi = profile === "web" ? subject.qcOptions.minPpiWeb : subject.qcOptions.minPpiPrint;
+        // No findings from a document Doppl never saw would read as a pass: say it wasn't checked.
+        const unchecked = mine.find((f) => f.type === "not-checked");
         for (const def of adapter.qcChecks) {
+          if (unchecked) {
+            checks.push({ level: def.level, label: def.label(minPpi), passed: true, skipped: true, reason: unchecked.message });
+            continue;
+          }
           const hits = mine.filter((f) => def.types.includes(f.type) && (f.type !== "low-res" || f.value === undefined || f.value < minPpi));
           checks.push({ level: def.level, label: def.label(minPpi), passed: hits.length === 0, reason: summarize(hits) });
         }
       }
       if (subject.qcMode === "auto_ai") checks.push(await this.ai.reviewOutput(output, ctx));
-      output.qc = checks.length ? { status: checks.every((c) => c.passed) ? "pass" : "flagged", checks } : undefined;
+      output.qc = checks.length ? { status: qcStatus(checks), checks } : undefined;
     }
   }
 
@@ -78,7 +84,7 @@ export class QcService {
           checks.push({ level: "object", label: `${def.object} is inside ${def.region}`, passed: false, reason: `Not checked: ${(err as Error).message}` });
         }
       }
-      output.qc = { status: checks.every((c) => c.passed) ? "pass" : "flagged", checks };
+      output.qc = { status: qcStatus(checks), checks };
     }
   }
 
@@ -94,6 +100,13 @@ export class QcService {
       return (output.pageIndex === undefined && !output.nodeId) || (!hasDocLevelOutput && output.id === all[0]?.id);
     });
   }
+}
+
+/** Flagged when a check that ran failed; "not-checked" when none could run. */
+export function qcStatus(checks: QcCheck[]): QcResult["status"] {
+  const ran = checks.filter((c) => !c.skipped);
+  if (ran.length === 0) return "not-checked";
+  return ran.every((c) => c.passed) ? "pass" : "flagged";
 }
 
 function summarize(hits: RuleFinding[]): string | undefined {

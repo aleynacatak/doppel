@@ -6,7 +6,8 @@ import { routineStartMarker as ROUTINE_START } from "../../adobe/bridge";
 /**
  * Wraps a routine body (the code users see under "View script") so that it:
  * - runs on the requested document with `doc`, `params` and `ctx` in scope,
- * - is one undo step in InDesign ("Doppl: <routine name>"), so a single Cmd+Z reverts it.
+ * - is one undo step in InDesign ("Doppl: <routine name>"), so a single Cmd+Z reverts it,
+ * - returns rule findings from the documents the routine opened itself (checked before ctx.close closes them).
  */
 export function wrapRoutine(body: string): string {
   return `function (input) {
@@ -21,7 +22,12 @@ ${body}
     try { result = routine(doc, input.params, ctx); } catch (e) { failure = e; }
   }, ScriptLanguage.JAVASCRIPT, [], UndoModes.ENTIRE_SCRIPT, "Doppl: " + input.routineName);
   if (failure) { throw { message: String(failure.message || failure), line: failure.line }; }
-  return { result: result === undefined ? null : result, outputs: ctx._outputs, log: ctx._log, values: ctx._stageOutputs };
+  var unchecked = 0;
+  try { unchecked = DopplLib.finishChecks(ctx._track); } catch (e) {}
+  return {
+    result: result === undefined ? null : result, outputs: ctx._outputs, log: ctx._log, values: ctx._stageOutputs,
+    findings: ctx._track.findings, checked: ctx._track.checkedCount, unchecked: unchecked
+  };
 }`;
 }
 
@@ -160,6 +166,8 @@ export const EXPORT_PAGE_PREVIEWS = String.raw`function (input) {
 }`;
 
 export const RULE_CHECKS = String.raw`function (input) {
+  // Only the document Doppl names: never whatever happens to be active.
+  if (!input.docId) { throw new Error("No document to check."); }
   var doc = DopplLib.findDocument(input.docId);
   return DopplLib.preflight(doc, { minPpi: input.minPpi });
 }`;

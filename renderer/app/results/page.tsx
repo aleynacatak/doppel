@@ -7,6 +7,7 @@ import { FixNotice } from "@/components/results/FixNotice";
 import { OutputCard } from "@/components/results/OutputCard";
 import { OutputGrid } from "@/components/results/OutputGrid";
 import { Button, ButtonLink } from "@/components/ui/Button";
+import { Details } from "@/components/ui/Details";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -25,7 +26,8 @@ const matches = (o: RunOutput, filter: Filter) => {
   if (filter === "all") return true;
   const flagged = o.status === "done" && o.qc?.status === "flagged" && !o.markedOk;
   if (filter === "flagged") return flagged;
-  return o.status === "done" && !flagged;
+  // Outputs Doppl couldn't check aren't "passed".
+  return o.status === "done" && !flagged && (o.markedOk || o.qc?.status === "pass");
 };
 
 /** "12 items · 2 flagged · 0 AI calls": items are what the last routine went through (its rows or files). */
@@ -38,12 +40,16 @@ function runSummary(run: Run) {
     failed: failedKeys.size,
     flagged: run.outputs.filter((o) => o.status === "done" && o.qc?.status === "flagged" && !o.markedOk).length,
     aiCalls: run.aiCalls,
+    // Doppl's fix after this run (not on the rerun it made, whose own calls are its run's).
+    fixCalls: run.autoFixOf ? 0 : (run.fix?.aiCalls ?? 0),
   };
 }
 
 function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: NodeProgress; shown: RunOutput[]; card: (o: RunOutput) => React.ReactNode; onRepair?: () => void }) {
   const mine = shown.filter((o) => o.node === node.nodeId);
   const failedItems = node.items.filter((i) => i.status === "failed" || (i.status === "skipped" && i.error));
+  // The AI can fix the routine, not the designer's files or an app that wasn't ready.
+  const repairable = node.kind === "routine" && !!onRepair && (failedItems.length === 0 || failedItems.some((i) => !i.cause || i.cause === "routine"));
   return (
     <Section
       title={
@@ -58,8 +64,9 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
       {node.kind === "output" && node.status === "done" && node.documentName && <p className="ui-small">{copy.results.savedTo(node.done, node.documentName)}</p>}
       {node.note && <p className="ui-small ui-muted">{node.note}</p>}
       {node.error && (
-        <Notice tone="warning" actions={onRepair && node.kind === "routine" ? <Button size="small" onClick={onRepair}>{copy.results.repair}</Button> : undefined}>
+        <Notice tone="warning" actions={repairable ? <Button size="small" onClick={onRepair}>{copy.results.repair}</Button> : undefined}>
           {node.error}
+          <Details text={node.errorDetail} />
         </Notice>
       )}
       {node.kind === "routine" && node.total > 1 && <p className="ui-small ui-muted">{copy.run.stageProgress(node.done, node.total, node.failed)}</p>}
@@ -88,8 +95,7 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
       ) : (
         <OutputGrid>{mine.map(card)}</OutputGrid>
       )}
-      {/* The AI can fix the routine, not the designer's files or an app that wasn't ready. */}
-      {failedItems.some((i) => !i.cause || i.cause === "routine") && node.kind === "routine" && onRepair && !node.error && (
+      {repairable && failedItems.length > 0 && !node.error && (
         <div>
           <Button size="small" onClick={onRepair}>
             {copy.results.repair}
@@ -115,7 +121,10 @@ function ResultsScreen() {
   const isFlow = run.target.kind === "flow";
   const back = isFlow ? `/flow?id=${run.target.id}` : `/routine?id=${run.target.id}`;
   const again = `/run?${run.target.kind}=${run.target.id}`;
-  const failedCount = run.outputs.filter((o) => o.status === "failed").length;
+  const failedOutputs = run.outputs.filter((o) => o.status === "failed");
+  const failedCount = failedOutputs.length;
+  // Items that failed on their own files or data fail the same way again: the next step is to change the files.
+  const filesOnly = failedCount > 0 && failedOutputs.every((o) => o.cause === "files");
   const shown = run.outputs.filter((o) => matches(o, filter));
   const summary = runSummary(run);
   const repairNode = (nodeId: string) => {
@@ -140,8 +149,13 @@ function ResultsScreen() {
     return `/refine?routine=${node.routineId}&run=${run.id}&output=${o.id}&flow=${run.target.id}&node=${node.id}`;
   };
   const retry = async () => {
-    const next = await api.retryFailed(run.id);
-    router.push(`/run?${next.target.kind}=${next.target.id}&run=${next.id}`);
+    setNote(null);
+    try {
+      const next = await api.retryFailed(run.id);
+      router.push(`/run?${next.target.kind}=${next.target.id}&run=${next.id}`);
+    } catch (e) {
+      setNote((e as Error).message);
+    }
   };
   const open = async (o: RunOutput) => {
     setNote(null);
@@ -189,16 +203,24 @@ function ResultsScreen() {
           <Spinner /> {run.phase ?? copy.results.running}
         </div>
       )}
-      {failedCount > 0 && run.status !== "running" && run.fix?.status !== "fixing" && run.fix?.status !== "fixed" && (
+      {failedCount > 0 && run.status !== "running" && !["fixing", "ready", "fixed"].includes(run.fix?.status ?? "") && (
         <Notice
           tone="warning"
           title={copy.results.partialTitle(failedCount)}
           actions={
-            <Button variant="primary" onClick={retry}>
-              {copy.results.retryFailedItems}
-            </Button>
+            filesOnly ? (
+              <ButtonLink href={again} variant="primary">
+                {copy.results.runWithOtherFiles}
+              </ButtonLink>
+            ) : (
+              <Button variant="primary" onClick={retry}>
+                {copy.results.retryFailedItems}
+              </Button>
+            )
           }
-        />
+        >
+          {filesOnly && <p>{copy.results.filesOnlyBody}</p>}
+        </Notice>
       )}
       {note && <Notice>{note}</Notice>}
       <div>

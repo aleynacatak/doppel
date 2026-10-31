@@ -1,6 +1,7 @@
 import type { NodeProgress } from "@core/types";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
+import { Details } from "../ui/Details";
 import { ProgressBar, Spinner } from "../ui/Progress";
 import { Tag } from "../ui/Tag";
 
@@ -29,6 +30,7 @@ export function NodeProgressList({ nodes }: { nodes: NodeProgress[] }) {
           )}
           {n.documentName && <div className="ui-small ui-muted">{n.kind === "output" ? copy.results.savedTo(n.done, n.documentName) : copy.results.stageOn(n.documentName)}</div>}
           {n.error && <p className="ui-small">{n.error}</p>}
+          <Details text={n.errorDetail} />
           {n.note && <p className="ui-small ui-muted">{n.note}</p>}
           {n.items.length > 1 && n.kind === "routine" && (
             <ul className="ui-small flex flex-col">

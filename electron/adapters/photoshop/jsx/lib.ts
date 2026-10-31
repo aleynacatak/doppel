@@ -2,8 +2,8 @@
 // no String.trim). Routines call the global helpers below (openDocument, findLayer, …) and `ctx`.
 //
 // Safety: Doppl never saves over or closes a document the designer opened. A routine works on documents Doppl
-// opened itself or on duplicates ("… (Doppl)"), exports only into folders picked for the run (or the stage's
-// working folder), and Doppl closes its own documents without saving when the stage ends.
+// opened itself or on duplicates ("… (Doppl)"), exports only into the stage's working folder (the designer's files
+// and folders are read-only), and Doppl closes its own documents without saving when the stage ends.
 export const DOPPL_PS_RUNTIME = String.raw`
 var DopplPS = { state: null };
 

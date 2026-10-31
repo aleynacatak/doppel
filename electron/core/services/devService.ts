@@ -57,7 +57,6 @@ export class DevService {
       target: "original",
       workDir,
       copiesDir: path.join(workDir, "copies"),
-      allowedFolders: [],
       isCancelled: () => false,
     };
     const session = await adapter.beginStage(ctx);

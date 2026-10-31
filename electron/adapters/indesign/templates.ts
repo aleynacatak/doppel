@@ -6,8 +6,8 @@ import type { RoutineTemplate } from "../types";
 // No absolute paths: every file and folder is a param chosen at run time.
 // They're shown to the model as examples of how InDesign routines are written.
 
-const exportPng = String.raw`// Export the chosen pages as PNG files into the output folder.
-var folder = ctx.ensureFolder(params.outputFolder);
+const exportPng = String.raw`// Export the chosen pages as PNG files (into the working folder; Doppl copies them where the designer picks).
+var folder = ctx.ensureFolder(ctx.workDir);
 var pages = ctx.resolvePages(params.pageRange);
 var prefs = app.pngExportPreferences;
 var saved = ctx.savePrefs(prefs, ["exportResolution", "pngExportRange", "pageString", "exportingSpread", "pngQuality", "transparentBackground", "antiAlias"]);
@@ -42,37 +42,29 @@ try {
 }
 return { exported: pages.length };`;
 
-const exportPdfs = String.raw`// Export the whole document twice: once for print, once for screens.
-var folder = ctx.ensureFolder(params.outputFolder);
+const exportPdfs = String.raw`// Export the whole document twice: once for print (with crop marks), once for screens.
 var jobs = [
-  { format: "print", presetName: params.printPreset, label: "Print PDF" },
-  { format: "web", presetName: params.webPreset, label: "Web PDF" }
+  { format: "print", presetName: params.printPreset, label: "Print PDF", marks: true },
+  { format: "web", presetName: params.webPreset, label: "Web PDF", marks: false }
 ];
-var pdfPrefs = app.pdfExportPreferences;
-var saved = ctx.savePrefs(pdfPrefs, ["pageRange"]);
-try {
-  pdfPrefs.pageRange = PageRange.ALL_PAGES;
-  for (var i = 0; i < jobs.length; i++) {
-    var job = jobs[i];
-    var preset = app.pdfExportPresets.itemByName(job.presetName);
-    if (!preset.isValid) {
-      throw new Error("The PDF preset \"" + job.presetName + "\" doesn't exist in this InDesign.");
-    }
-    var name = ctx.safeFileName(ctx.format(params.namingPattern || "{doc}_{format}", {
-      doc: ctx.docName,
-      format: job.format
-    }));
-    var file = new File(folder.fsName + "/" + name + ".pdf");
-    doc.exportFile(ExportFormat.PDF_TYPE, file, false, preset);
-    ctx.output({
-      key: "pdf-" + job.format,
-      label: job.label + " \u00b7 " + job.presetName,
-      filePath: file.fsName,
-      profile: job.format
-    });
-  }
-} finally {
-  ctx.restorePrefs(pdfPrefs, saved);
+for (var i = 0; i < jobs.length; i++) {
+  var job = jobs[i];
+  var name = ctx.safeFileName(ctx.format(params.namingPattern || "{doc}_{format}", {
+    doc: ctx.docName,
+    format: job.format
+  }));
+  // ctx.exportPdf applies the preset, then the marks and bleed (exportFile with a preset would ignore them).
+  var file = ctx.exportPdf(doc, ctx.workDir + "/" + name + ".pdf", {
+    preset: job.presetName,
+    cropMarks: job.marks,
+    useDocumentBleed: job.marks
+  });
+  ctx.output({
+    key: "pdf-" + job.format,
+    label: job.label + " \u00b7 " + job.presetName,
+    filePath: file.fsName,
+    profile: job.format
+  });
 }
 return { exported: jobs.length };`;
 
@@ -179,11 +171,10 @@ export const INDESIGN_TEMPLATES: RoutineTemplate[] = [
     steps: [
       "Pick the pages to export from the page range",
       "Set PNG export to the chosen resolution",
-      "Export each page as its own PNG file into the output folder",
+      "Export each page as its own PNG file",
       "Name each file with the naming pattern",
     ],
     params: [
-      { key: "outputFolder", label: "Output folder", type: "folder", required: true },
       { key: "resolution", label: "Resolution (ppi)", type: "number", required: true, default: 150, min: 36, max: 1200 },
       { key: "pageRange", label: "Page range", type: "text", required: false, default: "all", help: "Page positions, e.g. 1-3, 5. Leave as \"all\" for every page." },
       { key: "namingPattern", label: "File naming pattern", type: "text", required: true, default: "{doc}_{page}", help: "Tokens: {doc}, {page}, {index}" },
@@ -197,15 +188,14 @@ export const INDESIGN_TEMPLATES: RoutineTemplate[] = [
     id: "indesign-export-pdfs",
     appId: "indesign",
     name: "Export print and web PDFs",
-    description: "Exports the whole document as a print PDF and a web PDF, each with its own preset.",
+    description: "Exports the whole document as a print PDF (with crop marks) and a web PDF, each with its own preset.",
     keywords: ["pdf", "pdfs", "print", "press", "web pdf", "export", "printer", "deliver", "handoff"],
     steps: [
-      "Export all pages as a PDF with the print preset",
+      "Export all pages as a PDF with the print preset, with crop marks and the document's bleed",
       "Export all pages again as a PDF with the web preset",
-      "Name both files with the naming pattern and save them in the output folder",
+      "Name both files with the naming pattern",
     ],
     params: [
-      { key: "outputFolder", label: "Output folder", type: "folder", required: true },
       { key: "printPreset", label: "Print PDF preset", type: "select", required: true, default: "[High Quality Print]", optionsSource: "pdfExportPresets" },
       { key: "webPreset", label: "Web PDF preset", type: "select", required: true, default: "[Smallest File Size]", optionsSource: "pdfExportPresets" },
       { key: "namingPattern", label: "File naming pattern", type: "text", required: true, default: "{doc}_{format}", help: "Tokens: {doc}, {format} (print or web)" },

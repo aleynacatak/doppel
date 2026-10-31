@@ -15,10 +15,11 @@ export function QcChecks({ checks }: { checks: QcCheck[] }) {
               .filter((c) => c.level === level)
               .map((c) => (
                 <li key={c.label} className="ui-small flex gap-2">
-                  <span aria-hidden className="w-3 shrink-0">{c.passed ? "✓" : "×"}</span>
+                  <span aria-hidden className="w-3 shrink-0">{c.skipped ? "–" : c.passed ? "✓" : "×"}</span>
                   <span>
                     <span className={c.passed ? "ui-muted" : undefined}>{c.label}</span>
-                    {c.reason && <span className="block">{c.reason}</span>}
+                    {c.skipped && <span className="ui-muted"> · {copy.results.notChecked}</span>}
+                    {c.reason && <span className={c.skipped ? "ui-muted block" : "block"}>{c.reason}</span>}
                   </span>
                 </li>
               ))}

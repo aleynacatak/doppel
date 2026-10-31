@@ -55,7 +55,7 @@ describe("preparing actions for the plugin", () => {
     });
   });
 
-  it("keeps exports inside the folders picked for the run", async () => {
-    await expect(prepareActions([{ action: "exportNode", node: "A", format: "PNG", folder: "/tmp/elsewhere" }], ["/tmp/out"])).rejects.toThrow("folders picked for this run");
+  it("keeps exports inside the routine's working folder, never the designer's folders", async () => {
+    await expect(prepareActions([{ action: "exportNode", node: "A", format: "PNG", folder: "/tmp/photos" }], ["/tmp/work"])).rejects.toThrow("only go into the routine's working folder");
   });
 });

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { DataFileError, type ReadAs, listFolderFiles, readDataFile } from "../helpers/dataFiles";
+import { unreadableImages } from "../helpers/imageInfo";
 import { fileAllowed } from "../../shared/ports";
 import type { InputValue, PortDef, PortType } from "../types";
 import { errorMessage } from "../util";
@@ -18,7 +19,18 @@ export interface ListItem {
 
 export type PortValue =
   | { kind: "value"; type: PortType; value: string | number | boolean | null }
-  | { kind: "list"; type: "fileList" | "rows"; items: ListItem[]; columns?: string[]; name?: string; path?: string; readAs?: ReadAs };
+  | {
+      kind: "list";
+      type: "fileList" | "rows";
+      items: ListItem[];
+      columns?: string[];
+      name?: string;
+      path?: string;
+      readAs?: ReadAs;
+      /** The data file the items come from: its rows, or what routines made per row. Lists with the same origin share
+       * item keys, so a cutout made for row 3 pairs with row 3 whatever it's called. */
+      origin?: string;
+    };
 
 /** An item that can't run, with the reason (a data row with errors). */
 export interface ItemProblem {
@@ -87,7 +99,7 @@ export async function resolveInput(
         if (problem) problems.push({ key: item.key, label: item.label, error: `Row ${n}: ${problem}` });
         else items.push(item);
       });
-      return { value: { kind: "list", type: "rows", items, columns: table.columns, name: path.basename(raw), path: raw, ...(table.readAs ? { readAs: table.readAs } : {}) }, problems };
+      return { value: { kind: "list", type: "rows", items, columns: table.columns, name: path.basename(raw), path: raw, origin: raw, ...(table.readAs ? { readAs: table.readAs } : {}) }, problems };
     }
     case "fileList": {
       let files: string[];
@@ -101,12 +113,23 @@ export async function resolveInput(
       } else throw new InputValueError(`${port.label}: pick files or a folder.`);
       const wrong = files.filter((f) => !fileAllowed(f, port.extensions));
       if (wrong.length) throw new InputValueError(`${port.label} takes ${port.extensions!.join(", ")} files; ${path.basename(wrong[0])} isn't one.`);
-      return { value: fileList(files), problems: [] };
+      // An image that holds no picture fails here, on its own, as the file's problem; the others run.
+      const list = fileList(files) as Extract<PortValue, { kind: "list" }>;
+      const unreadable = await unreadableImages(files);
+      if (!unreadable.size) return { value: list, problems: [] };
+      const bad = (i: ListItem) => unreadable.has(String(i.value));
+      return {
+        value: { ...list, items: list.items.filter((i) => !bad(i)) },
+        problems: list.items.filter(bad).map((i) => ({ key: i.key, label: i.label, error: unreadable.get(String(i.value))! })),
+      };
     }
-    case "file":
+    case "file": {
       if (typeof raw !== "string") throw new InputValueError(`${port.label}: pick a file.`);
       if (!fileAllowed(raw, port.extensions)) throw new InputValueError(`${port.label} takes ${port.extensions!.join(", ")} files; ${path.basename(raw)} isn't one.`);
+      const unreadable = (await unreadableImages([raw])).get(raw);
+      if (unreadable) throw new InputValueError(unreadable);
       return { value: { kind: "value", type: "file", value: raw }, problems: [] };
+    }
     case "folder":
     case "document":
     case "text":

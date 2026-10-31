@@ -16,10 +16,11 @@ import { RunService } from "../electron/core/services/runService";
 import { StarterService } from "../electron/core/services/starterService";
 import { JsonStorage } from "../electron/core/services/storage";
 import type { Routine, Run } from "../electron/core/types";
+import { fakeImage } from "./helpers/images";
 
 // The whole way, with a fake Photoshop and a scripted AI: a saved routine runs on photos, one big photo fails inside
-// the routine's code, Doppl fixes the routine on its own (tried on the big photo and one that worked), saves
-// version 2, and runs the big photo again. Version 1 stays restorable.
+// the routine's code, Doppl offers a fix, the designer says yes, Doppl tries it on the big photo and one that worked,
+// the designer keeps it: version 2 is saved and the big photo runs again. Version 1 stays restorable.
 
 const photoshop = {
   id: "photoshop",
@@ -62,7 +63,7 @@ describe("Doppl's own fix, the whole way", () => {
   it("fixes a routine that failed on a new photo, saves version 2, and runs that photo again", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-autofix-"));
     await fs.mkdir(path.join(dir, "photos"));
-    for (const f of ["apricot.jpg", "big-fig.jpg", "plum.jpg"]) await fs.writeFile(path.join(dir, "photos", f), "jpg");
+    for (const f of ["apricot.jpg", "big-fig.jpg", "plum.jpg"]) await fs.writeFile(path.join(dir, "photos", f), fakeImage(f));
     const registry = new AdapterRegistry([photoshop]);
     const storage = new JsonStorage(path.join(dir, "data"));
     const starters = new StarterService(path.join(dir, "starters"));
@@ -131,9 +132,17 @@ describe("Doppl's own fix, the whole way", () => {
     await library.save(v1);
 
     const first = await runs.start({ kind: "routine", id: "cards" }, { inputs: { "input-photos": path.join(dir, "photos") }, outputFolders: {}, settings: {}, qcMode: "manual", options: { target: "copy" } });
-    // The run ends, Doppl fixes the routine, and the big photo runs again.
-    for (let i = 0; i < 400 && !(await storage.getRun(first.id))?.fix?.rerunId; i++) await new Promise((r) => setTimeout(r, 10));
+    // The run ends and Doppl offers a fix; no AI yet.
+    for (let i = 0; i < 400 && !(await storage.getRun(first.id))?.fix; i++) await new Promise((r) => setTimeout(r, 10));
     await Promise.all(done);
+    expect((await storage.getRun(first.id))?.fix).toMatchObject({ status: "offered", maxCalls: 5 });
+    expect(turns).toEqual([]);
+    // The designer says yes: the fix is tried, and waits for them.
+    await autoFix!.start(first.id);
+    expect((await storage.getRun(first.id))?.fix).toMatchObject({ status: "ready", summary: "Scales big photos down before making the card." });
+    expect((await library.require("cards")).version).toBe(1);
+    // They keep it: version 2, and the big photo runs again.
+    await autoFix!.keep(first.id);
     const after = (await storage.getRun(first.id)) as Run;
     expect(after.outputs.filter((o) => o.status === "failed").map((o) => [o.itemLabel, o.cause])).toEqual([["big-fig.jpg", "routine"]]);
     expect(after.fix).toMatchObject({ status: "fixed", routineId: "cards", fromVersion: 1, toVersion: 2, summary: "Scales big photos down before making the card." });

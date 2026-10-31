@@ -131,9 +131,9 @@ function setTextLayer(layer, text) {
     set: "export",
     call: "exportImage",
     summary: "Exports the active document as PNG, JPG or TIFF into the working folder or a picked folder.",
-    signature: { params: [{"name": "path", "type": "string", "doc": "inside ctx.workDir or a folder input"}, {"name": "format", "type": "\"png\"|\"jpg\"|\"tif\""}, {"name": "quality", "type": "number", "optional": true, "doc": "0-100, JPG"}], returns: "string (the file path)" },
+    signature: { params: [{"name": "path", "type": "string", "doc": "inside ctx.workDir"}, {"name": "format", "type": "\"png\"|\"jpg\"|\"tif\""}, {"name": "quality", "type": "number", "optional": true, "doc": "0-100, JPG"}], returns: "string (the file path)" },
     sideEffects: ["writes a file"],
-    doc: "exportImage(path, format, quality) -> path: exports the ACTIVE document as \"png\", \"jpg\" (quality 0-100) or \"tif\". The path must be inside ctx.workDir or a folder input. Use app.activeDocument = someDoc to choose what to export.\nExample: ctx.output(\"pngs\", exportImage(ctx.join(ctx.workDir, ctx.item.stem + \".png\"), \"png\"));",
+    doc: "exportImage(path, format, quality) -> path: exports the ACTIVE document as \"png\", \"jpg\" (quality 0-100) or \"tif\". The path must be inside ctx.workDir (the designer's files and folders are read-only). Use app.activeDocument = someDoc to choose what to export.\nExample: ctx.output(\"pngs\", exportImage(ctx.join(ctx.workDir, ctx.item.stem + \".png\"), \"png\"));",
     tests: [{"name": "exports a JPG", "inputs": {"image": "gen:photo"}, "script": "openDocument(params.image);\nctx.output(\"files\", exportImage(ctx.join(ctx.workDir, \"photo.jpg\"), \"jpg\", 80));", "checks": [{"type": "fileExtension", "port": "files", "is": "jpg"}, {"type": "imageSize", "port": "files", "width": 600, "height": 400}]}],
     code: String.raw`/** Exports the active document as PNG, JPG or TIFF (a copy; the document itself isn't saved). quality: 0–100 (JPG). */
 function exportImage(path, format, quality) {
@@ -146,7 +146,10 @@ function exportImage(path, format, quality) {
   var fmt = String(format || file.name.replace(/^.*\./, "")).toLowerCase();
   var opts;
   if (fmt === "png") {
+    // Photoshop's default here is no compression: files ~6× larger for the same pixels.
     opts = new PNGSaveOptions();
+    opts.compression = 6;
+    opts.interlaced = false;
   } else if (fmt === "jpg" || fmt === "jpeg") {
     opts = new JPEGSaveOptions();
     var q = quality === undefined || quality === null ? 85 : Number(quality);
@@ -184,7 +187,7 @@ function exportImage(path, format, quality) {
     set: "export",
     call: "saveCopy",
     summary: "Saves a PSD copy of the active document (never overwrites anything).",
-    signature: { params: [{"name": "folder", "type": "string", "optional": true, "doc": "a folder picked for the run, e.g. ctx.workDir"}, {"name": "fileName", "type": "string", "optional": true, "doc": "without .psd"}], returns: "string (the file path)" },
+    signature: { params: [{"name": "folder", "type": "string", "optional": true, "doc": "ctx.workDir (the designer's folders are read-only)"}, {"name": "fileName", "type": "string", "optional": true, "doc": "without .psd"}], returns: "string (the file path)" },
     sideEffects: ["writes a file"],
     doc: "saveCopy(folder, fileName) -> path: saves a PSD copy of the active document as \"<fileName>.psd\" in a folder (e.g. saveCopy(ctx.workDir, ctx.item.sku)); saveCopy() alone saves \"<name>_doppl.psd\" next to the source. Never overwrites anything (an existing name gets \"-2\"). Only when the request asks for a saved PSD.\nExample: ctx.output(\"psds\", saveCopy(ctx.workDir, ctx.item.stem));",
     tests: [{"name": "saves a PSD", "inputs": {"image": "gen:product-on-white"}, "script": "openDocument(params.image);\nctx.output(\"files\", saveCopy(ctx.workDir, \"copy\"));", "checks": [{"type": "fileExtension", "port": "files", "is": "psd"}, {"type": "outputCount", "port": "files", "equals": 1}]}],
@@ -272,7 +275,7 @@ function removeWhiteBackground(doc, tolerance) {
     summary: "Hides a white background (also white gaps inside the subject) with an editable layer mask; keeps highlights.",
     signature: { params: [{"name": "layer", "type": "Layer", "optional": true, "doc": "default: the active layer"}, {"name": "options", "type": "{ tolerance?, enclosed?, keepHighlights?, shrink?, feather? }", "optional": true}], returns: "{ bounds: [left, top, right, bottom] }" },
     sideEffects: ["adds (or replaces) the layer's mask"],
-    doc: "maskWhiteBackground(layer?, { tolerance?, enclosed?, keepHighlights?, shrink?, feather? }) -> { bounds }: hides a white background with a LAYER MASK on the layer (pixels kept, editable by hand later): the white around the subject and, unless enclosed: false, white areas inside it (gaps between items). White narrower than 2 × keepHighlights px stays visible (small highlights; default 1% of the shorter side); shrink px (default 1) removes a white fringe. Throws when the image's corners aren't white. Then cropToBounds(doc, result.bounds, padding?) (trimTransparent doesn't see masks).\nExample: var cut = maskWhiteBackground(img.activeLayer, { tolerance: params.tolerance }); cropToBounds(img, cut.bounds, 4);",
+    doc: "maskWhiteBackground(layer?, { tolerance?, enclosed?, keepHighlights?, shrink?, feather? }) -> { bounds }: hides a white background with a LAYER MASK on the layer (pixels kept, editable by hand later): the white around the subject and, unless enclosed: false, white areas inside it (gaps between items). White narrower than 2 × keepHighlights px stays visible (small highlights; default 1% of the shorter side): enclosed is already on, so for a white gap that stays, lower keepHighlights (e.g. 0) or raise tolerance; shrink px (default 1) removes a white fringe. Throws when the image's corners aren't white. Then cropToBounds(doc, result.bounds, padding?) (trimTransparent doesn't see masks).\nExample: var cut = maskWhiteBackground(img.activeLayer, { tolerance: params.tolerance }); cropToBounds(img, cut.bounds, 4);",
     tests: [{"name": "masks the white around and inside the subject", "inputs": {"image": "gen:ring-on-white"}, "script": "var d = openDocument(params.image);\nvar cut = maskWhiteBackground(d.activeLayer);\nvar masked = DopplPS.hasLayerMask();\nctx.output(\"files\", exportImage(ctx.join(ctx.workDir, \"masked.png\"), \"png\"));\nreturn { masked: masked, left: cut.bounds[0] > 0 };", "checks": [{"type": "cornerPixelsTransparent", "port": "files"}, {"type": "hasTransparency", "port": "files"}, {"type": "noOpaqueWhite", "port": "files"}], "expect": {"masked": true, "left": true}}],
     code: String.raw`/**
  * Hides a plain white (or near-white) background with a LAYER MASK on the layer (default: the active layer); its

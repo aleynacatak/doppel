@@ -43,6 +43,13 @@ describe("match rules", () => {
     expect(byPosition.get("row-4")!.problem).toBe("No photo for Row 4 · JAD-004: there are only 2.");
   });
 
+  it("finds what an earlier step made from a hand-picked file, whatever it's called", () => {
+    const made = [{ key: "file-pearcaramelsalt.jpg", label: "cutout-7.png", value: "/run/cutout-7.png" }];
+    const flavors = [{ key: "row-1", label: "Row 1 · Salted Caramel Pear", value: { flavor: "Salted Caramel Pear" } }];
+    const pairs = pairItems({ by: "fileNameEqualsColumn", column: "flavor", ignoreExtension: true, pairs: { [nameKey("Salted Caramel Pear")]: "pearcaramelsalt.jpg" } }, { type: "rows", items: flavors }, { type: "fileList", items: made, label: "Cutouts" });
+    expect(pairs.get("row-1")?.matched?.value).toBe("/run/cutout-7.png");
+  });
+
   it("pairs rows with rows by equal columns", () => {
     const prices: ListItem[] = [{ key: "p-1", label: "Price 1", value: { code: "jad-002", price: "4.20" } }];
     const pairs = pairItems({ by: "columnEquals", leftColumn: "sku", rightColumn: "code" }, { type: "rows", items: rows }, { type: "rows", items: prices, label: "Prices" });
@@ -117,6 +124,34 @@ describe("match rules", () => {
     expect(partnersByName(["Strawberry Vanilla"], [{ name: "strawberryvanilla", item: { f: 1 } }], false)).toEqual([null]);
   });
 
+  it("matches words in another order or form, and names squashed into one word, only when one fits", () => {
+    const rows = ["Salted Caramel Pear", "Fig & Walnut", "Blackberries", "Apricot Ginger", "Peach Mango"];
+    const files = ["pearcaramelsalt.png", "walnut-and-fig.jpg", "blackberry.png", "IMG_gingerapricot-label.png", "mangopeach.png", "peach-mango-v2.png"];
+    const found = partnersByName(
+      rows,
+      files.map((f) => ({ name: f.replace(/\.[^.]+$/, ""), item: { f } })),
+      true,
+    );
+    expect(found.map((x) => x?.f ?? null)).toEqual([
+      "pearcaramelsalt.png",
+      "walnut-and-fig.jpg",
+      "blackberry.png",
+      "IMG_gingerapricot-label.png",
+      // The same words written out win over the squashed copy.
+      "peach-mango-v2.png",
+    ]);
+    // Every word has to be there: "pearcaramel" isn't Salted Caramel Pear.
+    expect(partnersByName(["Salted Caramel Pear"], [{ name: "pearcaramel", item: { n: 1 } }], true)).toEqual([null]);
+    // Two squashed files that both fit: Doppl doesn't guess.
+    expect(partnersByName(["Salted Caramel Pear"], [{ name: "pearcaramelsalt", item: { n: 1 } }, { name: "caramelpearsalt", item: { n: 2 } }], true)).toEqual([null]);
+  });
+
+  it("offers the likeliest files first when the designer picks", async () => {
+    const { rankByLikeness } = await import("../electron/shared/names");
+    const unused = ["apricot.png", "caramel-sauce.png", "mango.png", "pear.png", "pearcaramelsalt.png", "salt.png", "strawberry.png"];
+    expect(rankByLikeness("Salted Caramel Pear", unused)[0]).toBe("pearcaramelsalt.png");
+  });
+
   it("pairs files with files of a similar name, and lets items without a partner run when optional", () => {
     const photos: ListItem[] = [
       { key: "p1", label: "Jar 01.jpg", value: "/p/Jar 01.jpg" },
@@ -147,5 +182,32 @@ describe("why an item failed", () => {
     expect(failureCause("Start the Doppl plugin in your Figma file first.", false)).toBe("app");
     expect(failureCause("Error 21: undefined is not an object (line 4)", false)).toBe("routine");
     expect(failureCause("Action 2 (setText): no layer", false)).toBe("routine");
+  });
+
+  it("blames the data for a barcode typo, the file for one Photoshop can't open, and the app for a closed plugin", async () => {
+    const { failureCause } = await import("../electron/core/flows/failures");
+    expect(failureCause("Barcode 2910260000072: The last digit of this EAN-13 barcode should be 9, not 2. Check the number for a typo.", false)).toBe("files");
+    expect(failureCause("EAN-13 barcode needs 12 or 13 digits, but this one has 11.", false)).toBe("files");
+    expect(failureCause("Cannot open the file because the open options are incorrect.", false)).toBe("files");
+    expect(failureCause("The Doppl plugin in Figma was closed before the step finished.", false)).toBe("app");
+    // A saved routine whose template isn't on the page: the file changed, the routine needs no repair.
+    expect(failureCause('Action 1 (duplicateNode): No layer named "template" on page "Page 10 (Doppl copy)"', false)).toBe("files");
+    expect(failureCause('Action 3 (setText): No layer named "price" inside "label"', false)).toBe("routine");
+    // A Figma step that never answered, and Photoshop without a document, are the app's.
+    expect(failureCause("Figma didn't finish within 30 seconds. You can raise the limit in Settings.", false)).toBe("app");
+    expect(failureCause("Open a document in Photoshop and pick it for this stage.", false)).toBe("app");
+  });
+
+  it("says an app's raw error plainly and keeps it as the detail", async () => {
+    const { plainError } = await import("../electron/core/flows/failures");
+    expect(plainError("Cannot open the file because the open options are incorrect. (script line 12)", "Adobe Photoshop")).toEqual({
+      error: "Adobe Photoshop couldn't open this file: it may be damaged, or not the kind of file its name says.",
+      errorDetail: "Cannot open the file because the open options are incorrect. (script line 12)",
+    });
+    expect(plainError("undefined is not an object (script line 40)", "Adobe Photoshop").error).toBe("The routine ran into a problem inside Adobe Photoshop.");
+    expect(plainError("EACCES: permission denied, open '/Volumes/X/a.png'").error).toMatch(/^macOS didn't let Doppl/);
+    expect(plainError('Action 1 (duplicateNode): No layer named "template" on page "Page 1"')).toEqual({ error: 'No layer named "template" on page "Page 1"', errorDetail: 'Action 1 (duplicateNode): No layer named "template" on page "Page 1"' });
+    // Doppl's own plain messages stay as they are.
+    expect(plainError("Strawberry Vanilla not found.")).toEqual({ error: "Strawberry Vanilla not found." });
   });
 });

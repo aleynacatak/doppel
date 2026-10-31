@@ -111,7 +111,7 @@ async function metaError(res: Response): Promise<AiError> {
     case 429:
       return new AiError("rate_limited", "Meta's API is rate limiting your key. Wait a minute and try again.", "retry");
     default:
-      return new AiError("upstream_error", `Meta's AI service returned an error (status ${res.status})${detail}.`, "retry");
+      return new AiError("upstream_error", "Meta's AI service had a problem. Try again in a minute.", "retry", `Status ${res.status}${detail}`);
   }
 }
 

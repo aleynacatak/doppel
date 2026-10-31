@@ -34,7 +34,7 @@ export function RunHistory({ runs }: { runs: RunSummary[] }) {
                 {formatDateTime(run.startedAt)}
               </a>
             </td>
-            <td className="ui-muted py-2 pr-4">{run.inputsSummary}</td>
+            <td className="ui-muted py-2 pr-4">{run.inFlow ? `${copy.routine.inFlow(run.inFlow)} · ${run.inputsSummary}` : run.inputsSummary}</td>
             <td className="py-2 pr-4 whitespace-nowrap">
               {copy.runStatus[run.status]}
               <span className="ui-muted"> · {copy.plural(run.outputCount, "output")}</span>

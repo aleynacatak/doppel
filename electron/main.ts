@@ -18,6 +18,8 @@ if (DEV_SERVER_URL) {
 }
 
 app.setName("Doppl");
+// HTTP/3 (QUIC) connections to the AI service were dropped mid-answer (net::ERR_QUIC_GOAWAY…); HTTP/2 is steadier.
+app.commandLine.appendSwitch("disable-quic");
 // `npm run eval` and `npm run test:helpers`: no window; run headless and quit (electron/evals/).
 const EVAL_MODE = process.argv.includes("--doppl-eval");
 const HELPER_TESTS = process.argv.includes("--doppl-test-helpers");

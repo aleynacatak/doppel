@@ -25,7 +25,8 @@ A value that is exactly one placeholder keeps its type (numbers, lists); inside 
 Rules:
 - Never copy literal data from the sample rows or file names into the actions; always use placeholders.
 - Never use absolute paths; image files come from inputs: {{item}}, {{matched.<input>}}, a file input, or a list.
-- setText loads fonts itself. Images: setImageFill with { "file": "{{matched.photos}}" } (the paired file),
+- setText loads fonts itself. Text from data in a fixed-width box (names, titles, ingredients) gets "fit": true,
+  so a long value shrinks a little instead of breaking a word in the middle or overflowing. Images: setImageFill with { "file": "{{matched.photos}}" } (the paired file),
   { "file": "{{item.path}}" }, { "folder": "{{inputs.images}}", "name": "{{item.image}}" }, or a file from a
   list by name: { "files": "{{inputs.cutouts}}", "name": "{{item.image}}" }.
 - Style words from a data column with setTextStyleRanges ranges [{ "matchAny": "{{item.allergens}}", "wholeWord": true }]

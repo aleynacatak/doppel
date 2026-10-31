@@ -5,16 +5,19 @@ import { type ActionRunResult, CancelledInFigma, checkNode, type Finding, Interp
 // runs requests: stages of action lists, inspections, previews. Action lists are validated again here with the
 // same schemas Doppl uses, then run by the interpreter. No code strings are ever executed.
 
-const PLUGIN_VERSION = "2.0.0";
+const PLUGIN_VERSION = "2.1.0";
 const PREVIEW_WIDTH = 640;
 const MAX_PREVIEWS = 4;
 
 figma.showUI(__html__, { width: 300, height: 210, title: "Doppl", themeColors: true });
 
-/** A page stages work on: the current page, a copy, or a scratch copy (trial). Later stages of a run reuse it. */
+/** A page stages work on: the routine's page, a copy, or a scratch copy (trial). Later stages of a run reuse it. */
 interface PageState {
   page: PageNode;
+  /** The designer's page the run started from. */
   original: PageNode;
+  /** The page Figma showed before the run, shown again when it's over. */
+  shown: PageNode;
   mode: "copy" | "original" | "trial";
   idMap?: Map<string, string>;
   /** What the designer had selected on the original page. */
@@ -71,14 +74,14 @@ async function handle(p: Record<string, unknown>, req: { cancelled: boolean }, r
     case "info":
       return info();
     case "beginStage":
-      return beginStage(String(p.mode) as PageState["mode"], String(p.routineName ?? "routine"), p.reusePageId as string | undefined);
+      return beginStage(String(p.mode) as PageState["mode"], String(p.routineName ?? "routine"), p.reusePageId as string | undefined, p.source as PageRef | undefined);
     case "runItem":
       return runItem(String(p.stageSessionId), p.actions, String(p.label ?? ""), req, requestId);
     case "endStage":
       stages.delete(String(p.stageSessionId));
       return { ended: true };
-    case "discardPage":
-      return discardPage(String(p.pageId));
+    case "finishPage":
+      return finishPage(String(p.pageId), p.remove === true);
     case "inspect":
       return inspect(p.node as string | undefined, Number(p.depth ?? 2));
     case "preview":
@@ -94,10 +97,34 @@ async function handle(p: Record<string, unknown>, req: { cancelled: boolean }, r
 
 // ---------- Stages ----------
 
-async function beginStage(mode: PageState["mode"], routineName: string, reusePageId?: string) {
+type PageRef = { id?: string; name?: string };
+/** " (Doppl copy)" at the end of a page name; older versions wrote "Doppel". */
+const COPY = / \(Dopp(?:l|el) copy\)$/;
+
+/**
+ * The page a run starts from: the routine's own page while the file has it, whatever page is open. Otherwise the open
+ * page, but never a Doppl copy: a copy holds an earlier run's results, so the page it was copied from is used.
+ */
+function startPage(source?: PageRef): PageNode {
+  const all = figma.root.children;
+  const byId = source?.id ? all.find((p) => p.id === source.id) : undefined;
+  if (byId) return byId;
+  const named = source?.name ? all.filter((p) => p.name === source.name) : [];
+  if (named.length === 1) return named[0];
+  let name = figma.currentPage.name;
+  while (COPY.test(name)) {
+    name = name.replace(COPY, "");
+    const from = all.filter((p) => p.name === name);
+    if (from.length === 1) return from[0];
+  }
+  return figma.currentPage;
+}
+
+async function beginStage(mode: PageState["mode"], routineName: string, reusePageId?: string, source?: PageRef) {
   let ps = reusePageId ? pages.get(reusePageId) : undefined;
   if (!ps || ps.page.removed) {
-    const original = figma.currentPage;
+    const shown = figma.currentPage;
+    const original = startPage(source);
     await original.loadAsync();
     const selection = original.selection.map((n) => n.id);
     let page = original;
@@ -107,26 +134,29 @@ async function beginStage(mode: PageState["mode"], routineName: string, reusePag
       page.name = mode === "trial" ? `Doppl trial · ${routineName}` : `${original.name} (Doppl copy)`;
       idMap = mapIds(original, page);
     }
-    ps = { page, original, mode, idMap, selection, createdPages: [] };
+    ps = { page, original, shown, mode, idMap, selection, createdPages: [] };
     pages.set(page.id, ps);
   }
   await ps.page.loadAsync();
   if (ps.page !== figma.currentPage) await figma.setCurrentPageAsync(ps.page);
   const stageSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   stages.set(stageSessionId, ps.page.id);
-  return { stageSessionId, pageId: ps.page.id, pageName: ps.page.name };
+  return { stageSessionId, pageId: ps.page.id, pageName: ps.page.name, source: { id: ps.original.id, name: ps.original.name } };
 }
 
-/** Removes a trial page (and pages its actions created) once the trial run is over. */
-async function discardPage(pageId: string) {
+/**
+ * A run is over: Figma shows the page the designer had open again, and the run's copy (with pages its actions made)
+ * is removed when it's a trial's or Doppl says it kept nothing. The designer's own page is never removed.
+ */
+async function finishPage(pageId: string, remove: boolean) {
   const ps = pages.get(pageId);
-  if (!ps) return { discarded: false };
+  if (!ps) return { removed: false };
   pages.delete(pageId);
-  if (ps.mode !== "trial") return { discarded: false };
-  if (figma.currentPage === ps.page || ps.createdPages.includes(figma.currentPage)) await figma.setCurrentPageAsync(ps.original);
+  if (figma.currentPage === ps.page || ps.createdPages.includes(figma.currentPage)) await figma.setCurrentPageAsync(ps.shown.removed ? ps.original : ps.shown);
+  if (ps.page === ps.original || !(remove || ps.mode === "trial")) return { removed: false };
   for (const p of ps.createdPages) if (!p.removed) p.remove();
-  if (ps.page !== ps.original && !ps.page.removed) ps.page.remove();
-  return { discarded: true };
+  if (!ps.page.removed) ps.page.remove();
+  return { removed: true };
 }
 
 async function runItem(stageSessionId: string, actions: unknown, label: string, req: { cancelled: boolean }, requestId: string) {

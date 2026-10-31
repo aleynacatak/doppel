@@ -41,6 +41,7 @@ import {
 } from "../routines/modelRoutine";
 import type {
   AppId,
+  FigmaPageRef,
   PortDef,
   Provenance,
   RefineInput,
@@ -98,9 +99,10 @@ import { AiError, type ChatMessage, type ContentPart } from "./aiTransport";
 import type { AppStatusService } from "./appStatusService";
 import { type FlowService, ROUTINE_NODE, inputNodeId } from "./flowService";
 import type { LibraryService } from "./libraryService";
-import type { QcService } from "./qcService";
+import { type QcService, qcStatus } from "./qcService";
 import { DEFAULT_QC_OPTIONS, ExecutionError, toExecutionError } from "./runService";
 import type { Storage } from "./storage";
+import { plainError } from "../flows/failures";
 
 const STAGES: CreationStageKey[] = ["read", "write", "run", "check", "ready"];
 
@@ -119,12 +121,14 @@ const MAX_NODES_PER_INSPECT = 8;
 const REVIEW_RESERVE = 3;
 const RESULT_CHARS = 9000;
 const DATA_EXTENSIONS = ["csv", "tsv", "txt", "json", "xlsx"];
-const ROUTINE_ACTIONS = ["ask_question", "inspect", "preview_routine", "propose_routine"];
+const ROUTINE_ACTIONS = ["ask_question", "decline", "inspect", "preview_routine", "propose_routine"];
 const REVISION_ACTIONS = ["ask_question", "decline", "inspect", "preview_routine", "propose_revision"];
 /** Refine: images shown to the AI, and test items to try a change on. */
 const MAX_REFINE_IMAGES = 3;
 const MAX_TEST_ITEMS = 3;
-const PLAN_ACTIONS = ["ask_question", "inspect", "propose_plan"];
+const PLAN_ACTIONS = ["ask_question", "decline", "inspect", "propose_plan"];
+/** The AI may ask a question in its first answers: one, and a follow-up when the answer left it open. */
+const MAX_AI_QUESTIONS = 2;
 /** The input check asks at most this many questions; past them, Doppl's best guesses stand (and are told to the AI). */
 const MAX_INPUT_QUESTIONS = 3;
 
@@ -161,7 +165,8 @@ interface LoopProgress {
   /** "plan", "routine", or "routine:<planned id>". */
   key: string;
   messages: ChatMessage[];
-  asked: boolean;
+  /** Questions asked so far (a second one only when the first answer left it open). */
+  asked: number;
   inspections: number;
   lastProblem: string;
 }
@@ -272,10 +277,49 @@ function mergeChecks(output: RunOutput, checks: QcCheck[] | undefined) {
     if (i >= 0) list[i] = check;
     else list.push(check);
   }
-  output.qc = { status: list.every((c) => c.passed) ? "pass" : "flagged", checks: list };
+  output.qc = { status: qcStatus(list), checks: list };
 }
 
 /** A draft as a routine the runner can run (trials). */
+/**
+ * Whether a revision's trial made the same files as the current version's on the same items: a change that changes
+ * nothing. Outputs without files (Figma frames) can't be compared, so they never count as the same.
+ */
+async function sameResults(before: RunOutput[], after: RunOutput[]): Promise<boolean> {
+  const files = (list: RunOutput[]) => list.filter((o) => o.status === "done" && o.filePath);
+  const a = files(before);
+  const b = files(after);
+  if (!a.length || a.length !== b.length || b.length !== after.length) return false;
+  const used = new Set<RunOutput>();
+  for (const o of b) {
+    const bytes = await fs.readFile(o.filePath!).catch(() => null);
+    if (!bytes) return false;
+    let match: RunOutput | undefined;
+    for (const x of a) {
+      if (used.has(x) || x.label !== o.label) continue;
+      const other = await fs.readFile(x.filePath!).catch(() => null);
+      if (other && other.equals(bytes)) {
+        match = x;
+        break;
+      }
+    }
+    if (!match) return false;
+    used.add(match);
+  }
+  return true;
+}
+
+/** The request isn't design work to automate (a greeting, a question): Doppl says so instead of inventing a routine. */
+/** The model's reason for a turn, as an activity entry; a placeholder ("x", one word) says nothing and is left out. */
+function saidWhy(reason: unknown): string | null {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  return text.length >= 8 && /\s/.test(text) ? text.slice(0, 160) : null;
+}
+
+function notATask(why: string) {
+  return new ExecutionError(why || "Doppl couldn't find design work to automate in this request.", undefined, "not-a-task");
+}
+
 function asRoutine(draft: RoutineDraft, id = "draft", version = 0): Routine {
   const now = nowIso();
   return { ...draft, id, version, createdWithAiCalls: 0, runs: [], createdAt: now, updatedAt: now, versions: [], format: 2 };
@@ -474,7 +518,7 @@ export class RoutineService {
     if (routine.starter) throw new Error("Starter routines can't be changed. Duplicate it into your routines first.");
     const run = runId ? await this.deps.storage.getRun(runId) : null;
     const nodeId = run?.target.kind === "routine" ? ROUTINE_NODE : run?.nodes.find((n) => n.kind === "routine" && n.name === routine.name)?.nodeId;
-    const failed = (run?.outputs ?? []).filter((o) => o.status === "failed" && (!nodeId || o.node === nodeId)).slice(0, 8).map((o) => `${o.itemLabel ?? o.label}: ${o.error ?? ""}`);
+    const failed = (run?.outputs ?? []).filter((o) => o.status === "failed" && (!nodeId || o.node === nodeId)).slice(0, 8).map((o) => `${o.itemLabel ?? o.label}: ${o.errorDetail ?? o.error ?? ""}`);
     const problems = [run?.error, run?.errorDetail, ...failed].filter((x): x is string => !!x);
     if (problems.length === 0) problems.push("The designer asked for a repair; check the routine against the document and the data.");
     return this.startRepair(routine, { problems, previous: await this.previousInputs(routine, run), runId, documentId: run?.options.documents?.[routine.appId] });
@@ -553,7 +597,7 @@ export class RoutineService {
         const raw = value?.kind === "list" ? value.items.find((i) => i.key === item.key)?.value : undefined;
         input = typeof raw === "string" ? path.basename(raw) : raw ? JSON.stringify(raw).slice(0, 400) : undefined;
       }
-      problem = { runId: from.runId, outputId: output.id, label: output.label, itemKey: item?.key ?? output.itemKey, itemLabel: output.itemLabel, input, preview: output.preview, qc: output.qc, error: output.error };
+      problem = { runId: from.runId, outputId: output.id, label: output.label, itemKey: item?.key ?? output.itemKey, itemLabel: output.itemLabel, input, preview: output.preview, qc: output.qc, error: output.error, errorDetail: output.errorDetail };
     }
     const defaultItems = problem?.itemKey && items.some((i) => i.key === problem!.itemKey) ? [problem.itemKey] : items.slice(0, 1).map((i) => i.key);
     const itemsSource = !items.length ? undefined : from ? "the run with the problem" : flowLink ? "the flow's last run" : run ? "the last run" : "the values picked last time";
@@ -1234,7 +1278,7 @@ export class RoutineService {
           : { message: "Something went wrong.", detail: errorMessage(err), kind: "generic" };
     for (const r of c.flowRoutines ?? []) if (r.status === "creating") r.status = "failed";
     // Once the model has started, the work so far can be kept, unless AI access itself needs fixing first.
-    c.canContinue = !!state.loop && !(mapped instanceof AiError && NO_CONTINUE_CODES.has(mapped.code));
+    c.canContinue = !!state.loop && !(mapped instanceof AiError && NO_CONTINUE_CODES.has(mapped.code)) && !(mapped instanceof ExecutionError && mapped.kind === "not-a-task");
     this.emit(c);
   }
 
@@ -1511,7 +1555,7 @@ export class RoutineService {
       const joined = inputs[key];
       const port = draft.inputs.find((p) => p.key === key);
       if (!port || joined?.kind !== "list" || rule.optional) continue;
-      const pairs = pairItems(rule, { type: iter.type, items: iter.items }, { type: joined.type, items: joined.items, label: port.label });
+      const pairs = pairItems(rule, { type: iter.type, items: iter.items, origin: iter.origin }, { type: joined.type, items: joined.items, label: port.label, origin: joined.origin });
       if (pairs.get(item.key)?.matched) continue;
       const used = new Set([...pairs.values()].flatMap((p) => (p.matched ? [p.matched.key] : [])));
       const want = itemName(item, iter.type, rule);
@@ -1637,16 +1681,22 @@ export class RoutineService {
       else if (iterValue?.kind === "list" && joined?.kind === "list") joins[port.key] = suggestMatch(iterValue, joined);
       else joins[port.key] = { by: "index" };
     }
-    // Partners the designer picked during earlier trials.
-    for (const [key, pairs] of Object.entries(state.trialPairs ?? {})) if (joins[key]) joins[key] = { ...joins[key], pairs: { ...(joins[key].pairs ?? {}), ...pairs } };
-    if (Object.keys(joins).length) draft.matches = joins;
+    // Partners the designer picked during earlier trials. For files an earlier routine made in its trial (a flow
+    // being created) only for this trial: those files are trial samples, so the routine doesn't keep the pair.
+    const kept: Record<string, MatchRule> = { ...joins };
+    for (const [key, pairs] of Object.entries(state.trialPairs ?? {})) {
+      if (!joins[key]) continue;
+      joins[key] = { ...joins[key], pairs: { ...(joins[key].pairs ?? {}), ...pairs } };
+      if (!spec.planned?.upstream[key]) kept[key] = joins[key];
+    }
+    if (Object.keys(kept).length) draft.matches = kept;
     // Try an item that has its partners (row 1 may have no image while row 3 has one).
     let index = sampleIndex;
     if (index === 0 && !onlyItems?.size && iterValue?.kind === "list" && Object.keys(joins).length) {
       const pairs = Object.entries(joins).flatMap(([key, rule]) => {
         const j = inputs[key];
         const p = draft.inputs.find((x) => x.key === key);
-        return j?.kind === "list" && p ? [pairItems(rule, { type: iterValue.type, items: iterValue.items }, { type: j.type, items: j.items, label: p.label })] : [];
+        return j?.kind === "list" && p ? [pairItems(rule, { type: iterValue.type, items: iterValue.items, origin: iterValue.origin }, { type: j.type, items: j.items, label: p.label, origin: j.origin })] : [];
       });
       const complete = (k: number) => pairs.every((p) => !!p.get(iterValue.items[k].key)?.matched);
       if (iterValue.items.length && !complete(0)) {
@@ -1676,7 +1726,6 @@ export class RoutineService {
           target: "trial",
           workDir: path.join(workDir, "routine"),
           copiesDir: path.join(workDir, "copies"),
-          allowedFolders: draft.inputs.filter((p) => p.type === "folder" && inputs[p.key]?.kind === "value").map((p) => String((inputs[p.key] as { value: unknown }).value)),
           isCancelled: ai.isCancelled,
           failed: new Map(),
           ...(onlyItems?.size ? { onlyItems } : { sampleIndex: index }),
@@ -1695,6 +1744,9 @@ export class RoutineService {
     } finally {
       await adapter.endRun?.(trialId).catch(() => undefined);
     }
+    // A Figma routine keeps the page its trial started from: later runs start there, whatever page is open.
+    const page = res.items.map((i) => (i.data as { source?: FigmaPageRef } | undefined)?.source).find((x) => x?.id);
+    if (page) draft.figmaPage = { id: page.id, name: page.name };
     const ids = new Set(res.outputs.map((o) => o.id));
     await this.deps.qc.evaluate(adapter, { qcMode: "auto", qcOptions: DEFAULT_QC_OPTIONS, qcProfile: draft.qcProfile }, res.outputs, res.findings.filter((f) => f.outputKey && ids.has(f.outputKey)), ai);
     c.outputs = res.outputs;
@@ -1707,7 +1759,7 @@ export class RoutineService {
   private describeTrial(res: NodeRunResult, label: string): ContentPart[] {
     const summary = {
       status: res.progress.status,
-      error: res.progress.error,
+      error: res.progress.errorDetail ?? res.progress.error,
       items: res.items.map((i) => ({
         item: i.label,
         ok: i.ok,
@@ -1806,7 +1858,7 @@ export class RoutineService {
               }),
           },
         ],
-        asked: false,
+        asked: 0,
         inspections: 0,
         lastProblem: "",
       };
@@ -1835,191 +1887,252 @@ export class RoutineService {
     }
     let result: { draft: RoutineDraft; res: NodeRunResult | null; workDir: string } | null = null;
     let changeSummary: string | undefined;
+    // The trial the review sent back, kept in case the fix doesn't work out.
+    let fallback: { result: { draft: RoutineDraft; res: NodeRunResult; workDir: string }; outputs: RunOutput[]; changeSummary?: string } | undefined;
+    // A revision whose results came out the same as the current version's was sent back once.
+    let unchanged = false;
     // Steps: with separate code, one per answer (its code included); before, the real calls.
     const spent = () => (separate ? turn - 1 : used());
     const outOfCalls = () => !!callCap && used() >= callCap - REVIEW_RESERVE - (separate ? 1 : 0);
-    for (turn = 1; !result; turn++) {
-      if (isCancelled()) throw new CancelledError();
-      c.steps = turn;
-      if (turn > MAX_TURNS || spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) {
-        throw new ExecutionError(
-          `Doppl couldn't finish this routine within the AI limit for one creation (${MAX_CREATION_CALLS} calls). Try describing it in smaller steps.`,
-          progress.lastProblem || undefined,
-          "validation",
-        );
-      }
-      this.setStage(state, state.stage, "active", `Step ${turn}`);
-      let t: Record<string, any>;
-      try {
-        t = recoverKeys(
-          await this.deps.ai.turn(
-            messages,
-            { name: spec.revision ? "doppl_revision_turn" : "doppl_routine_turn", schema: turnSchema },
-            turnActions,
-            ai,
-            { role: turnRole, first },
-          ),
-          TURN_KEYS,
-        );
-      } catch (err) {
-        // An answer that was cut off or wasn't JSON: ask for a shorter one while the budget lasts.
-        const unusable = err instanceof AiError && (err.code === "ai_output_cut" || err.code === "ai_output");
-        if (!unusable || turn >= MAX_TURNS || spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) throw err;
-        progress.lastProblem = (err as AiError).message;
-        this.note(c, (err as AiError).code === "ai_output_cut" ? "The AI's answer was too long and got cut off; asked for a shorter one" : "The AI's answer wasn't readable; asked again");
-        reply("Your last answer couldn't be used: it was cut off or wasn't complete JSON. Answer again with the complete JSON, shorter: keep scripts brief, no comments, no repeated explanations.");
-        continue;
-      }
-      messages.push({ role: "assistant", content: JSON.stringify(t) });
-      this.record(state, messages);
-      if (typeof t.reason === "string" && t.reason.trim()) this.note(c, t.reason.trim().slice(0, 160));
-
-      if (t.action === "ask_question") {
-        const answer = await this.askQuestion(state, progress, t, turn, !!spec.planned);
-        reply(answer !== null ? `Answer: ${answer}. Continue.` : "Don't ask now. Decide yourself and continue (propose_routine).");
-        continue;
-      }
-      if (t.action === "inspect") {
-        reply(await this.inspect(state, progress, t, [spec.appId]));
-        continue;
-      }
-      if (t.action === "search_helpers") {
-        const found = blocks.search(spec.appId, String(t.query ?? ""));
-        this.note(c, `Looked for building blocks: ${String(t.query ?? "").slice(0, 80)}`);
-        reply(found.length ? `Building blocks for "${t.query}":\n${found.map((d) => blocks.line(d)).join("\n")}` : `No building block matches "${t.query}". Use the ones in the guide, or write the code yourself.`);
-        continue;
-      }
-      if (t.action === "get_helper_docs") {
-        const ids = Array.isArray(t.ids) ? t.ids.slice(0, 6).map(String) : [];
-        reply(ids.length ? blocks.docs(ids) : 'Give the blocks\' ids in "ids".');
-        continue;
-      }
-      if (t.action === "decline") {
-        // The change needs another app: the routine stays as it is.
-        throw new ExecutionError(
-          `This change needs another app, so Doppl didn't put it into this routine. ${typeof t.reason === "string" && t.reason.trim() ? t.reason.trim() : ""} A routine works in one app: add a routine for the other app in a flow instead.`.replace(/\s+/g, " "),
-          undefined,
-          "needs-flow",
-        );
-      }
-
-      // preview_routine and propose_routine (propose_revision) carry a routine; with separate code, the coder writes
-      // its code now (a model that wrote it inline anyway saves the call).
-      if (separate && t.routine && typeof t.routine === "object" && needsCode(t.routine, codeKind)) {
-        const lang = codeKind === "actions" ? "json" : "javascript";
-        messages.push({ role: "user", content: codeRequestMessage(codeKind, String(t.action)) });
-        let code: string;
+    try {
+      for (turn = 1; !result; turn++) {
+        if (isCancelled()) throw new CancelledError();
+        c.steps = turn;
+        if (turn > MAX_TURNS || spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) {
+          throw new ExecutionError(
+            `Doppl couldn't finish this routine within the AI limit for one creation (${MAX_CREATION_CALLS} calls). Try describing it in smaller steps.`,
+            progress.lastProblem || undefined,
+            "validation",
+          );
+        }
+        this.setStage(state, state.stage, "active", `Step ${turn}`);
+        let t: Record<string, any>;
         try {
-          code = await this.deps.ai.writeCode!(messages, lang, ai);
+          t = recoverKeys(
+            await this.deps.ai.turn(
+              messages,
+              { name: spec.revision ? "doppl_revision_turn" : "doppl_routine_turn", schema: turnSchema },
+              turnActions,
+              ai,
+              { role: turnRole, first },
+            ),
+            TURN_KEYS,
+          );
         } catch (err) {
-          messages.pop();
+          // An answer that was cut off or wasn't JSON: ask for a shorter one while the budget lasts.
           const unusable = err instanceof AiError && (err.code === "ai_output_cut" || err.code === "ai_output");
-          if (!unusable || turn >= MAX_TURNS || spent() + 1 >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) throw err;
+          if (!unusable || turn >= MAX_TURNS || spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) throw err;
           progress.lastProblem = (err as AiError).message;
-          this.note(c, "The AI's code was too long and got cut off; asked for a shorter one");
-          reply("Your code was cut off. Propose the routine again and keep its code shorter: no comments, the helpers instead of long code.");
+          this.note(c, (err as AiError).code === "ai_output_cut" ? "The AI's answer was too long and got cut off; asked for a shorter one" : "The AI's answer wasn't readable; asked again");
+          reply("Your last answer couldn't be used: it was cut off or wasn't complete JSON. Answer again with the complete JSON, shorter: keep scripts brief, no comments, no repeated explanations.");
           continue;
         }
-        messages.push({ role: "assistant", content: `\`\`\`${lang}\n${code}\n\`\`\`` });
+        messages.push({ role: "assistant", content: JSON.stringify(t) });
         this.record(state, messages);
-        t.routine = { ...t.routine, [codeKind]: code };
-        delete t.routine.body;
-      }
-      let draft: RoutineDraft;
-      try {
-        draft = toRoutineDraft(t.routine, spec.appId, adapter.stageKind, g.versions[spec.appId] ?? "");
-      } catch (err) {
-        const reason = err instanceof RoutineFormatError ? err.message : errorMessage(err);
-        this.note(c, `The routine couldn't be read, sent back: ${reason}`);
-        reply(`The routine couldn't be read: ${reason} Send the complete routine again.`);
-        continue;
-      }
-      this.prepareDraft(draft, spec.appId, spec.revision ? state.repair?.routine : undefined);
-      const proposal = t.action === "propose_routine" || t.action === "propose_revision";
-      const check = this.validate(draft, proposal ? g.samples : undefined, spec.appId, fed);
-      const errors = errorsForModel(check.errors, draft).map((e) => `${e.path}: ${e.message}`);
-      if (spec.planned) errors.push(...plannedProblems(draft, spec.planned.routine));
-      if (errors.length) {
-        progress.lastProblem = errors.join(" · ");
-        const shown = errors.slice(0, 2).join(" · ");
-        this.note(c, `${proposal ? "Proposal" : "Preview"} had ${plural(errors.length, "problem")}, sent back to fix: ${shown.length > 240 ? `${shown.slice(0, 237)}…` : shown}`);
-        reply(`Validation failed. Fix these and send the whole routine again:\n${clip(errors, 6000)}`);
-        continue;
-      }
+        const said = saidWhy(t.reason);
+        if (said) this.note(c, said);
 
-      let attempt;
-      const index = proposal ? 0 : Math.max(0, Math.floor(Number(t.sampleItemIndex) || 0));
-      if (proposal) {
-        c.draft = draft;
-        this.setStage(state, "write", "done", `${plural(draft.inputs.length, "input")} · ${plural(draft.outputs.length, "output")} · ${plural(draft.settings.length, "setting")}`);
-        this.setStage(state, "run", "active", "Trial on a sample item");
-      } else {
-        this.note(c, `Previewed the routine on sample item ${index + 1}`);
-      }
-      try {
-        attempt = await this.trial(state, draft, index, spec, ai, spec.revision ? state.refine?.items : undefined);
-      } catch (err) {
-        if (!(err instanceof InputValueError)) throw err;
-        progress.lastProblem = err.message;
-        this.note(c, `The samples don't fit the routine, sent back: ${err.message}`);
-        if (proposal) {
-          this.setStage(state, "run", "pending", "");
-          this.setStage(state, "write", "active");
-        }
-        reply(`${err.message} Change the routine's inputs to fit and send it again.`);
-        continue;
-      }
-      if ("skipped" in attempt) {
-        if (!proposal) {
-          reply(`${attempt.skipped} Propose the routine.`);
+        if (t.action === "ask_question") {
+          const answer = await this.askQuestion(state, progress, t, turn, !!spec.planned);
+          reply(answer !== null ? `Answer: ${answer}. Continue.` : "Don't ask now. Decide yourself and continue (propose_routine).");
           continue;
         }
-        this.note(c, attempt.skipped);
-        this.setStage(state, "run", "done", "Not tried: no sample inputs");
-        result = { draft, res: null, workDir: "" };
-        break;
-      }
-      // Problems with the sample files are sorted out with the designer, not sent to the AI.
-      if (proposal) attempt = await this.settleSampleProblems(state, draft, attempt, spec, ai);
-      const { res, workDir } = attempt;
-      if (!proposal) {
-        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-        reply(this.describeTrial(res, spec.revision ? "Preview on the test items:" : `Preview on sample item ${index}:`));
-        continue;
-      }
-      if (res.cancelled) throw new CancelledError();
-      const problems = res.items.filter((i) => !i.ok);
-      if (problems.length && problems.every((i) => i.cause === "files")) {
-        // Still a files problem: say so plainly; the AI can't fix files.
-        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-        throw new ExecutionError(`The sample files have a problem: ${problems[0].label}: ${problems[0].error ?? "it couldn't be used."}`, "Fix the file or pick other samples, then continue. Nothing was sent to the AI for this.", "generic");
-      }
-      if (problems.length || res.progress.status === "failed") {
-        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-        progress.lastProblem = [res.progress.error, ...problems.map((i) => `${i.label}: ${i.error}`)].filter(Boolean).join(" · ") || "The trial failed.";
-        this.deps.ai.noteFailedTrial?.(spec.budget);
-        if (spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS || outOfCalls()) throw new ExecutionError("The trial run of the routine failed.", progress.lastProblem, "generic", true);
-        this.note(c, `The trial run failed, sent back to fix: ${progress.lastProblem.length > 240 ? `${progress.lastProblem.slice(0, 237)}…` : progress.lastProblem}`);
-        this.setStage(state, "run", "pending", "");
-        this.setStage(state, "write", "active", "Fixing problems from the trial run");
-        reply(this.describeTrial(res, "The trial run on a sample item failed. Fix the routine and propose it again:"));
-        continue;
-      }
-      this.setStage(state, "run", "done", `${plural(res.outputs.length, "output")} from ${spec.revision ? copyItems(res.progress.total) : "1 sample item"}`);
-      result = { draft, res, workDir };
-      if (typeof t.changeSummary === "string") changeSummary = t.changeSummary.trim().slice(0, 300);
-    }
+        if (t.action === "inspect") {
+          reply(await this.inspect(state, progress, t, [spec.appId]));
+          continue;
+        }
+        if (t.action === "search_helpers") {
+          const found = blocks.search(spec.appId, String(t.query ?? ""));
+          this.note(c, `Looked for building blocks: ${String(t.query ?? "").slice(0, 80)}`);
+          reply(found.length ? `Building blocks for "${t.query}":\n${found.map((d) => blocks.line(d)).join("\n")}` : `No building block matches "${t.query}". Use the ones in the guide, or write the code yourself.`);
+          continue;
+        }
+        if (t.action === "get_helper_docs") {
+          const ids = Array.isArray(t.ids) ? t.ids.slice(0, 6).map(String) : [];
+          reply(ids.length ? blocks.docs(ids) : 'Give the blocks\' ids in "ids".');
+          continue;
+        }
+        if (t.action === "decline") {
+          const why = typeof t.reason === "string" ? t.reason.trim() : "";
+          if (!spec.revision) {
+            // A new routine's request may not be a task at all (said first, or after the questions about it). A
+            // planned flow's routine is needed, and work already under way isn't dropped.
+            if (!spec.planned && turn <= MAX_AI_QUESTIONS + 1) throw notATask(why);
+            reply(spec.planned ? "Don't decline: the flow's plan needs this routine. Propose it." : "Don't decline now: propose the routine.");
+            continue;
+          }
+          // Doppl's fix after a run: the item's own file or data is wrong (or the change needs another app).
+          if (state.auto) throw new ExecutionError(why || "The problem isn't in the routine.", undefined, "validation");
+          // The change needs another app: the routine stays as it is.
+          throw new ExecutionError(
+            `This change needs another app, so Doppl didn't put it into this routine. ${typeof t.reason === "string" && t.reason.trim() ? t.reason.trim() : ""} A routine works in one app: add a routine for the other app in a flow instead.`.replace(/\s+/g, " "),
+            undefined,
+            "needs-flow",
+          );
+        }
 
-    this.setStage(state, "check", "active");
-    // Doppl's own fixes are checked by whether the items work, not by an AI review.
-    if (result.res && !state.auto) {
-      // Steps written as custom code get a closer look from the reviewer (rule checks already ran on every output).
-      const customSteps = result.draft.steps.filter((s) => s.kind === "custom").map((s) => s.plainLanguage);
-      const extra = await this.deps.ai.reviewTrial(c.task, { ...result.draft, customSteps }, c.outputs, ai);
-      for (const output of c.outputs) mergeChecks(output, extra[output.id]);
+        // preview_routine and propose_routine (propose_revision) carry a routine; with separate code, the coder writes
+        // its code now (a model that wrote it inline anyway saves the call).
+        if (separate && t.routine && typeof t.routine === "object" && needsCode(t.routine, codeKind)) {
+          const lang = codeKind === "actions" ? "json" : "javascript";
+          messages.push({ role: "user", content: codeRequestMessage(codeKind, String(t.action)) });
+          let code: string;
+          try {
+            code = await this.deps.ai.writeCode!(messages, lang, ai);
+          } catch (err) {
+            messages.pop();
+            const unusable = err instanceof AiError && (err.code === "ai_output_cut" || err.code === "ai_output");
+            if (!unusable || turn >= MAX_TURNS || spent() + 1 >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) throw err;
+            progress.lastProblem = (err as AiError).message;
+            this.note(c, "The AI's code was too long and got cut off; asked for a shorter one");
+            reply("Your code was cut off. Propose the routine again and keep its code shorter: no comments, the helpers instead of long code.");
+            continue;
+          }
+          messages.push({ role: "assistant", content: `\`\`\`${lang}\n${code}\n\`\`\`` });
+          this.record(state, messages);
+          t.routine = { ...t.routine, [codeKind]: code };
+          delete t.routine.body;
+        }
+        let draft: RoutineDraft;
+        try {
+          draft = toRoutineDraft(t.routine, spec.appId, adapter.stageKind, g.versions[spec.appId] ?? "");
+        } catch (err) {
+          const reason = err instanceof RoutineFormatError ? err.message : errorMessage(err);
+          this.note(c, `The routine couldn't be read, sent back: ${reason}`);
+          reply(`The routine couldn't be read: ${reason} Send the complete routine again.`);
+          continue;
+        }
+        this.prepareDraft(draft, spec.appId, spec.revision ? state.repair?.routine : undefined);
+        const proposal = t.action === "propose_routine" || t.action === "propose_revision";
+        const check = this.validate(draft, proposal ? g.samples : undefined, spec.appId, fed);
+        const errors = errorsForModel(check.errors, draft).map((e) => `${e.path}: ${e.message}`);
+        if (spec.planned) errors.push(...plannedProblems(draft, spec.planned.routine));
+        if (errors.length) {
+          progress.lastProblem = errors.join(" · ");
+          const shown = errors.slice(0, 2).join(" · ");
+          this.note(c, `${proposal ? "Proposal" : "Preview"} had ${plural(errors.length, "problem")}, sent back to fix: ${shown.length > 240 ? `${shown.slice(0, 237)}…` : shown}`);
+          reply(`Validation failed. Fix these and send the whole routine again:\n${clip(errors, 6000)}`);
+          continue;
+        }
+
+        let attempt;
+        const index = proposal ? 0 : Math.max(0, Math.floor(Number(t.sampleItemIndex) || 0));
+        if (proposal) {
+          c.draft = draft;
+          this.setStage(state, "write", "done", `${plural(draft.inputs.length, "input")} · ${plural(draft.outputs.length, "output")} · ${plural(draft.settings.length, "setting")}`);
+          this.setStage(state, "run", "active", "Trial on a sample item");
+        } else {
+          this.note(c, `Previewed the routine on sample item ${index + 1}`);
+        }
+        try {
+          attempt = await this.trial(state, draft, index, spec, ai, spec.revision ? state.refine?.items : undefined);
+        } catch (err) {
+          if (!(err instanceof InputValueError)) throw err;
+          progress.lastProblem = err.message;
+          this.note(c, `The samples don't fit the routine, sent back: ${err.message}`);
+          if (proposal) {
+            this.setStage(state, "run", "pending", "");
+            this.setStage(state, "write", "active");
+          }
+          reply(`${err.message} Change the routine's inputs to fit and send it again.`);
+          continue;
+        }
+        if ("skipped" in attempt) {
+          if (!proposal) {
+            reply(`${attempt.skipped} Propose the routine.`);
+            continue;
+          }
+          this.note(c, attempt.skipped);
+          this.setStage(state, "run", "done", "Not tried: no sample inputs");
+          result = { draft, res: null, workDir: "" };
+          break;
+        }
+        // Problems with the sample files are sorted out with the designer, not sent to the AI.
+        if (proposal) attempt = await this.settleSampleProblems(state, draft, attempt, spec, ai);
+        const { res, workDir } = attempt;
+        if (!proposal) {
+          await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+          reply(this.describeTrial(res, spec.revision ? "Preview on the test items:" : `Preview on sample item ${index}:`));
+          continue;
+        }
+        if (res.cancelled) throw new CancelledError();
+        const problems = res.items.filter((i) => !i.ok);
+        if (problems.length && problems.every((i) => i.cause === "files")) {
+          // Still a files problem: say so plainly; the AI can't fix files.
+          await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+          const said = plainError(problems[0].error);
+          throw new ExecutionError(`The sample files have a problem: ${problems[0].label}: ${said.error ?? "it couldn't be used."} Fix the file or pick other samples, then continue. Nothing was sent to the AI for this.`, said.errorDetail, "generic");
+        }
+        if (problems.length || res.progress.status === "failed") {
+          await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+          progress.lastProblem = [res.progress.errorDetail ?? res.progress.error, ...problems.map((i) => `${i.label}: ${i.error}`)].filter(Boolean).join(" · ") || "The trial failed.";
+          this.deps.ai.noteFailedTrial?.(spec.budget);
+          if (spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS || outOfCalls()) throw new ExecutionError("The trial run of the routine failed.", progress.lastProblem, "generic", true);
+          this.note(c, `The trial run failed, sent back to fix: ${progress.lastProblem.length > 240 ? `${progress.lastProblem.slice(0, 237)}…` : progress.lastProblem}`);
+          this.setStage(state, "run", "pending", "");
+          this.setStage(state, "write", "active", "Fixing problems from the trial run");
+          reply(this.describeTrial(res, "The trial run on a sample item failed. Fix the routine and propose it again:"));
+          continue;
+        }
+        this.setStage(state, "run", "done", `${plural(res.outputs.length, "output")} from ${spec.revision ? copyItems(res.progress.total) : "1 sample item"}`);
+        if (typeof t.changeSummary === "string") changeSummary = t.changeSummary.trim().slice(0, 300);
+        // A change whose results are the same files as the current version's changed nothing: never offered as done.
+        if (spec.revision && !state.auto && c.refine && (await sameResults(c.refine.before, c.outputs))) {
+          await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+          const version = c.refine.fromVersion;
+          if (unchanged || turn >= MAX_TURNS || spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || outOfCalls()) {
+            throw new ExecutionError(`The change didn't change the results: they're the same as version ${version}'s. Try describing what should look different, or attach an image that shows it. Nothing was saved.`, undefined, "generic");
+          }
+          unchanged = true;
+          progress.lastProblem = `The results are identical to version ${version}'s.`;
+          this.note(c, `The change made the same results as version ${version}, sent back`);
+          this.setStage(state, "run", "pending", "");
+          this.setStage(state, "write", "active", "The change didn't change the results");
+          reply(`Your revision runs, but its results are identical, file for file, to version ${version}'s: it changes nothing the designer asked for. Find what actually makes the difference (another option, a different value, another step) and propose the revision again.`);
+          continue;
+        }
+        // Doppl's own fixes are checked by whether the items work, not by an AI review.
+        if (!state.auto) {
+          this.setStage(state, "check", "active");
+          // Steps written as custom code get a closer look from the reviewer (rule checks already ran on every output).
+          const customSteps = draft.steps.filter((s) => s.kind === "custom").map((s) => s.plainLanguage);
+          const extra = await this.deps.ai.reviewTrial(c.task, { ...draft, customSteps }, c.outputs, ai);
+          for (const output of c.outputs) mergeChecks(output, extra[output.id]);
+          // The results miss part of the request (crop marks, a missing element…): send it back once, while there's room.
+          const missed = c.outputs.flatMap((o) => (extra[o.id] ?? []).filter((ch) => ch.level === "visual" && !ch.passed).map((ch) => `${o.label}: ${ch.reason ?? ch.label}`));
+          if (missed.length && !fallback && turn < MAX_TURNS && spent() + 2 < MAX_CREATION_CALLS - REVIEW_RESERVE && !outOfCalls()) {
+            fallback = { result: { draft, res, workDir }, outputs: c.outputs, changeSummary };
+            progress.lastProblem = missed.join(" · ");
+            const shown = progress.lastProblem;
+            this.note(c, `The review found the results miss part of the request, sent back to fix: ${shown.length > 240 ? `${shown.slice(0, 237)}…` : shown}`);
+            this.setStage(state, "check", "pending", "");
+            this.setStage(state, "run", "pending", "");
+            this.setStage(state, "write", "active", "Fixing what the review found");
+            reply(`The trial ran, but a review of its results found they don't do everything the request asks:\n${clip(missed, 3000)}\nFix the routine so they do, and propose it again.`);
+            continue;
+          }
+        }
+        result = { draft, res, workDir };
+      }
+    } catch (err) {
+      // The fix after the review didn't work out: keep the routine that ran, with what the review found.
+      if (!fallback || err instanceof CancelledError) throw err;
+      this.note(c, `Couldn't fix what the review found (${errorMessage(err)}); kept the routine that ran`);
+      result = fallback.result;
+      c.draft = result.draft;
+      c.outputs = fallback.outputs;
+      if (result.res) c.trial = result.res.progress;
+      changeSummary = fallback.changeSummary;
+      this.setStage(state, "write", "done");
+      this.setStage(state, "run", "done", "The trial from before the review");
     }
-    const flagged = c.outputs.filter((o) => o.qc?.status === "flagged").length;
-    this.setStage(state, "check", "done", !result.res ? "Not tried" : flagged ? `${flagged} flagged` : "All checks passed");
+    if (fallback && result !== fallback.result) await fs.rm(fallback.result.workDir, { recursive: true, force: true }).catch(() => undefined);
+
+    // Says what's still wrong ("Crop marks are missing"), not only how many were flagged.
+    const flagged = c.outputs.filter((o) => o.qc?.status === "flagged");
+    const reason = flagged.flatMap((o) => o.qc!.checks.filter((ch) => !ch.passed && !ch.skipped)).map((ch) => ch.reason ?? ch.label)[0];
+    const flaggedText = reason ? `${flagged.length} flagged: ${reason.length > 140 ? `${reason.slice(0, 137)}…` : reason}` : `${flagged.length} flagged`;
+    this.setStage(state, "check", "done", !result.res ? "Not tried" : flagged.length ? flaggedText : "All checks passed");
     return { draft: result.draft, trial: result.res, workDir: result.workDir, changeSummary };
   }
 
@@ -2039,7 +2152,8 @@ export class RoutineService {
             input: p.input,
             output: p.label,
             checks: (p.qc?.checks ?? []).filter((ch) => !ch.passed).map((ch) => ch.reason ?? ch.label),
-            error: p.error,
+            // The app's own text when there is one: what the AI needs to fix it.
+            error: p.errorDetail ?? p.error,
           }
         : undefined,
       testItems: (state.creation.refine?.items ?? refine.itemLabels).map((i) => i.label),
@@ -2054,8 +2168,8 @@ export class RoutineService {
     const q = recoverKeys((t.question ?? {}) as Record<string, any>, ["options", "text"]);
     const options = Array.isArray(q.options) ? q.options.slice(0, 4) : [];
     // Doppl's own fixes don't wait for the designer: the AI decides.
-    if (state.auto || progress.asked || turn > 1 || inFlow || !q.text || options.length < 2) return null;
-    progress.asked = true;
+    if (state.auto || Number(progress.asked) >= MAX_AI_QUESTIONS || turn > MAX_AI_QUESTIONS || inFlow || !q.text || options.length < 2) return null;
+    progress.asked = Number(progress.asked) + 1;
     c.question = { id: `q-${newId()}`, text: String(q.text), options: options.map((o: any, i: number) => ({ id: String(o?.id ?? i), label: String(o?.label ?? o?.id ?? o) })) };
     c.status = "waiting";
     this.emit(c);
@@ -2247,7 +2361,7 @@ export class RoutineService {
           { role: "system", content: planSystemPrompt(apps, MAX_PLAN_TURNS) },
           { role: "user", content: planTaskMessage(g.facts) },
         ],
-        asked: false,
+        asked: 0,
         inspections: 0,
         lastProblem: "",
       };
@@ -2281,7 +2395,8 @@ export class RoutineService {
       }
       messages.push({ role: "assistant", content: JSON.stringify(t) });
       this.record(state, messages);
-      if (typeof t.reason === "string" && t.reason.trim()) this.note(c, t.reason.trim().slice(0, 160));
+      const said = saidWhy(t.reason);
+      if (said) this.note(c, said);
       if (t.action === "ask_question") {
         const answer = await this.askQuestion(state, progress, t, turn, false);
         reply(answer !== null ? `Answer: ${answer}. Continue.` : "Don't ask now. Decide yourself and propose the plan.");
@@ -2289,6 +2404,11 @@ export class RoutineService {
       }
       if (t.action === "inspect") {
         reply(await this.inspect(state, progress, t, apps));
+        continue;
+      }
+      if (t.action === "decline") {
+        if (turn <= MAX_AI_QUESTIONS + 1) throw notATask(typeof t.reason === "string" ? t.reason.trim() : "");
+        reply("Don't decline now: propose the plan.");
         continue;
       }
       let plan: FlowPlan;

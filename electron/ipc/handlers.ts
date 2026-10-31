@@ -1,5 +1,6 @@
 import path from "node:path";
 import { BrowserWindow, type OpenDialogOptions, app, dialog, ipcMain, shell } from "electron";
+import { filePreviews } from "../adapters/previews";
 import { blocks } from "../core/blocks/registry";
 import { runHelperTests } from "../core/blocks/testRunner";
 import type { Services } from "../core/config";
@@ -84,10 +85,17 @@ export function registerIpc(s: Services) {
     rememberInputs: (target, inputs) => s.runs.rememberInputs(target, inputs),
     checkReadiness: (target, documents) => s.runs.readiness(target, documents ?? {}),
     preflightRun: (target, request) => s.runs.preflight(target, request),
+    suggestPartners: (target, request, ids) => s.runs.suggestPartners(target, request, ids),
+    previewFiles: (paths) => filePreviews(paths),
     startRun: (target, request) => s.runs.start(target, request),
     cancelRun: (id) => s.runs.cancel(id),
     getRun: (id) => s.runs.get(id),
     retryFailed: (id) => s.runs.retryFailed(id),
+    answerRunFix: async (id, answer) => {
+      // A fix takes a while: the run's screen follows it.
+      if (answer === "fix") void s.autoFix.start(id).catch((err) => console.error("[fix]", err));
+      else await (answer === "keep" ? s.autoFix.keep(id) : s.autoFix.dismiss(id));
+    },
     markOutputOk: (runId, outputId) => s.runs.markOutputOk(runId, outputId),
     openOutput: (runId, outputId) => s.runs.openOutput(runId, outputId),
     revealOutput: (runId, outputId) => s.runs.revealOutput(runId, outputId),

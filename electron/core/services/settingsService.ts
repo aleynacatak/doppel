@@ -21,7 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoPromoteBlocks: false,
 };
 
-const thisMonth = () => new Date().toISOString().slice(0, 7);
+/** The month on the designer's clock ("2026-11"): the spend limit resets at their midnight, not UTC's. */
+export const thisMonth = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 export class SettingsService {
   private settings: Settings = { ...DEFAULT_SETTINGS };

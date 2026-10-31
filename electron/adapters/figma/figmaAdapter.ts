@@ -4,7 +4,7 @@ import { shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { CancelledError } from "../../core/util";
-import type { AppStatus, DocumentRef, DocumentSummary, FigmaActionList, FigmaFile, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
+import type { AppStatus, DocumentRef, DocumentSummary, FigmaActionList, FigmaFile, FigmaPageRef, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
 import { bufferPreview, filePreview } from "../previews";
 import type { AdapterOutput, DesignAppAdapter, ManifestOptions, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
 import { FigmaApiError, fileLink, getFile, parseFigmaLink, renderNodes, topFrames } from "./figmaRest";
@@ -30,6 +30,17 @@ interface FigmaStageState extends Record<string, unknown> {
   stageSessionId: string;
   pageId: string;
   documentId: string;
+  /** The designer's page the stage started from. */
+  source?: FigmaPageRef;
+}
+
+/** A page a run worked on, finished in endRun. */
+interface RunPage {
+  sessionId: string;
+  pageId: string;
+  trial: boolean;
+  /** An item worked on it: a copy with results is the designer's to keep. */
+  made: boolean;
 }
 
 const EXT: Record<string, string> = { PNG: ".png", JPG: ".jpg", SVG: ".svg", PDF: ".pdf" };
@@ -73,8 +84,8 @@ export class FigmaAdapter implements DesignAppAdapter {
     { level: "object" as const, types: ["outside-boundary" as const], label: () => "Elements stay inside their boundary" },
   ];
 
-  /** Trial pages per run, removed in endRun. */
-  private trialPages = new Map<string, { sessionId: string; pageId: string }[]>();
+  /** Pages per run, finished in endRun. */
+  private pagesOfRun = new Map<string, RunPage[]>();
   /** Page each run works on per document, so later Figma stages of a run continue on it. */
   private runPages = new Map<string, string>();
 
@@ -215,33 +226,33 @@ export class FigmaAdapter implements DesignAppAdapter {
   async beginStage(ctx: StageRunContext): Promise<StageSession> {
     const s = this.session(ctx.documentId);
     const runKey = `${ctx.runId}:${s.documentId}`;
-    const res = await this.request<{ stageSessionId: string; pageId: string; pageName: string }>(
+    // A routine starts from the page it was made on, whatever page the designer has open.
+    const res = await this.request<{ stageSessionId: string; pageId: string; pageName: string; source?: FigmaPageRef }>(
       s.id,
-      { type: "beginStage", mode: ctx.target, routineName: ctx.routineName, reusePageId: this.runPages.get(runKey) },
+      { type: "beginStage", mode: ctx.target, routineName: ctx.routineName, reusePageId: this.runPages.get(runKey), source: ctx.stage.page },
       "beginStage",
     );
     this.runPages.set(runKey, res.pageId);
-    if (ctx.target === "trial") {
-      const list = this.trialPages.get(ctx.runId) ?? [];
-      if (!list.some((p) => p.pageId === res.pageId)) list.push({ sessionId: s.id, pageId: res.pageId });
-      this.trialPages.set(ctx.runId, list);
-    }
-    const state: FigmaStageState = { sessionId: s.id, stageSessionId: res.stageSessionId, pageId: res.pageId, documentId: s.documentId };
+    const list = this.pagesOfRun.get(ctx.runId) ?? [];
+    if (!list.some((p) => p.pageId === res.pageId)) list.push({ sessionId: s.id, pageId: res.pageId, trial: ctx.target === "trial", made: false });
+    this.pagesOfRun.set(ctx.runId, list);
+    const state: FigmaStageState = { sessionId: s.id, stageSessionId: res.stageSessionId, pageId: res.pageId, documentId: s.documentId, source: res.source };
     return { state, documentName: `${s.fileName} · ${res.pageName}` };
   }
 
   async runStageItem(session: StageSession, input: StageItemInput, ctx: StageRunContext, onProgress: (text: string) => void): Promise<StageItemResult> {
     const st = session.state as FigmaStageState;
-    const allowed = [ctx.workDir, ...ctx.allowedFolders];
+    // The designer's picked files and folders are read-only: exports go only into the stage's working folder.
+    const allowed = [ctx.workDir];
     let prepared;
     try {
       // Building blocks (composite actions) expand into catalog actions, at the versions the routine pinned.
       const expanded = expandComposites((input.body as FigmaActionList).actions as Record<string, unknown>[], ctx.stage.blocks?.composites ?? blocks.composites());
-      if (expanded.problems.length) throw new ItemDataError(expanded.problems.join(" "));
+      if (expanded.problems.length) throw new ItemDataError(expanded.problems.join(" "), undefined, "routine");
       prepared = await prepareActions(expanded.actions, allowed);
     } catch (err) {
       if (err instanceof ItemDataError) {
-        return { ok: false, error: err.message, outputs: [], values: {}, findings: err.finding ? [err.finding] : [], log: [] };
+        return { ok: false, error: err.message, cause: err.fault, outputs: [], values: {}, findings: err.finding ? [err.finding] : [], log: [] };
       }
       throw err;
     }
@@ -267,10 +278,10 @@ export class FigmaAdapter implements DesignAppAdapter {
     for (const [key, list] of Object.entries(res.outputs ?? {})) values[key] = [...list];
     const fileList = ctx.stage.outputs.find((o) => o.type === "fileList" || o.type === "file");
 
-    // Exports go only into the stage's working folder or folders picked for this run.
+    // Exports go only into the stage's working folder.
     for (const [i, e] of (res.exports ?? []).entries()) {
       const folder = e.folder ? path.resolve(e.folder) : ctx.workDir;
-      if (!insideAny(folder, allowed)) throw new Error("A Figma export tried to save outside the folders picked for this run.");
+      if (!insideAny(folder, allowed)) throw new Error("A Figma export tried to save outside the routine's working folder. Doppl never writes into the designer's folders: leave out the export's folder.");
       await fs.mkdir(folder, { recursive: true });
       const filePath = await freePath(folder, safeName(path.basename(e.fileName)).replace(/\.(png|jpe?g|svg|pdf)$/i, ""), EXT[e.format] ?? ".png");
       const bytes = Buffer.from(e.data, "base64");
@@ -291,6 +302,10 @@ export class FigmaAdapter implements DesignAppAdapter {
         });
       }
     }
+    if (res.ok) {
+      const page = this.pagesOfRun.get(ctx.runId)?.find((p) => p.pageId === st.pageId);
+      if (page) page.made = true;
+    }
     const findings: RuleFinding[] = (res.findings ?? []).map((f) => ({ type: f.type, message: f.message }));
     const error = res.ok ? undefined : `Action ${res.error!.index + 1} (${res.error!.action}): ${res.error!.message}`;
     return {
@@ -301,7 +316,7 @@ export class FigmaAdapter implements DesignAppAdapter {
       values,
       findings,
       log: [...(res.log ?? []), ...prepared.barcodes.map((b) => `Barcode ${b}`)],
-      data: { steps: res.steps, results: res.results, page: res.page },
+      data: { steps: res.steps, results: res.results, page: res.page, ...(st.source ? { source: st.source } : {}) },
     };
   }
 
@@ -311,14 +326,17 @@ export class FigmaAdapter implements DesignAppAdapter {
     await this.request(st.sessionId, { type: "endStage", stageSessionId: st.stageSessionId }, "endStage").catch(() => undefined);
   }
 
-  /** Removes scratch pages of a trial run; copies made by real runs stay in the file. */
+  /**
+   * After a run, Figma shows the designer's page again. A trial's scratch page is removed, and so is a copy no item
+   * worked on (a failed run leaves nothing behind); copies with results stay in the file.
+   */
   async endRun(runId: string): Promise<void> {
     for (const key of [...this.runPages.keys()]) if (key.startsWith(`${runId}:`)) this.runPages.delete(key);
-    const pages = this.trialPages.get(runId) ?? [];
-    this.trialPages.delete(runId);
+    const pages = this.pagesOfRun.get(runId) ?? [];
+    this.pagesOfRun.delete(runId);
     for (const p of pages) {
       if (!this.deps.bridge.list().some((s) => s.id === p.sessionId)) continue;
-      await this.request(p.sessionId, { type: "discardPage", pageId: p.pageId }, "discardPage").catch(() => undefined);
+      await this.request(p.sessionId, { type: "finishPage", pageId: p.pageId, remove: p.trial || !p.made }, "finishPage").catch(() => undefined);
     }
   }
 

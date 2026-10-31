@@ -181,7 +181,8 @@ export class PhotoshopAdapter implements DesignAppAdapter {
         itemIndex: input.index,
         matched: input.matched ?? {},
         workDir: ctx.workDir,
-        allowedFolders: [ctx.workDir, ...ctx.allowedFolders],
+        // The designer's picked files and folders are read-only: a script saves only into its working folder.
+        allowedFolders: [ctx.workDir],
         owned: state.owned,
       },
       "run-item",
@@ -253,7 +254,6 @@ export class PhotoshopAdapter implements DesignAppAdapter {
       target: ctx.target,
       workDir: ctx.workDir,
       copiesDir: ctx.copiesDir,
-      allowedFolders: ctx.allowedFolders,
       isCancelled: ctx.isCancelled,
     };
     const session = await this.beginStage(stageCtx);

@@ -150,7 +150,7 @@ export interface ParamDef {
   optionsSource?: string;
   /** File type filter for type "file" or "folder" contents, e.g. ["txt", "docx"]. */
   extensions?: string[];
-  /** dataFile: columns every row must have. */
+  /** dataFile: columns the file must have (a cell may be empty). */
   columns?: string[];
   /** folder: files are read from it ("input") or results are saved into it ("output"). */
   role?: "input" | "output";
@@ -181,7 +181,7 @@ export interface PortDef {
   description?: string;
   /** file, fileList: allowed extensions without dots, e.g. ["png", "jpg"]. Missing or empty: any file. */
   extensions?: string[];
-  /** rows: columns every row has. */
+  /** rows: columns the file must have (a cell may be empty; the row is made without it). */
   columns?: string[];
   /** rows: other columns the routine reads (found by Doppl in its code); matched by name like `columns`, but may be empty or missing. */
   uses?: string[];
@@ -256,6 +256,14 @@ export interface Stage {
   modifiesDocument?: boolean;
   /** The building blocks it runs with (the versions its routine pinned). */
   blocks?: StageBlocks;
+  /** Figma: the page the routine was made on; runs start from it, whatever page is open. */
+  page?: FigmaPageRef;
+}
+
+/** A Figma page: by id, and by name when the id is gone (the file was duplicated). */
+export interface FigmaPageRef {
+  id: string;
+  name: string;
 }
 
 export interface RoutineVersion {
@@ -325,6 +333,8 @@ export interface Routine {
   /** Example routine the routine was based on, if any. */
   templateId?: string;
   experimental?: boolean;
+  /** Figma: the page the routine was made on (its template's page); runs copy it, whatever page is open. */
+  figmaPage?: FigmaPageRef;
   /** Made by Doppl: a read-only starter routine from the app's resources. Converters are tagged "converter". */
   starter?: { tags: string[] };
   /** A copy of a starter routine (independent from later starter updates). */
@@ -492,6 +502,8 @@ export interface RunSummary {
   aiCalls: number;
   /** The routine's or flow's version. */
   routineVersion: number;
+  /** In a routine's history: the flow it ran in (the summary is the flow run's). */
+  inFlow?: string;
 }
 
 export interface PreviewImage {
@@ -517,6 +529,8 @@ export interface RunOutput {
   preview?: PreviewImage;
   qc?: QcResult;
   error?: string;
+  /** The raw error behind `error` (an app's own text), shown under "Details". */
+  errorDetail?: string;
   /** Why it failed: the designer's files or data, the routine itself, or an app that wasn't ready. */
   cause?: FailureCause;
   /** File written by the routine, if any. */
@@ -543,10 +557,13 @@ export interface QcCheck {
   label: string;
   passed: boolean;
   reason?: string;
+  /** Doppl couldn't look (the routine closed its document first): neither a pass nor a flag. */
+  skipped?: boolean;
 }
 
 export interface QcResult {
-  status: "pass" | "flagged";
+  /** "not-checked": every check was skipped. */
+  status: "pass" | "flagged" | "not-checked";
   checks: QcCheck[];
 }
 
@@ -555,6 +572,8 @@ export type RuleFindingType =
   | "link-missing"
   | "link-modified"
   | "font-missing"
+  /** InDesign: the font has no glyph for a letter in the text (it prints as a box or a loose accent). */
+  | "glyph-missing"
   | "low-res"
   /** InDesign: a text frame runs past the page edge. */
   | "off-page"
@@ -573,7 +592,9 @@ export type RuleFindingType =
   /** A font style (e.g. Bold) isn't available for the font. */
   | "font-style-missing"
   /** A barcode value has the wrong check digit or format. */
-  | "barcode-invalid";
+  | "barcode-invalid"
+  /** The document an output came from couldn't be checked (the routine closed it first). */
+  | "not-checked";
 
 /** A rule-level problem found in a document. */
 export interface RuleFinding {
@@ -622,16 +643,23 @@ export interface RunRequest {
 }
 
 /**
- * What Doppl found in the picked inputs before a run (no AI): what it handled on its own, what needs the designer,
+ * What Doppl found in the picked inputs before a run: what it handled on its own, what needs the designer,
  * and what will be skipped. Nothing here stops the other items from running.
  */
 export interface PreflightReport {
   fixed: PreflightNote[];
   needs: PreflightIssue[];
   skipped: PreflightNote[];
+  /** Good to know, nothing to do: CMYK or very large images. */
+  notes?: PreflightNote[];
+  /** AI calls this check made (to match columns). */
+  aiCalls?: number;
   /** Columns Doppl matched with AI, per input node (expected → the file's column): kept like picked ones. */
   columns?: Record<string, Record<string, string>>;
 }
+
+/** What the check before a run reads: the picks, and which of the picked columns Doppl matched with AI earlier. */
+export type PreflightRequest = Pick<RunRequest, "inputs" | "matches" | "columns"> & { aiColumns?: Record<string, Record<string, string>> };
 
 export interface PreflightNote {
   text: string;
@@ -642,21 +670,26 @@ export interface PreflightNote {
 }
 
 export type PreflightIssue =
-  /** An item without a partner: pick one of the candidates (unused files, the likeliest first), or let it be skipped. */
-  | { kind: "partner"; id: string; nodeId: string; port: string; item: string; key: string; text: string; candidates: string[] }
+  /**
+   * An item without a partner: pick one of the candidates (unused files, the likeliest first), or let it be skipped.
+   * `files`: where each candidate file is, for its picture.
+   */
+  | { kind: "partner"; id: string; nodeId: string; port: string; item: string; key: string; text: string; candidates: string[]; files?: Record<string, string> }
   /** A column the routine needs that Doppl couldn't find: pick the file's column that holds it. */
   | { kind: "column"; id: string; inputNodeId: string; column: string; text: string; candidates: string[] }
   /** A file that can't be read at all. */
   | { kind: "file"; id: string; inputNodeId: string; text: string };
 
 /**
- * After a run where items failed because of the routine, Doppl adapts the routine with AI on its own: tried on the
- * failed items and one that worked, saved as a new version only if they all work and the routine's inputs and
- * outputs stay the same; then the failed items run again. The previous version stays restorable.
+ * After a run where items failed because of the routine, Doppl offers to fix it with AI and waits for the designer:
+ * offered → (they say yes) fixing → ready (tried on the failed items and one that worked) → (they keep it) fixed: a
+ * new version, and the failed items run again. Declined when they say no. The previous version stays restorable.
  */
 export interface RunFix {
-  status: "fixing" | "fixed" | "not-fixed" | "needs-review";
+  status: "offered" | "fixing" | "ready" | "fixed" | "not-fixed" | "needs-review" | "declined";
   routineId: string;
+  /** Offered: the most AI calls the fix may use. */
+  maxCalls?: number;
   /** Flow runs: the flow and the routine node that was fixed (the flow now uses the new version). */
   flowId?: string;
   nodeId?: string;
@@ -667,7 +700,7 @@ export interface RunFix {
   aiCalls?: number;
   /** Why it wasn't fixed (not-fixed) or what needs a look (needs-review). */
   reason?: string;
-  /** The refine that made the fix (needs-review: open it to look and save). */
+  /** The refine that made the fix (ready: kept or discarded; needs-review: open it to look and save). */
   creationId?: string;
   /** The run of the failed items again, with the fixed version. */
   rerunId?: string;
@@ -703,6 +736,7 @@ export interface StageItemProgress {
   label: string;
   status: "pending" | "running" | "done" | "failed" | "skipped";
   error?: string;
+  errorDetail?: string;
   cause?: FailureCause;
 }
 
@@ -725,6 +759,7 @@ export interface NodeProgress {
   failed: number;
   items: StageItemProgress[];
   error?: string;
+  errorDetail?: string;
   /** Something to know that isn't a failure, e.g. "No folder picked: the results stay in the run folder." */
   note?: string;
   /** The document the routine ran on, e.g. "Campaign · Page 1 (Doppl copy)"; for "Save to folder", the folder. */
@@ -862,6 +897,8 @@ export interface RoutineDraft {
   objectChecks?: ObjectCheckDef[];
   /** Building block versions (set when it is tried, kept when it is saved). */
   helpers?: HelperPins;
+  /** Figma: the page its trial started from (set when it is tried, kept when it is saved). */
+  figmaPage?: FigmaPageRef;
 }
 
 /** A problem that keeps a routine from being saved (sent back to the model to fix). */
@@ -925,6 +962,7 @@ export interface RefineSetup {
     preview?: PreviewImage;
     qc?: QcResult;
     error?: string;
+    errorDetail?: string;
   };
 }
 
@@ -1024,7 +1062,7 @@ export interface Creation {
   error?: {
     message: string;
     detail?: string;
-    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "validation" | "needs-flow" | "generic";
+    kind?: "app-not-connected" | "plugin-not-connected" | "no-document" | "ai-access" | "validation" | "needs-flow" | "not-a-task" | "generic";
     /** AI error code (from the demo Worker or Meta), e.g. "quota_exhausted". */
     code?: string;
     action?: AiErrorAction;
@@ -1280,13 +1318,19 @@ export interface DoppelApi {
   rememberInputs(target: RunTarget, inputs: Record<string, InputValue>): Promise<void>;
   /** Whether every app the routine or flow uses is connected with the right document. */
   checkReadiness(target: RunTarget, documents?: Partial<Record<AppId, string>>): Promise<ReadinessItem[]>;
-  /** Reads the picked inputs as the run would and reports what Doppl handled, what needs the designer, and what's skipped. No AI. */
-  preflightRun(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">): Promise<PreflightReport>;
+  /** Reads the picked inputs as the run would and reports what Doppl handled, what needs the designer, and what's skipped. AI only for a column no name rule can place. */
+  preflightRun(target: RunTarget, request: PreflightRequest): Promise<PreflightReport>;
+  /** "Let Doppl match them" (one AI call per input): files suggested for items without one, by issue id, for the designer to approve. */
+  suggestPartners(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">, ids?: string[]): Promise<Record<string, string>>;
+  /** Small pictures of picked files, by path (to choose a file by its picture). */
+  previewFiles(paths: string[]): Promise<Record<string, PreviewImage>>;
   startRun(target: RunTarget, request: RunRequest): Promise<Run>;
   cancelRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Run | null>;
   /** A new run with only the items that failed. */
   retryFailed(runId: string): Promise<Run>;
+  /** Doppl's offered fix of a run's routine: "fix" spends the AI, "keep" saves a fix that worked, "dismiss" says no. */
+  answerRunFix(runId: string, answer: "fix" | "keep" | "dismiss"): Promise<void>;
   markOutputOk(runId: string, outputId: string): Promise<Run>;
   openOutput(runId: string, outputId: string): Promise<void>;
   revealOutput(runId: string, outputId: string): Promise<void>;

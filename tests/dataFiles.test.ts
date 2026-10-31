@@ -57,9 +57,11 @@ describe("readDataFile: CSV", () => {
 
   it("numbers rows like the file, counting blank lines", async () => {
     const p = await file("required.csv", "sku,price\n001,4\n\n002,\n003,5\n");
-    const table = await readDataFile(p, { requiredColumns: ["price"] });
+    const table = await readDataFile(p, { filledColumns: ["price"] });
     expect(table.rows).toHaveLength(3);
     expect(table.errors).toEqual([{ row: 3, column: "price", message: '"price" is empty.' }]);
+    // A column that only has to exist may have empty cells.
+    expect((await readDataFile(p, { requiredColumns: ["price"] })).errors).toEqual([]);
   });
 
   it("detects semicolons and tabs", async () => {
@@ -165,7 +167,7 @@ describe("readDataFile: JSON", () => {
   it("reads {rows} and {data}, and checks required columns", async () => {
     const rows = await readDataFile(
       await file("wrapped.json", JSON.stringify({ rows: [{ a: 1, b: "x" }, { a: null, b: "y" }, { a: "  " }] })),
-      { requiredColumns: ["a"] },
+      { filledColumns: ["a"] },
     );
     expect(rows.rows).toEqual([
       { a: 1, b: "x" },
@@ -200,7 +202,7 @@ describe("readDataFile: XLSX", () => {
       { dateFormat: "yyyy-mm-dd" },
     ).toFile(p);
 
-    const table = await readDataFile(p, { requiredColumns: ["Note"] });
+    const table = await readDataFile(p, { filledColumns: ["Note"] });
     expect(table.format).toBe("xlsx");
     expect(table.columns).toEqual(["SKU", "Name", "Price", "In stock", "Launch", "Note"]);
     expect(table.rows).toEqual([
@@ -273,6 +275,14 @@ describe("readDataFile: files from other programs", () => {
     expect(await fileError(readDataFile(await file("headers-two.csv", "FLAVOR,flavor\nA,B\n"), { requiredColumns: ["Flavor"] }))).toBe(
       'headers-two.csv has more than one column like "Flavor": "FLAVOR", "flavor". Keep one of them.',
     );
+  });
+
+  it("reads a column whose words are in another form (Allergen for allergens) without asking anyone", async () => {
+    const t = await readDataFile(await file("forms.csv", "Product Name,Allergen,Price\nMango,nuts,4\n"), { requiredColumns: ["product names", "allergens"] });
+    expect(t.rows[0]).toEqual({ "product names": "Mango", allergens: "nuts", Price: "4" });
+    expect(t.readAs?.renamed).toEqual({ "product names": "Product Name", allergens: "Allergen" });
+    // Other words aren't another form: "Production" isn't "Products".
+    expect(await fileError(readDataFile(await file("forms-other.csv", "Production\n4\n"), { requiredColumns: ["Products"] }))).toContain('"Products"');
   });
 
   it("finds other columns a routine reads under any case, without requiring them", async () => {

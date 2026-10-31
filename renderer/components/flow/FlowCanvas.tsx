@@ -41,15 +41,24 @@ interface Props extends Omit<FlowViewState, "connecting"> {
   /** A connection dropped on empty canvas: offer what can take it, at that spot. */
   onConnectToEmpty?: (from: { nodeId: string; port: string; view: PortView }, at: { client: { x: number; y: number }; flow: { x: number; y: number } }) => void;
   onDropItem?: (item: DragItem, at: { x: number; y: number }) => void;
+  /** A node just added off-screen: the view moves to show the whole flow with it. */
+  reveal?: string | null;
   overlay?: ReactNode;
   className?: string;
 }
 
 function Canvas(props: Props) {
-  const { flow, ctx, mode, selection, onSelect, onFlowChange, onConnect, onConnectToEmpty, onDropItem } = props;
+  const { flow, ctx, mode, selection, onSelect, onFlowChange, onConnect, onConnectToEmpty, onDropItem, reveal } = props;
   const rf = useReactFlow();
   const [connecting, setConnecting] = useState<Connecting | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
+
+  // Once the new node is drawn (and measured), fit the flow in view.
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = window.setTimeout(() => void rf.fitView({ padding: 0.2, maxZoom: 1, duration: 200 }), 50);
+    return () => window.clearTimeout(timer);
+  }, [reveal, rf]);
 
   // Nodes follow the flow; positions move live while dragging and are written back when dropped.
   useEffect(() => {

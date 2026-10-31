@@ -49,6 +49,9 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   );
   const [matches, setMatches] = useState<Record<string, MatchRule>>(() => ({ ...(routine?.matches ?? {}), ...setup.last.matches }));
   const [columns, setColumns] = useState<Record<string, Record<string, string>>>(() => setup.last.columns ?? {});
+  // Columns Doppl matched with AI on this screen, and the AI calls that took.
+  const [aiColumns, setAiColumns] = useState<Record<string, Record<string, string>>>({});
+  const [aiCalls, setAiCalls] = useState(0);
   const [documents, setDocuments] = useState<Partial<Record<AppId, string>>>({});
   const [qcMode, setQcMode] = useState<QcMode>("auto");
   const [qcOptions, setQcOptions] = useState<QcOptions>(DEFAULT_QC);
@@ -67,17 +70,23 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   }, [qcMode, aiReviewAvailable]);
   const setSetting = useCallback((key: string, value: ParamValue) => setSettings((v) => ({ ...v, [key]: value })), []);
 
-  // The check before the run, whenever the picks change (no AI).
+  // The check before the run, whenever the picks change (AI only for a column no name rule can place).
   const picked = inputNodes.some((n) => !isEmpty(inputs[n.id]));
   const { data: preflight, loading: checking } = useAsync(
-    () => (picked ? doppel().preflightRun(target, { inputs, matches, columns }) : Promise.resolve(null)),
+    () => (picked ? doppel().preflightRun(target, { inputs, matches, columns, aiColumns }) : Promise.resolve(null)),
     [target.id, JSON.stringify(inputs), JSON.stringify(matches), JSON.stringify(columns)],
   );
   const unusable = (preflight?.needs ?? []).filter((i) => i.kind !== "partner");
   // Columns Doppl matched with AI are kept like picked ones: the next check and the run use them without AI.
   useEffect(() => {
+    if (preflight?.aiCalls) setAiCalls((n) => n + preflight.aiCalls!);
     const found = preflight?.columns;
     if (!found) return;
+    setAiColumns((c) => {
+      const next = { ...c };
+      for (const [node, map] of Object.entries(found)) next[node] = { ...(next[node] ?? {}), ...map };
+      return next;
+    });
     setColumns((c) => {
       const next = { ...c };
       let changed = false;
@@ -92,6 +101,11 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
     });
   }, [preflight]);
 
+  // Results saved into the folder an input reads would be read with it next time (cutouts of cutouts).
+  const sameFolderAs = (folder: string) => {
+    const trim = (p: string) => p.replace(/\/+$/, "");
+    return inputNodes.find((n) => (n.port.type === "fileList" || n.port.type === "folder") && typeof inputs[n.id] === "string" && trim(String(inputs[n.id])) === trim(folder))?.port.label;
+  };
   const appIds = useMemo(() => new Set(Object.values(setup.routines).map((r) => r.appId)), [setup.routines]);
   const canChooseTarget = [...appIds].some((a) => a === "figma" || a === "indesign") && Object.values(setup.routines).some((r) => r.inputs.some((p) => p.type === "document"));
   const joins = routine?.iterate
@@ -223,6 +237,8 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
       {picked && (
         <Section title={copy.run.preflightTitle}>
           <PreflightReport
+            // Other files picked: a new check, with nothing skipped or suggested yet.
+            key={JSON.stringify(inputs)}
             report={preflight ?? null}
             loading={checking}
             canPickPartners
@@ -235,7 +251,12 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
                 return key && rule ? { ...m, [key]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
               })
             }
-            onPickColumn={(issue, column) => setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }))}
+            aiCalls={aiCalls}
+            onPickColumn={(issue, column) => {
+              setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }));
+              setAiColumns((c) => ({ ...c, [issue.inputNodeId]: Object.fromEntries(Object.entries(c[issue.inputNodeId] ?? {}).filter(([k]) => k !== issue.column)) }));
+            }}
+            onSuggestPartners={(ids) => doppel().suggestPartners(target, { inputs, matches, columns }, ids)}
           />
         </Section>
       )}
@@ -268,6 +289,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
                 <span className={folders[n.id] ? "truncate" : "ui-muted"} title={folders[n.id]}>
                   {folders[n.id] ? fileName(folders[n.id]) : copy.run.notChosen}
                 </span>
+                {folders[n.id] && sameFolderAs(folders[n.id]) && <span className="ui-small w-full">⚠ {copy.run.sameFolder(sameFolderAs(folders[n.id])!)}</span>}
                 {folders[n.id] && target.kind === "routine" && (
                   <button type="button" className="ui-small ui-link" onClick={() => setFolders((f) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== n.id)))}>
                     {copy.run.clear}

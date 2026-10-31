@@ -4,6 +4,7 @@ import type { RunOutput } from "@core/types";
 import { useState } from "react";
 import { copy } from "@/copy";
 import { Button } from "../ui/Button";
+import { Details } from "../ui/Details";
 import { Preview } from "../ui/Preview";
 import { Tag } from "../ui/Tag";
 import { QcChecks } from "./QcChecks";
@@ -14,7 +15,7 @@ function StatusTag({ output }: { output: RunOutput }) {
   if (output.status === "failed") return <Tag tone="strong">{copy.results.failedOutput}</Tag>;
   if (output.status !== "done") return <Tag tone="quiet">{copy.run.outputStatus[output.status]}</Tag>;
   if (output.markedOk) return <Tag>{copy.results.markedOk}</Tag>;
-  if (!output.qc) return <Tag tone="quiet">{copy.results.notChecked}</Tag>;
+  if (!output.qc || output.qc.status === "not-checked") return <Tag tone="quiet">{copy.results.notChecked}</Tag>;
   return output.qc.status === "flagged" ? <Tag tone="filled">{copy.qcStatus.flagged}</Tag> : <Tag>{copy.qcStatus.pass}</Tag>;
 }
 
@@ -28,7 +29,7 @@ export interface OutputActions {
 
 export function OutputCard({ output, actions }: { output: RunOutput; actions?: OutputActions }) {
   const [showChecks, setShowChecks] = useState(false);
-  const problems = output.qc?.checks.filter((c) => !c.passed) ?? [];
+  const problems = output.qc?.checks.filter((c) => !c.passed && !c.skipped) ?? [];
   const flagged = output.qc?.status === "flagged" && !output.markedOk;
   return (
     <article className="ui-card flex flex-col overflow-hidden" data-selected={flagged}>
@@ -47,6 +48,7 @@ export function OutputCard({ output, actions }: { output: RunOutput; actions?: O
 
         {output.error && <p className="ui-small">{output.error}</p>}
         {output.status === "failed" && output.cause && <p className="ui-small ui-muted">{copy.results.cause[output.cause]}</p>}
+        <Details text={output.errorDetail} />
         {problems.length > 0 && !output.markedOk && (
           <ul className="ui-small flex flex-col gap-0.5">
             {problems.map((p) => (

@@ -50,7 +50,7 @@ describe("built Figma plugin", () => {
   it("loads, introduces itself and runs a stage", async () => {
     const { api, sent, request, figma } = load();
     await api.ui.onmessage!({ type: "ready" });
-    expect(sent.find((m) => m.type === "init")).toMatchObject({ info: { fileName: "Test file", fileKey: "KEY123", pluginVersion: "2.0.0" }, code: "" });
+    expect(sent.find((m) => m.type === "init")).toMatchObject({ info: { fileName: "Test file", fileKey: "KEY123", pluginVersion: "2.1.0" }, code: "" });
 
     const begin = await request({ type: "beginStage", mode: "trial", routineName: "Labels" });
     expect(figma.currentPage.name).toBe("Doppl trial · Labels");
@@ -68,9 +68,35 @@ describe("built Figma plugin", () => {
     expect(res.exports).toHaveLength(1);
     expect(res.shown[0]).toMatchObject({ name: "Card 1" });
     await request({ type: "endStage", stageSessionId: begin.stageSessionId });
-    await request({ type: "discardPage", pageId: begin.pageId });
+    await request({ type: "finishPage", pageId: begin.pageId });
     expect(figma.currentPage.name).toBe("Page 1");
     expect(figma.root.children.map((p) => p.name)).toEqual(["Page 1"]);
+  });
+
+  it("starts from the routine's page whatever page is open, and goes back to the designer's page", async () => {
+    const { request, figma } = load();
+    const labels = figma.root.children[0];
+    labels.name = "jam-a-dox";
+    const other = figma.createPage();
+    other.name = "Page 10";
+    figma.currentPage = other;
+    const begin = await request({ type: "beginStage", mode: "copy", routineName: "Labels", source: { id: labels.id, name: "jam-a-dox" } });
+    expect(begin.source).toEqual({ id: labels.id, name: "jam-a-dox" });
+    expect(figma.currentPage.name).toBe("jam-a-dox (Doppl copy)");
+    expect(figma.currentPage.findOne((n) => n.name === "Card")).toBeTruthy();
+    // Results are kept: the copy stays and Figma shows the page the designer had open.
+    await request({ type: "finishPage", pageId: begin.pageId, remove: false });
+    expect(figma.currentPage).toBe(other);
+    expect(figma.root.children.map((p) => p.name)).toEqual(["jam-a-dox", "jam-a-dox (Doppl copy)", "Page 10"]);
+
+    // An older routine (no page saved) run while a Doppl copy is open starts from the designer's page, not the copy;
+    // a copy that kept nothing is removed.
+    figma.currentPage = figma.root.children[1];
+    const again = await request({ type: "beginStage", mode: "copy", routineName: "Labels" });
+    expect(again.source.name).toBe("jam-a-dox");
+    await request({ type: "finishPage", pageId: again.pageId, remove: true });
+    expect(figma.root.children.map((p) => p.name)).toEqual(["jam-a-dox", "jam-a-dox (Doppl copy)", "Page 10"]);
+    expect(figma.currentPage.name).toBe("jam-a-dox (Doppl copy)");
   });
 
   it("validates actions again inside the plugin", async () => {

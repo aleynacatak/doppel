@@ -2,7 +2,7 @@ import { codeOf } from "../ai/answer";
 import { type AiGateway, type GatewayChatRequest, type Role, isModelImage } from "../ai/gateway";
 import type { ReasoningEffort } from "../ai/registry";
 import type { ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
-import { COLUMNS_SCHEMA, COLUMNS_SYSTEM, REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
+import { COLUMNS_SCHEMA, COLUMNS_SYSTEM, FILES_SCHEMA, FILES_SYSTEM, REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
 import type { AiCallContext, AiService, TurnOptions } from "./aiService";
 import { AiError, type ChatMessage, type ContentPart, type SegmentBox } from "./aiTransport";
 
@@ -119,7 +119,7 @@ export class ModelAiService implements AiService {
     throw new AiError("ai_output_cut", "The AI's code was too long for one reply and got cut off, also when it tried again more briefly.", "retry");
   }
 
-  async reviewTrial(task: Task, draft: { name: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
+  async reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
     const checks: Record<string, QcCheck[]> = {};
     const add = (id: string, check: QcCheck) => (checks[id] ??= []).push(check);
     // Only outputs with a rendered preview can be looked at.
@@ -133,7 +133,8 @@ export class ModelAiService implements AiService {
     const content: ContentPart[] = [
       {
         type: "text",
-        text: `Request: "${task.request}"\nRoutine: ${draft.name}${custom}\nOutputs:\n${withImages
+        // Doppl never overwrites or deletes the designer's files: the description says what the routine does instead.
+        text: `Request: "${task.request}"\nRoutine: ${draft.name}${draft.description ? ` (${draft.description}) Where it differs from the request, judge by this description: Doppl never overwrites or deletes the designer's files.` : ""}${custom}\nOutputs:\n${withImages
           .map((o) => `- id ${o.id}: ${o.label}${o.qc?.checks.filter((c) => !c.passed).map((c) => ` [rule check: ${c.reason ?? c.label}]`).join("") ?? ""}`)
           .join("\n")}`,
       },
@@ -224,6 +225,38 @@ export class ModelAiService implements AiService {
       // Only the file's own columns, each once.
       out[e] = input.columns.includes(column) && !used.has(column) ? column : null;
       if (out[e]) used.add(column);
+    }
+    return out;
+  }
+
+  /** Which of the designer's files goes with each item that found none by name; null where the names don't say. */
+  async matchFiles(input: { routine: string; what: string; items: string[]; files: string[]; pictures?: { name: string; src: string }[] }, ctx: AiCallContext): Promise<Record<string, string | null>> {
+    const text = JSON.stringify({ routine: input.routine, pairsEachItemWith: input.what, items: input.items, files: input.files });
+    const pictures = (input.pictures ?? []).filter((p) => isModelImage(p.src));
+    const content: string | ContentPart[] = pictures.length
+      ? [{ type: "text", text }, ...pictures.flatMap((p): ContentPart[] => [{ type: "text", text: `Picture of ${p.name}:` }, { type: "image_url", image_url: { url: p.src, detail: "low" } }])]
+      : text;
+    const json = await this.jsonWithRetry(
+      "reviewer",
+      {
+        messages: [
+          { role: "system", content: FILES_SYSTEM },
+          { role: "user", content },
+        ],
+        schema: { name: "doppl_files", schema: FILES_SCHEMA },
+        maxTokens: SHORT_TOKENS,
+      },
+      ctx,
+      (j) => j,
+    );
+    const pairs = Array.isArray(json.pairs) ? json.pairs : [];
+    const used = new Set<string>();
+    const out: Record<string, string | null> = {};
+    for (const item of input.items) {
+      const file = String(pairs.find((p: any) => p?.item === item)?.file ?? "");
+      // Only the designer's own files, each once.
+      out[item] = input.files.includes(file) && !used.has(file) ? file : null;
+      if (out[item]) used.add(file);
     }
     return out;
   }

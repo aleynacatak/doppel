@@ -30,6 +30,28 @@ named differently: another language, abbreviations, other words ("Ürün Adı" f
 each expected column, give the file's column that holds the same information, judging by the names, the routine and
 the sample values. Use "" when no column holds it; don't guess. Never give one file column for two expected columns.`;
 
+export const FILES_SCHEMA = {
+  type: "object",
+  properties: {
+    pairs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { file: { type: "string", description: "One of the files, exactly as written, or \"\" when none goes with the item" }, item: { type: "string" } },
+        required: ["file", "item"],
+      },
+    },
+  },
+  required: ["pairs"],
+};
+
+export const FILES_SYSTEM = `A design routine pairs each item (a row of a data file, or a file) with one of a designer's files by name,
+and some items found no file because the names are written differently: squashed, in another word order, abbreviated,
+another language, typos ("pearcaramelsalt.png" for "Salted Caramel Pear"). For each item, give the file that is clearly
+meant for it. Some files come with their picture ("Picture of IMG_4032.jpg:"): when its name says nothing, go by what the
+picture clearly shows (a pear and caramel jam for "Salted Caramel Pear"). Use "" when neither the name nor a picture
+says; don't guess. Never give one file to two items.`;
+
 export const REVIEW_SCHEMA = {
   type: "object",
   properties: {
@@ -59,13 +81,13 @@ const QUESTION_FIELD = {
 export const ROUTINE_TURN_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["ask_question", "inspect", "preview_routine", "propose_routine"] },
+    action: { type: "string", enum: ["ask_question", "decline", "inspect", "preview_routine", "propose_routine"] },
     app: { type: "string" },
     depth: { type: "number" },
     document: { type: "string" },
     nodes: { type: "array", items: { type: "string" }, description: "inspect: layers by name, path or id" },
     question: QUESTION_FIELD,
-    reason: { type: "string", description: "One short sentence for the designer: what you are doing" },
+    reason: { type: "string", description: "One short sentence for the designer: what you are doing (decline: why)" },
     routine: { type: "object", description: "preview_routine, propose_routine: the complete routine (see the format)" },
     sampleItemIndex: { type: "number" },
   },
@@ -134,14 +156,14 @@ export function routineTurnSchema(revision: boolean, format: TurnFormat): Record
 export const PLAN_TURN_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["ask_question", "inspect", "propose_plan"] },
+    action: { type: "string", enum: ["ask_question", "decline", "inspect", "propose_plan"] },
     app: { type: "string" },
     depth: { type: "number" },
     document: { type: "string" },
     nodes: { type: "array", items: { type: "string" }, description: "inspect: layers by name, path or id" },
     plan: { type: "object", description: "propose_plan: the complete plan (see the format)" },
     question: QUESTION_FIELD,
-    reason: { type: "string", description: "One short sentence for the designer: what you are doing" },
+    reason: { type: "string", description: "One short sentence for the designer: what you are doing (decline: why)" },
   },
   required: ["action"],
 };
@@ -198,7 +220,7 @@ export const ROUTINE_FORMAT_EXAMPLES: Record<"figma" | "photoshop" | "indesign",
     qcProfile: "print",
     keyObjects: [],
     script:
-      'var file = new File(ctx.workDir + "/" + ctx.safeFileName(ctx.docName) + ".pdf");\ndoc.exportFile(ExportFormat.PDF_TYPE, file, false, app.pdfExportPresets.itemByName(params.preset));\nctx.output({ key: "pdf", label: file.name, filePath: file.fsName });',
+      'var file = ctx.exportPdf(doc, ctx.workDir + "/" + ctx.safeFileName(ctx.docName) + ".pdf", { preset: params.preset });\nctx.output({ key: "pdf", label: file.displayName, filePath: file.fsName });',
   },
 };
 
@@ -287,8 +309,7 @@ Always start with "${planKey}": think the routine through before writing anythin
 /** Real InDesign routines as examples of how InDesign scripts are written (their params as inputs and settings). */
 function indesignExamples(examples: RoutineTemplate[]) {
   if (!examples.length) return "";
-  return `\nWorking InDesign scripts for reference (written for routines that saved into a folder input; yours write into
-ctx.workDir and report files with ctx.output):\n${examples
+  return `\nWorking InDesign scripts for reference:\n${examples
     .map((t) => {
       const c = paramsToContract(t.params, "indesign");
       return `### ${t.name}\ninputs: ${JSON.stringify(c.inputs)}\nsettings: ${JSON.stringify(c.settings)}\nscript:\n${t.script}`;
@@ -309,9 +330,12 @@ const CREATE_ACTIONS = (maxTurns: number, planKey?: string, tools = false) => `"
   absolute paths, no values copied from the sample data) and runs it once on a sample item (one that has its
   partners). Problems come back to you; fix them and propose again.
 - "ask_question": one "question" with 2–4 short options, the best first, only when a wrong guess would make the
-  routine useless, and only as your first answer. Designers aren't technical and often leave out something that
+  routine useless, and only as your first answer (a second question right after, only when the designer's answer
+  left it open). The designer can also answer in their own words. Designers aren't technical and often leave out something that
   matters (which file belongs to which row, what to do when something is missing, the size or format they need):
   ask about that in plain words, without jargon. Don't ask what "Inputs Doppl checked" already settles.
+- "decline": only as your first answer, when the request isn't design work to automate in the app (a greeting, a
+  question, small talk, nothing to make or change). In "reason", say so in one plain sentence. Never invent a task.
 Examples of answers:
 {${planKey ? `"${planKey}":"See which layers the card has.",` : ""}"action":"inspect","app":"<app>","depth":3,"document":"<document id>","nodes":["Card"],"reason":"Look at the card template"}
 {${planKey ? `"${planKey}":"Duplicates the card per row, fills title and photo with the helpers, exports PNG; rows without a photo fail with a clear error.",` : ""}"action":"propose_routine","reason":"Propose the routine","routine":{…}}
@@ -329,7 +353,8 @@ they describe the routine after the change.
 - "propose_revision": the complete revised "routine" plus "changeSummary" (one plain sentence: what changed). Doppl
   validates it and runs it on the test items; problems come back to you.
 - "decline": the change needs another app (a routine works in ONE app). Don't change the routine; in "reason", say
-  which app and suggest adding a routine for it in a flow.
+  which app and suggest adding a routine for it in a flow. Also decline when the request says an item's own file or
+  data is wrong; in "reason", say what's wrong with it.
 - "ask_question": one "question" with 2–4 short options, only as your first answer and only when a wrong guess would
   make the change useless.
 Examples of answers:
@@ -398,6 +423,19 @@ Writing the routine:
 - name: max 6 words; description: one sentence; steps: 2–5 plain-language sentences (no code terms).
 - Never put absolute paths in a routine, and never copy values from the sample rows or file names into it: use
   inputs, settings and {{item.<column>}} / ctx.item.
+- A row's cell can be empty (null), e.g. no allergens: the row still runs, so leave that text empty or skip that part
+  instead of failing.
+- People's names: when the sample rows have double first names ("Ayşe Nur"), hyphenated surnames, or names typed in
+  lowercase or capitals, don't pick a rule silently. Ask (ask_question) or make it a setting with the usual choice as
+  default (e.g. initials from "first and last name" or "every part"; "fix capitals" yes/no), and say the rule in
+  the steps. In scripts, capitals of Turkish names need i→İ and ı→I: map those letters yourself, since toUpperCase
+  turns i into I.
+- The designer's own files and folders are read-only: a routine never saves over, changes or deletes them. When the
+  request asks to overwrite or delete files, the routine saves new files instead (they go where the designer picks),
+  and its description says so, e.g. "Saves the cutouts as new PNGs; your original photos stay as they are." or
+  "Copies the images that are at least 500 px; Doppl doesn't delete files." When there's more than one safe way
+  (copy the ones to keep, or list the ones to delete), ask first (ask_question): "Doppl doesn't delete files. Should
+  it copy the images that are 500 px or bigger to a new folder, or list the small ones?"
 - modifiesDocument: true if it changes the document; qcProfile "print" or "web"; keyObjects: up to 2 things that
   must stay fully visible in outputs ([] otherwise); objectChecks: optional { object, region } pairs.
 - Keep the answer short: no comments in scripts, no repeated explanations. The whole answer must fit in one reply.
@@ -437,8 +475,9 @@ The plan:
 
 ${answerFormat(["action", "app", "depth", "document", "nodes", "plan", "question", "reason"])}
 "action" is "inspect" (a deeper look at a document: app, document, nodes, depth; at most 3), "propose_plan" (with the
-complete "plan"; Doppl checks that it connects and sends problems back) or "ask_question" (one "question" with 2–4
-options, only as your first answer). Example answers:
+complete "plan"; Doppl checks that it connects and sends problems back), "ask_question" (one "question" with 2–4
+options, only as your first answer) or "decline" (only as your first answer, when the request isn't design work to
+automate: a greeting, a question, small talk; say so in "reason", never invent a task). Example answers:
 {"action":"inspect","app":"figma","depth":3,"document":"<document id>","nodes":["Label"],"reason":"Look at the label template"}
 {"action":"propose_plan","plan":{…},"reason":"Plan the flow"}
 You have at most ${maxTurns} answers. Propose the plan early.

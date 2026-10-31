@@ -231,6 +231,34 @@ describe("checks and control", () => {
     expect(res.findings.find((f) => f.type === "outside-boundary")!.message).toContain('"Photo" sticks out of "Card" at the right');
   });
 
+  it("doesn't flag a placed barcode's digits as text running past it", async () => {
+    const { figma, card } = setup();
+    await run(figma, [{ action: "placeSvg", node: "Card", svg: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"></svg>', name: "EAN" }]);
+    const ean = card.findOne((n) => n.name === "EAN")!;
+    // An EAN-13's first digit sits left of the bars, outside the barcode's own frame.
+    figma.node("TEXT", "2", ean, { x: -6, y: 60, width: 5, height: 10, characters: "2" });
+    const res = await run(figma, [{ action: "measure", node: "Card" }]);
+    expect(res.findings.filter((f) => f.type === "text-overflow")).toEqual([]);
+  });
+
+  it("flags a word that breaks in the middle of a fixed-width title, and fit shrinks the text until it doesn't", async () => {
+    const { figma, card } = setup();
+    const title = card.findOne((n) => n.name === "Title")!;
+    Object.assign(title, { width: 100, fontSize: 12, textAutoResize: "HEIGHT" });
+    // "Passionfruit" is 120 px at 12 pt in a 100 px box: Figma would break it ("Passionfr" / "uit").
+    const flagged = await run(figma, [{ action: "setText", node: "Title", text: "Passionfruit Mango" }, { action: "measure", node: "Card" }]);
+    expect(flagged.findings.map((f) => f.message)).toContain('"Title" breaks “Passionfruit” in the middle: the word is wider than its text box');
+    const fitted = await run(figma, [{ action: "setText", node: "Title", text: "Passionfruit Mango", fit: true }, { action: "measure", node: "Card" }]);
+    expect(title.fontSize).toBe(10);
+    expect(fitted.findings.filter((f) => f.type === "text-overflow")).toEqual([]);
+    expect(fitted.log).toContain('setText: "Title" set at 10 pt to fit (from 12 pt)');
+    // Past the floor (70%): reported, not shrunk further.
+    title.fontSize = 12;
+    const tooLong = await run(figma, [{ action: "setText", node: "Title", text: "Supercalifragilistic", fit: true }]);
+    expect(title.fontSize).toBe(8.5);
+    expect(tooLong.findings.map((f) => f.message)).toContain('"Title" still doesn\'t fit at 8.5 pt');
+  });
+
   it("stops when cancelled", async () => {
     const { figma } = setup();
     await expect(run(figma, [{ action: "renameNode", node: "Card", name: "x" }], { isCancelled: () => true })).rejects.toBeInstanceOf(CancelledInFigma);

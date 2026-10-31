@@ -9,12 +9,25 @@ import { Notice } from "../ui/Notice";
 import { Spinner } from "../ui/Progress";
 
 /**
- * Doppl's own fix after a run (items failed because of the routine): adapting, adapted (with the new results and
- * Restore), not adapted, or a change for the designer to look at. On the rerun: what it is, and Restore.
+ * Doppl's fix after a run (items failed because of the routine), which waits for the designer: offered (fix it or
+ * not), fixing, ready (keep or discard what changed), adapted (with the new results and Restore), not adapted, or a
+ * change for the designer to look at. On the rerun: what it is, and Restore.
  */
 export function FixNotice({ run }: { run: Run }) {
   const [restored, setRestored] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const answer = async (a: "fix" | "keep" | "dismiss") => {
+    setError(null);
+    setBusy(true);
+    try {
+      await doppel().answerRunFix(run.id, a);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   // Restore: the routine's previous version again; in a flow, the flow's node uses it again.
   const restore = async (fix: Pick<RunFix, "routineId" | "flowId" | "nodeId">, version: number) => {
     setError(null);
@@ -52,7 +65,48 @@ export function FixNotice({ run }: { run: Run }) {
     );
   }
   const fix = run.fix;
-  if (!fix) return null;
+  if (!fix || fix.status === "declined") return null;
+  if (fix.status === "offered") {
+    return (
+      <Notice
+        title={copy.results.fix.offerTitle}
+        actions={
+          <>
+            <Button variant="primary" disabled={busy} onClick={() => answer("fix")}>
+              {copy.results.fix.offer}
+            </Button>
+            <Button disabled={busy} onClick={() => answer("dismiss")}>
+              {copy.results.fix.noThanks}
+            </Button>
+          </>
+        }
+      >
+        {copy.results.fix.offerBody(fix.maxCalls ?? 5)}
+        {error && <p className="ui-small">{error}</p>}
+      </Notice>
+    );
+  }
+  if (fix.status === "ready") {
+    return (
+      <Notice
+        title={copy.results.fix.readyTitle}
+        actions={
+          <>
+            <Button variant="primary" disabled={busy} onClick={() => answer("keep")}>
+              {copy.results.fix.keep}
+            </Button>
+            <Button disabled={busy} onClick={() => answer("dismiss")}>
+              {copy.results.fix.discard}
+            </Button>
+          </>
+        }
+      >
+        {fix.summary && <p>{fix.summary}</p>}
+        <p className="ui-small">{copy.results.fix.readyBody(fix.aiCalls ?? 0)}</p>
+        {error && <p className="ui-small">{error}</p>}
+      </Notice>
+    );
+  }
   if (fix.status === "fixing") {
     return (
       <Notice title={copy.results.fix.fixingTitle}>
@@ -87,11 +141,16 @@ export function FixNotice({ run }: { run: Run }) {
       <Notice
         title={copy.results.fix.reviewTitle}
         actions={
-          fix.creationId && (
-            <ButtonLink href={`/create?task=${fix.creationId}`} variant="primary">
-              {copy.results.fix.review}
-            </ButtonLink>
-          )
+          <>
+            {fix.creationId && (
+              <ButtonLink href={`/create?task=${fix.creationId}`} variant="primary">
+                {copy.results.fix.review}
+              </ButtonLink>
+            )}
+            <Button disabled={busy} onClick={() => answer("dismiss")}>
+              {copy.results.fix.discard}
+            </Button>
+          </>
         }
       >
         {[fix.summary, fix.reason].filter(Boolean).join(" ")}

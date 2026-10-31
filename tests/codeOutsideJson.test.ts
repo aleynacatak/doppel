@@ -15,7 +15,7 @@ import { QcService } from "../electron/core/services/qcService";
 import { type CreationOptions, RoutineService } from "../electron/core/services/routineService";
 import { StarterService } from "../electron/core/services/starterService";
 import { JsonStorage } from "../electron/core/services/storage";
-import type { Creation } from "../electron/core/types";
+import type { Creation, QcCheck, RunOutput } from "../electron/core/types";
 
 // Creation with the code outside the JSON: the planner proposes the routine with "@code:1" and a plan written first,
 // the coder writes the script as plain text, and Doppl validates, tries and saves it. Steps count answers; AI calls
@@ -30,6 +30,7 @@ let options: Partial<CreationOptions>;
 let callLimit: number | undefined;
 let nextTurn: () => Record<string, unknown>;
 let reviewed: { customSteps?: string[] }[];
+let review: (outputs: RunOutput[]) => Record<string, QcCheck[]>;
 
 function fakePhotoshop(): DesignAppAdapter {
   return {
@@ -72,6 +73,7 @@ beforeEach(async () => {
   options = {};
   callLimit = undefined;
   reviewed = [];
+  review = () => ({});
   nextTurn = () => ({ plan: "Opens each photo, removes the white background with the helper, exports a PNG.", action: "propose_routine", reason: "Cut out", routine: proposal });
   script = () => 'var img = openDocument(ctx.item.path);\nremoveWhiteBackground(img);\nctx.output("cutouts", exportImage(ctx.join(ctx.workDir, ctx.item.stem + ".png"), "png"));';
   const registry = new AdapterRegistry([fakePhotoshop()]);
@@ -96,9 +98,9 @@ beforeEach(async () => {
       return script();
     },
     fieldKey: (_role, field) => (field === "plan" ? "a0_plan" : field),
-    reviewTrial: async (_task, draft) => {
+    reviewTrial: async (_task, draft, outputs) => {
       reviewed.push({ customSteps: draft.customSteps });
-      return {};
+      return review(outputs);
     },
     reviewOutput: async () => ({ level: "visual", label: "AI visual review", passed: true }),
     checkObjectInRegion: async () => ({ level: "object", label: "x", passed: true }),
@@ -250,3 +252,44 @@ describe("code outside the JSON", () => {
   });
 });
 
+describe("the review of the trial", () => {
+  const missing = (outputs: RunOutput[]) =>
+    Object.fromEntries(outputs.map((o) => [o.id, [{ level: "visual" as const, label: "AI visual review", passed: false, reason: "Crop marks are missing" }]]));
+  const check = (c: Creation) => c.stages.find((s) => s.key === "check")!.detail;
+
+  it("sends results that miss part of the request back once, and ends ready when the fix works", async () => {
+    let n = 0;
+    review = (outputs) => (++n === 1 ? missing(outputs) : {});
+    const c = await create();
+    const ready = await until(c.id, (x) => x.status === "ready");
+    expect(ready.status).toBe("ready");
+    expect(reviewed).toHaveLength(2);
+    expect(calls.map((x) => x.kind)).toEqual(["turn", "code", "turn", "code"]);
+    expect(text(calls[2].messages.at(-1)!)).toContain("Crop marks are missing");
+    expect(check(ready)).toBe("All checks passed");
+  });
+
+  it("says what's still missing after one more try, not only how many were flagged", async () => {
+    review = missing;
+    const c = await create();
+    const ready = await until(c.id, (x) => x.status === "ready");
+    expect(reviewed).toHaveLength(2);
+    expect(check(ready)).toBe("1 flagged: Crop marks are missing");
+  });
+
+  it("keeps the routine that ran when the fix doesn't work out", async () => {
+    let n = 0;
+    review = (outputs) => (++n === 1 ? missing(outputs) : {});
+    let written = 0;
+    const good = script();
+    script = () => (++written === 1 ? good : "try { executeAction(1); } catch (e) {}");
+    callLimit = 10;
+    const c = await create();
+    const ready = await until(c.id, (x) => x.status === "ready");
+    expect(ready.status).toBe("ready");
+    expect(ready.draft!.kind === "script" && ready.draft!.script).toBe(good);
+    expect(ready.outputs).toHaveLength(1);
+    expect(check(ready)).toBe("1 flagged: Crop marks are missing");
+    expect(ready.activity?.at(-1)).toContain("kept the routine that ran");
+  });
+});

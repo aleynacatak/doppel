@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Papa from "papaparse";
 import readXlsxFile from "read-excel-file/node";
-import { nameKey } from "../../shared/names";
+import { nameKey, sameWords } from "../../shared/names";
 import { extensionOf, normalizeExtensions as foldExtensions } from "../../shared/ports";
 
 // Reads the spreadsheets and data files a routine runs on (CSV/TSV, JSON, Excel) into plain rows,
@@ -51,8 +51,10 @@ export class DataFileError extends Error {
 }
 
 export interface ReadDataOptions {
-  /** Columns that must exist, and must have a value in every row. */
+  /** Columns that must exist (a cell may still be empty: an empty allergens cell is normal data). */
   requiredColumns?: string[];
+  /** Columns that must have a value in every row; a row with an empty one goes to `errors`. */
+  filledColumns?: string[];
   /** Default 10000. */
   maxRows?: number;
   /** Excel only: sheet name, or sheet number starting at 1. Default: the first sheet. */
@@ -102,6 +104,7 @@ export async function readDataFile(filePath: string, options: ReadDataOptions = 
     fileName,
     format,
     required: options.requiredColumns ?? [],
+    filled: options.filledColumns ?? [],
     known: options.knownColumns ?? [],
     aliases: options.aliases ?? {},
     maxRows: options.maxRows && options.maxRows > 0 ? Math.max(1, Math.floor(options.maxRows)) : DEFAULT_MAX_ROWS,
@@ -118,6 +121,7 @@ interface Context {
   fileName: string;
   format: DataTable["format"];
   required: string[];
+  filled: string[];
   known: string[];
   aliases: Record<string, string>;
   maxRows: number;
@@ -340,21 +344,23 @@ function fromGrid(ctx: Context, grid: DataValue[][], errors: DataRowError[], csv
 
 function finish(ctx: Context, fileColumns: string[], entries: Entry[], errors: DataRowError[]): DataTable {
   // A column the routine expects under another case, spacing or spelling of letters ("FLAVOR ", "ürün adı" for
-  // "Ürün Adı") is read under the expected name; two columns that both look like it are a problem to fix.
+  // "Ürün Adı"), or with its words in another form ("Allergen" for "allergens"), is read under the expected name;
+  // two columns that both look like it are a problem to fix.
   const columns = [...fileColumns];
   const renamed: Record<string, string> = {};
-  const expected = [...ctx.required, ...ctx.known.filter((k) => !ctx.required.includes(k))];
+  const expected = [...new Set([...ctx.required, ...ctx.filled, ...ctx.known])];
   for (const name of expected) {
     if (columns.includes(name)) continue;
     const picked = ctx.aliases[name];
-    const like = columns.filter((c) => !expected.includes(c) && (picked !== undefined ? nameKey(c) === nameKey(picked) : nameKey(c) === nameKey(name)));
+    let like = columns.filter((c) => !expected.includes(c) && (picked !== undefined ? nameKey(c) === nameKey(picked) : nameKey(c) === nameKey(name)));
+    if (!like.length && picked === undefined) like = columns.filter((c) => !expected.includes(c) && sameWords(c, name));
     if (like.length > 1) throw new DataFileError(`${ctx.fileName} has more than one column like "${name}": ${like.map((c) => `"${c}"`).join(", ")}. Keep one of them.`);
     if (like.length === 1) {
       columns[columns.indexOf(like[0])] = name;
       renamed[name] = like[0];
     }
   }
-  const missing = ctx.required.filter((name) => !columns.includes(name));
+  const missing = [...new Set([...ctx.required, ...ctx.filled])].filter((name) => !columns.includes(name));
   if (missing.length) {
     const list = missing.map((name) => `"${name}"`);
     const names = list.length === 1 ? `the column ${list[0]}` : `the columns ${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
@@ -363,7 +369,7 @@ function finish(ctx: Context, fileColumns: string[], entries: Entry[], errors: D
   }
 
   const rows = entries.map(({ row, values }) => {
-    for (const name of ctx.required) {
+    for (const name of ctx.filled) {
       if (isEmpty(values[renamed[name] ?? name])) errors.push({ row, column: name, message: `"${name}" is empty.` });
     }
     return Object.fromEntries(columns.map((name, i) => [name, values[fileColumns[i]] ?? null]));

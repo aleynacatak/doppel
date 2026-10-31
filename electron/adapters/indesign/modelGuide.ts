@@ -22,12 +22,23 @@ In scope:
   ctx.marginBounds(page) -> [top, left, bottom, right] live area
   ctx.savePrefs(prefsObject, [propertyNames]) -> saved; ctx.restorePrefs(prefsObject, saved)  (always restore app-wide prefs in finally)
   ctx.preflight({minPpi}) -> findings     overset text, missing links/fonts, low-res images
+  ctx.open(path, {showWindow?}) -> Document   opens a file the routine works on (a template…), hidden by default
+  ctx.close(d)                         checks d (overset text, fonts, links, images), then closes it without saving;
+                                       every document the routine opens or makes closes this way (never doc)
+  ctx.exportPdf(d, path, {preset?, cropMarks?, bleedMarks?, registrationMarks?, useDocumentBleed?, pages?}) -> File
+                                       the only way to export a PDF: the preset, then your marks and bleed on top
+  ctx.fitText(frame, {minSize?}) -> {fits, size, from}   shrinks the frame's whole story until it fits, not below
+                                       minSize (default 70% of its size); use it whenever text from data may not fit
   ctx.log(message)
   ctx.output({ key, label, filePath?, page?, pageIndex?, profile?: "print"|"web", details?: [{label, value}] })
       Call once per thing produced: each exported file (filePath = file.fsName) or each changed page (page/pageIndex).
       Doppl previews and quality-checks every output.
 - Return a small object summarizing what happened (e.g. { exported: 4 }).
 
-Never: absolute paths or user names in the script (every location is a param); deleting files or folders (.remove());
+Never: saving over or writing into the designer's files and folders (doc.save(), SaveOptions.YES, exporting into a
+folder param): they are read-only, and every file the routine makes goes into ctx.workDir (Doppl copies it to the
+folder the designer picks); absolute paths or user names in the script (every location is a param); deleting files or
+folders (.remove());
 running other programs or scripts (.execute(), app.doScript, system calls, $.evalFile, eval, #include); network access
-(Socket); quitting InDesign; showing dialogs or alerts.`;
+(Socket); quitting InDesign; showing dialogs or alerts; app.open and d.close (use ctx.open and ctx.close);
+doc.exportFile for PDFs (use ctx.exportPdf); shrinking frame.texts in a loop (use ctx.fitText).`;

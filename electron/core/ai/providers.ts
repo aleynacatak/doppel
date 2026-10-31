@@ -1,4 +1,5 @@
 import { AiError, type ChatMessage, type QuotaUpdate, type SegmentBox, type TokenUsage, actionFor } from "../services/aiTransport";
+import { errorMessage } from "../util";
 
 // Provider adapters: one interface for every way a model is reached. They normalize request and response formats,
 // streaming, usage, timeouts, retries (rate limits and server errors, with backoff) and errors (Doppl's AiError
@@ -49,6 +50,34 @@ export interface ProviderSettings {
 const DEFAULT_TIMEOUT_MS = 240_000;
 
 const offline = () => new AiError("offline", "Doppl can't reach its AI service. Check your internet connection and try again.", "retry");
+
+/** Times Doppl asks again when the connection breaks while an answer streams in (each try counts as a call). */
+const DROP_RETRIES = 1;
+
+/** Reads a response body; a connection that breaks meanwhile (net::ERR_QUIC_GOAWAY…) is the connection's problem. */
+async function reading<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof AiError) throw err;
+    const name = (err as Error | undefined)?.name;
+    if (name === "TimeoutError") throw new AiError("timeout", "The AI service took too long to answer. Try again.", "retry");
+    if (name === "AbortError") throw new AiError("cancelled", "Cancelled.");
+    throw new AiError("connection_dropped", "Doppl lost its connection to the AI service while the answer came in. Check your internet connection and try again.", "retry", errorMessage(err));
+  }
+}
+
+/** One answer: when the connection drops mid-answer, Doppl quietly asks once more. */
+async function answer<T>(options: CallOptions, delayMs: number, attempt: () => Promise<T>): Promise<T> {
+  for (let n = 0; ; n++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (!(err instanceof AiError && err.code === "connection_dropped") || n >= DROP_RETRIES) throw err;
+      await sleep(delayMs, options.signal);
+    }
+  }
+}
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -101,7 +130,7 @@ async function readSse(res: Response, onEvent: (event: Record<string, unknown>) 
 /** A chat completion, streamed or not, as one result. */
 export async function collectChat(res: Response): Promise<ProviderChatResult> {
   if ((res.headers.get("content-type") ?? "").includes("application/json")) {
-    const data = (await res.json()) as Record<string, any>;
+    const data = (await reading(() => res.json())) as Record<string, any>;
     const message = data.choices?.[0]?.message ?? {};
     return {
       content: message.content ?? "",
@@ -114,7 +143,7 @@ export async function collectChat(res: Response): Promise<ProviderChatResult> {
   let finishReason: string | null = null;
   let usage: TokenUsage | null = null;
   const calls: { name: string; arguments: string }[] = [];
-  await readSse(res, (event) => {
+  await reading(() => readSse(res, (event) => {
     const choice = (event.choices as any[] | undefined)?.[0];
     if (choice?.delta?.content) content += choice.delta.content;
     for (const tc of choice?.delta?.tool_calls ?? []) {
@@ -125,7 +154,7 @@ export async function collectChat(res: Response): Promise<ProviderChatResult> {
     }
     if (choice?.finish_reason) finishReason = choice.finish_reason;
     if (event.usage) usage = toUsage(event.usage);
-  });
+  }));
   return { content, finishReason, usage, ...(calls.length ? { toolCalls: calls } : {}) };
 }
 
@@ -143,13 +172,13 @@ export function parseBoxes(text: string): SegmentBox[] {
 async function collectSegment(res: Response): Promise<SegmentBox[]> {
   let text = "";
   if ((res.headers.get("content-type") ?? "").includes("application/json")) {
-    const data = (await res.json()) as Record<string, any>;
+    const data = (await reading(() => res.json())) as Record<string, any>;
     for (const item of data.output ?? []) for (const part of item.content ?? []) if (part.type === "output_text") text += part.text;
     return parseBoxes(text);
   }
-  await readSse(res, (event) => {
+  await reading(() => readSse(res, (event) => {
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") text += event.delta;
-  });
+  }));
   return parseBoxes(text);
 }
 
@@ -202,7 +231,7 @@ async function endpointError(res: Response, provider: { id: string; displayName:
     case 429:
       return new AiError("rate_limited", `${name} is rate limiting requests. Wait a minute and try again.`, "retry");
     default:
-      return new AiError("upstream_error", `${name}'s AI service returned an error (status ${res.status})${detail}.`, "retry");
+      return new AiError("upstream_error", `${name}'s AI service had a problem. Try again in a minute.`, "retry", `Status ${res.status}${detail}`);
   }
 }
 
@@ -210,7 +239,7 @@ async function endpointError(res: Response, provider: { id: string; displayName:
 async function workerError(res: Response): Promise<AiError> {
   const body = await errorBody(res);
   const code = body.code ?? "upstream_error";
-  return new AiError(code, body.message ?? `The demo service returned an error (status ${res.status}).`, actionFor(code));
+  return new AiError(code, body.message ?? "Doppl's AI service had a problem. Try again in a minute.", actionFor(code), `Status ${res.status}`);
 }
 
 const retryable = (status: number) => status === 429 || status >= 500;
@@ -281,18 +310,25 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   async chat(req: ProviderChatRequest, options: CallOptions): Promise<ProviderChatResult> {
     // `store: false` keeps requests out of Meta's stored logs; other endpoints may not know the field.
-    const res = await post(this.s.fetch, `${this.entry.baseUrl}/chat/completions`, await this.headers(), chatBody(req, this.entry.id === "meta" ? { store: false } : {}), this.s, options, retryable);
-    if (!res.ok) throw await endpointError(res, this.entry);
-    return collectChat(res);
+    return answer(options, this.s.backoffMs, async () => {
+      const res = await post(this.s.fetch, `${this.entry.baseUrl}/chat/completions`, await this.headers(), chatBody(req, this.entry.id === "meta" ? { store: false } : {}), this.s, options, retryable);
+      if (!res.ok) throw await endpointError(res, this.entry);
+      return collectChat(res);
+    });
   }
 
   async segment(req: { model: string; image: string; prompts: string[] }, options: CallOptions): Promise<SegmentBox[][]> {
     if (!this.entry.segmentPath) throw new AiError("unsupported", `${this.entry.displayName} can't segment images.`, "settings");
     const out: SegmentBox[][] = [];
     for (const prompt of req.prompts) {
-      const res = await post(this.s.fetch, `${this.entry.baseUrl}${this.entry.segmentPath}`, await this.headers(), samBody(req.model, req.image, prompt), this.s, options, retryable);
-      if (!res.ok) throw await endpointError(res, this.entry);
-      out.push(await collectSegment(res));
+      const segmentPath = this.entry.segmentPath;
+      out.push(
+        await answer(options, this.s.backoffMs, async () => {
+          const res = await post(this.s.fetch, `${this.entry.baseUrl}${segmentPath}`, await this.headers(), samBody(req.model, req.image, prompt), this.s, options, retryable);
+          if (!res.ok) throw await endpointError(res, this.entry);
+          return collectSegment(res);
+        }),
+      );
     }
     return out;
   }
@@ -332,20 +368,27 @@ export class DopplDemoProvider implements AIProvider {
   }
 
   async chat(req: ProviderChatRequest, options: CallOptions): Promise<ProviderChatResult> {
-    // Every attempt counts against the creation's calls at the Worker: only rate limits are retried.
-    const res = await post(this.s.fetch, `${this.baseUrl}/v1/chat`, await this.headers(options), chatBody(req, {}), this.s, options, (status) => status === 429);
-    this.readQuota(res, options);
-    if (!res.ok) throw await workerError(res);
-    return collectChat(res);
+    // Every attempt counts against the creation's calls at the Worker: only rate limits, and an answer cut off by a
+    // dropped connection (once), are asked again.
+    return answer(options, this.s.backoffMs, async () => {
+      const res = await post(this.s.fetch, `${this.baseUrl}/v1/chat`, await this.headers(options), chatBody(req, {}), this.s, options, (status) => status === 429);
+      this.readQuota(res, options);
+      if (!res.ok) throw await workerError(res);
+      return collectChat(res);
+    });
   }
 
   async segment(req: { model: string; image: string; prompts: string[] }, options: CallOptions): Promise<SegmentBox[][]> {
     const out: SegmentBox[][] = [];
     for (const prompt of req.prompts) {
-      const res = await post(this.s.fetch, `${this.baseUrl}/v1/segment`, await this.headers(options), samBody(req.model, req.image, prompt), this.s, options, (status) => status === 429);
-      this.readQuota(res, options);
-      if (!res.ok) throw await workerError(res);
-      out.push(await collectSegment(res));
+      out.push(
+        await answer(options, this.s.backoffMs, async () => {
+          const res = await post(this.s.fetch, `${this.baseUrl}/v1/segment`, await this.headers(options), samBody(req.model, req.image, prompt), this.s, options, (status) => status === 429);
+          this.readQuota(res, options);
+          if (!res.ok) throw await workerError(res);
+          return collectSegment(res);
+        }),
+      );
     }
     return out;
   }

@@ -67,12 +67,58 @@ DopplLib.fontName = function (f) {
   try { return f.name; } catch (e) { return String(f); }
 };
 
+/**
+ * What a routine opened, for the quality checks: documents open before it ran are the designer's (and the stage's),
+ * the rest are the routine's. ctx.close checks a document before it closes; DopplLib.finishChecks the ones left open.
+ */
+DopplLib.makeTrack = function () {
+  var before = {};
+  var docs = DopplLib.all(app.documents);
+  for (var i = 0; i < docs.length; i++) {
+    try { before[DopplLib.docId(docs[i])] = true; } catch (e) {}
+  }
+  return { before: before, opened: [], findings: [], checked: {}, checkedCount: 0 };
+};
+
+/** Rule checks of one of the routine's documents, added to the item's findings. */
+DopplLib.checkDocument = function (track, d) {
+  var id = DopplLib.docId(d);
+  if (track.checked[id]) { return; }
+  var found = DopplLib.preflight(d, {});
+  for (var i = 0; i < found.length; i++) { track.findings.push(found[i]); }
+  track.checked[id] = true;
+  track.checkedCount++;
+};
+
+/**
+ * After the routine: checks the documents it opened or made and left open, closes the hidden ones ctx.open made,
+ * and counts the ones it closed itself before they were checked.
+ */
+DopplLib.finishChecks = function (track) {
+  var docs = DopplLib.all(app.documents);
+  for (var i = 0; i < docs.length; i++) {
+    try {
+      if (!track.before[DopplLib.docId(docs[i])]) { DopplLib.checkDocument(track, docs[i]); }
+    } catch (e) {}
+  }
+  var unchecked = 0;
+  for (var j = 0; j < track.opened.length; j++) {
+    var o = track.opened[j];
+    var open = false;
+    try { open = o.doc.isValid; } catch (e2) {}
+    if (open && o.hidden) { try { o.doc.close(SaveOptions.NO); } catch (e3) {} }
+    if (!track.checked[o.id]) { unchecked++; }
+  }
+  return unchecked;
+};
+
 /** The ctx object routine scripts receive. */
 DopplLib.makeContext = function (doc, input) {
   var outputs = [];
   var log = [];
   var stageOutputs = {};
   var docName = input.originalName || (doc ? doc.name : "");
+  var track = DopplLib.makeTrack();
   return {
     item: input.item === undefined ? null : input.item,
     itemIndex: input.itemIndex,
@@ -98,8 +144,13 @@ DopplLib.makeContext = function (doc, input) {
     savePrefs: DopplLib.savePrefs,
     restorePrefs: DopplLib.restorePrefs,
     preflight: function (opts) { return DopplLib.preflight(doc, opts); },
+    open: function (path, opts) { return DopplLib.open(track, path, opts); },
+    close: function (d) { return DopplLib.close(track, d); },
+    exportPdf: function (d, path, opts) { return DopplLib.exportPdf(d, path, opts); },
+    fitText: function (frame, opts) { return DopplLib.fitText(frame, opts); },
     _outputs: outputs,
-    _log: log
+    _log: log,
+    _track: track
   };
 };
 `;

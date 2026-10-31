@@ -106,9 +106,12 @@ function LibraryScreen() {
               <Section title={copy.library.myRoutines}>
                 {mine.length ? <RoutineList routines={mine} view={view} /> : <p className="ui-muted">{data?.mine.length ? copy.library.noMatch : copy.library.noMyRoutines}</p>}
               </Section>
-              <Section title={copy.library.starterRoutines}>
-                {starters.length ? <RoutineList routines={starters} view={view} /> : <p className="ui-muted">{data?.starters.length ? copy.library.noMatch : copy.library.noStarters}</p>}
-              </Section>
+              {/* No section when this version has no starter routines. */}
+              {!!data?.starters.length && (
+                <Section title={copy.library.starterRoutines}>
+                  {starters.length ? <RoutineList routines={starters} view={view} /> : <p className="ui-muted">{copy.library.noMatch}</p>}
+                </Section>
+              )}
             </div>
           ) : data?.flows.length === 0 ? (
             <EmptyState

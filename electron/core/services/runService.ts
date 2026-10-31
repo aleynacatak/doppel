@@ -12,6 +12,7 @@ import type {
   DevFlowOptions,
   Flow,
   PreflightReport,
+  PreflightRequest,
   RunFix,
   InputValue,
   MatchRule,
@@ -29,7 +30,7 @@ import { FlowInvalidError, FlowRunner } from "../flows/flowRunner";
 import { simulatedApps } from "../flows/mockAdapters";
 import type { AdapterSource } from "../flows/nodeRunner";
 import { checkReadiness } from "../flows/readiness";
-import { type ColumnMatcher, preflight } from "../inputs/preflight";
+import { type ColumnMatcher, type FileMatcher, preflight, suggestPartners } from "../inputs/preflight";
 import { type FlowRoutines, routineOf, validateFlow } from "../flows/validateFlow";
 import type { AppStatusService } from "./appStatusService";
 import { ROUTINE_NODE, type FlowService, routineFlow } from "./flowService";
@@ -43,7 +44,7 @@ export class ExecutionError extends Error {
   constructor(
     message: string,
     readonly detail?: string,
-    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "validation" | "needs-flow" | "generic" = "generic",
+    readonly kind: "app-not-connected" | "plugin-not-connected" | "no-document" | "validation" | "needs-flow" | "not-a-task" | "generic" = "generic",
     /** The routine itself failed (the error can be sent back to the model for a fix). */
     readonly scriptFailure = false,
   ) {
@@ -71,8 +72,12 @@ export function toExecutionError(err: unknown, appName: string): Error {
         return new ExecutionError(`Doppl couldn't talk to ${appName}.`, err.detail);
     }
   }
+  // A dropped connection is the connection's, not the app's (and not the routine's).
+  if (NETWORK.test(errorMessage(err))) return new ExecutionError("The connection dropped while Doppl was working. Check your internet connection and try again.", errorMessage(err));
   return new ExecutionError(`This routine couldn't finish in ${appName}.`, errorMessage(err), "generic", true);
 }
+
+const NETWORK = /net::ERR_|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network (connection was lost|error)/i;
 
 /** Flow node id → the routine it runs. */
 const routinesOfNodes = (flow: Flow): Record<string, string> =>
@@ -98,7 +103,7 @@ export function summarizeInputs(flow: Flow, inputs: Record<string, InputValue>):
 
 export function summarizeRun(run: Run, flow: Flow): RunSummary {
   const done = run.outputs.filter((o) => o.status === "done");
-  const checked = done.some((o) => o.qc);
+  const checked = done.some((o) => o.qc && o.qc.status !== "not-checked");
   const flaggedCount = done.filter((o) => o.qc?.status === "flagged" && !o.markedOk).length;
   return {
     id: run.id,
@@ -142,6 +147,8 @@ export class RunService {
       onRunFinished?: (run: Run, routineOfNode: Record<string, string>) => void;
       /** AI that matches columns the rules can't find, before a run (see inputs/preflight). */
       matchColumns?: ColumnMatcher;
+      /** AI that suggests files for items without one, when the designer asks (see inputs/preflight). */
+      matchFiles?: FileMatcher;
       /** "Mark as OK" on an output of these routines. */
       onFeedback?: (routineIds: string[], kind: "ok") => void;
     },
@@ -166,9 +173,18 @@ export class RunService {
   }
 
   /** The check before a run: the picked inputs read as the run will read them (see inputs/preflight). */
-  async preflight(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">): Promise<PreflightReport> {
+  async preflight(target: RunTarget, request: PreflightRequest): Promise<PreflightReport> {
     const { flow, info } = await this.resolve(target, request.matches);
-    return preflight(flow, info, request.inputs, request.columns ?? {}, { matchColumns: this.deps.matchColumns });
+    return preflight(flow, info, request.inputs, request.columns ?? {}, { matchColumns: this.deps.matchColumns, aiColumns: request.aiColumns });
+  }
+
+  /** "Let Doppl match them": files the AI suggests for the items the check found without one (by issue id). */
+  async suggestPartners(target: RunTarget, request: Pick<RunRequest, "inputs" | "matches" | "columns">, ids?: string[]): Promise<Record<string, string>> {
+    if (!this.deps.matchFiles) throw new Error("Doppl can't match files with AI right now.");
+    const { flow, info } = await this.resolve(target, request.matches);
+    const report = await preflight(flow, info, request.inputs, request.columns ?? {});
+    const needs = ids ? report.needs.filter((i) => ids.includes(i.id)) : report.needs;
+    return suggestPartners(flow, info, needs, this.deps.matchFiles);
   }
 
   async setup(target: RunTarget): Promise<RunSetup> {
@@ -405,8 +421,19 @@ export class RunService {
     if (run.target.kind === "flow") {
       const stored = await storage.getFlow(run.target.id);
       if (!stored) return;
-      stored.runs = [summarizeRun(run, flow ?? stored), ...stored.runs.filter((r) => r.id !== run.id)];
+      const summary = summarizeRun(run, flow ?? stored);
+      stored.runs = [summary, ...stored.runs.filter((r) => r.id !== run.id)];
       await storage.saveFlow(stored);
+      // The routines it ran list the run too, so their "last run" isn't "never".
+      const ran = flow ?? stored;
+      for (const routineId of new Set(Object.values(routinesOfNodes(ran)))) {
+        const routine = await storage.getRoutine(routineId);
+        if (!routine) continue;
+        const node = ran.nodes.find((n) => n.kind === "routine" && n.routineId === routineId);
+        const version = node?.kind === "routine" ? node.routineVersion : routine.version;
+        routine.runs = [{ ...summary, routineVersion: version, inFlow: stored.name }, ...routine.runs.filter((r) => r.id !== run.id)];
+        await storage.saveRoutine(routine);
+      }
     } else {
       const routine = await storage.getRoutine(run.target.id);
       if (!routine) return;

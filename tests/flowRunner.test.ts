@@ -9,6 +9,7 @@ import { FlowInvalidError, FlowRunner, type FlowRunSpec } from "../electron/core
 import { simulatedApps } from "../electron/core/flows/mockAdapters";
 import type { FlowRoutines } from "../electron/core/flows/validateFlow";
 import type { Flow, Routine } from "../electron/core/types";
+import { fakeImage } from "./helpers/images";
 
 // Two fake apps: "figma" makes one PNG per data row (a row named BAD fails), "photoshop" turns each PNG into a JPG.
 // A third routine (Figma) iterates over the rows again and pairs each with its label by file name.
@@ -157,7 +158,7 @@ const info = (routines: Record<string, Routine>): FlowRoutines => ({ routines, s
 
 async function spec(extra: Partial<FlowRunSpec> = {}): Promise<FlowRunSpec> {
   const csv = path.join(dir, "products.csv");
-  await fs.writeFile(csv, "name,ean\nHoney,4006381333931\nBAD,5901234123457\nJam,9780306406157\nNoCode,\n");
+  await fs.writeFile(csv, "name,ean\nHoney,4006381333931\nBAD,5901234123457\nJam,9780306406157\n");
   return {
     runId: "run1",
     flow: flow(),
@@ -187,9 +188,7 @@ describe("flow runner", () => {
 
     expect(res.status).toBe("partial");
     expect(res.nodes.map((n) => n.nodeId)).toEqual(["in-products", "n-labels", "n-mockups", "out"]);
-    const [input, figma, ps, out] = res.nodes;
-    // A row with errors fails at the input; the rest go on.
-    expect(input.items.find((i) => i.key === "row-4")).toMatchObject({ status: "failed", error: 'Row 4: "ean" is empty.' });
+    const [, figma, ps, out] = res.nodes;
     expect(figma.items.map((i) => [i.label, i.status])).toEqual([
       ["Row 1 · Honey", "done"],
       ["Row 2 · BAD", "failed"],
@@ -220,10 +219,20 @@ describe("flow runner", () => {
     // Edge labels say what flowed.
     expect(res.edges.find((e) => e.edgeId === "e2")).toEqual({ edgeId: "e2", count: 2, label: "2 PNG" });
     // Results per node and item, failed items included; findings tied to the item's outputs.
-    // The routine's own error is the routine's to fix.
-    expect(res.outputs.find((o) => o.itemKey === "row-2")).toMatchObject({ node: "n-labels", status: "failed", error: "Action 2 (setText): no layer", cause: "routine" });
-    expect(res.outputs.find((o) => o.itemKey === "row-4")).toMatchObject({ node: "in-products", status: "failed" });
+    // The routine's own error is the routine's to fix; the action it failed in goes to the details.
+    expect(res.outputs.find((o) => o.itemKey === "row-2")).toMatchObject({ node: "n-labels", status: "failed", error: "No layer", errorDetail: "Action 2 (setText): no layer", cause: "routine" });
     expect(res.findings).toEqual([expect.objectContaining({ type: "text-overflow", outputKey: "n-labels:row-3-export-1" })]);
+  });
+
+  it("runs a row with an empty cell: it's normal data, made without that value", async () => {
+    const csv = path.join(dir, "no-code.csv");
+    await fs.writeFile(csv, "name,ean\nHoney,4006381333931\nNoCode,\n");
+    const res = await new FlowRunner(new AdapterRegistry([fakeFigma(), fakePhotoshop()])).run(await spec({ inputs: { "in-products": csv } }), hooks);
+    expect(res.nodes[0].items.every((i) => i.status !== "failed")).toBe(true);
+    expect(res.nodes[1].items.map((i) => [i.label, i.status])).toEqual([
+      ["Row 1 · Honey", "done"],
+      ["Row 2 · NoCode", "done"],
+    ]);
   });
 
   it("previews the files a routine saved, and the copies saved to the folder show the same preview", async () => {
@@ -272,7 +281,7 @@ describe("flow runner", () => {
         { id: "e5", from: { nodeId: "in-labels", port: "labels" }, to: { nodeId: "n-cards", port: "labels" }, match: { by: "fileNameEqualsColumn", column: "name", ignoreExtension: true } },
       ],
     });
-    await fs.writeFile(path.join(dir, "honey.png"), "png");
+    await fs.writeFile(path.join(dir, "honey.png"), fakeImage("honey.png"));
     const res = await new FlowRunner(new AdapterRegistry([fakeFigma(), fakePhotoshop()])).run(
       await spec({ flow: f, info: info({ "n-cards": cards }), inputs: { ...(await spec()).inputs, "in-labels": [path.join(dir, "honey.png")] } }),
       hooks,
@@ -294,6 +303,70 @@ describe("flow runner", () => {
     expect(again.nodes[1].items.map((i) => i.key)).toEqual(["row-3"]);
     expect(again.nodes[2].items.map((i) => i.key)).toEqual(["row-3"]);
     expect(again.status).toBe("succeeded");
+  });
+
+  it("pairs what an earlier step made for a row with that row, whatever its file is called", async () => {
+    // The labels are named after the product, but the edge looks for the EAN in the file names (like cutouts named
+    // by SKU that a later step looked for by name): both came from the same rows, so they pair by row.
+    const f = flow({
+      nodes: [...flow().nodes.slice(0, 2), { id: "n-cards", kind: "routine", routineId: "cards", routineVersion: 1, position: { x: 0, y: 0 } }],
+      edges: [
+        flow().edges[0],
+        { id: "e4", from: { nodeId: "in-products", port: "products" }, to: { nodeId: "n-cards", port: "products" } },
+        { id: "e5", from: { nodeId: "n-labels", port: "files" }, to: { nodeId: "n-cards", port: "labels" }, match: { by: "fileNameEqualsColumn", column: "ean", ignoreExtension: true } },
+      ],
+    });
+    const res = await new FlowRunner(new AdapterRegistry([fakeFigma(), fakePhotoshop()])).run(await spec({ flow: f, info: info({ "n-labels": labels, "n-cards": cards }) }), hooks);
+    expect(res.nodes.find((n) => n.nodeId === "n-cards")!.items.map((i) => [i.key, i.status])).toEqual([
+      ["row-1", "done"],
+      ["row-2", "skipped"],
+      ["row-3", "done"],
+    ]);
+    expect(calls).toContain("figma:item:n-cards:card-Honey+Honey.png");
+    expect(calls).toContain("figma:item:n-cards:card-Jam+Jam.png");
+  });
+
+  it("runs failed rows again with every photo there to find partners in", async () => {
+    const f = flow({
+      nodes: [flow().nodes[0], { id: "in-labels", kind: "input", port: { key: "labels", label: "Label images", type: "fileList", required: true }, position: { x: 0, y: 0 } }, { id: "n-cards", kind: "routine", routineId: "cards", routineVersion: 1, position: { x: 0, y: 0 } }],
+      edges: [
+        { id: "e4", from: { nodeId: "in-products", port: "products" }, to: { nodeId: "n-cards", port: "products" } },
+        { id: "e5", from: { nodeId: "in-labels", port: "labels" }, to: { nodeId: "n-cards", port: "labels" }, match: { by: "fileNameEqualsColumn", column: "name", ignoreExtension: true } },
+      ],
+    });
+    for (const n of ["honey.png", "jam.png"]) await fs.writeFile(path.join(dir, n), fakeImage(n));
+    const photos = [path.join(dir, "honey.png"), path.join(dir, "jam.png")];
+    const res = await new FlowRunner(new AdapterRegistry([fakeFigma(), fakePhotoshop()])).run(
+      await spec({ flow: f, info: info({ "n-cards": cards }), inputs: { ...(await spec()).inputs, "in-labels": photos }, onlyItems: new Set(["row-3"]) }),
+      hooks,
+    );
+    expect(res.nodes.find((n) => n.nodeId === "n-cards")!.items.map((i) => [i.key, i.status])).toEqual([["row-3", "done"]]);
+    expect(calls).toContain("figma:item:n-cards:card-Jam+jam.png");
+  });
+
+  it("runs an earlier step over all its photos again when rows failed further on", async () => {
+    const cardsFromJpgs: Routine = { ...cards, inputs: [cards.inputs[0], { ...cards.inputs[1], extensions: ["jpg"] }] };
+    const f = flow({
+      nodes: [
+        flow().nodes[0],
+        { id: "in-photos", kind: "input", port: { key: "photos", label: "Photos", type: "fileList", required: true }, position: { x: 0, y: 0 } },
+        { id: "n-mockups", kind: "routine", routineId: "mockups", routineVersion: 1, position: { x: 0, y: 0 } },
+        { id: "n-cards", kind: "routine", routineId: "cards", routineVersion: 1, position: { x: 0, y: 0 } },
+      ],
+      edges: [
+        { id: "e1", from: { nodeId: "in-photos", port: "photos" }, to: { nodeId: "n-mockups", port: "labels" } },
+        { id: "e4", from: { nodeId: "in-products", port: "products" }, to: { nodeId: "n-cards", port: "products" } },
+        { id: "e5", from: { nodeId: "n-mockups", port: "images" }, to: { nodeId: "n-cards", port: "labels" }, match: { by: "fileNameEqualsColumn", column: "name", ignoreExtension: true } },
+      ],
+    });
+    for (const n of ["honey.png", "jam.png"]) await fs.writeFile(path.join(dir, n), fakeImage(n));
+    const res = await new FlowRunner(new AdapterRegistry([fakeFigma(), fakePhotoshop()])).run(
+      await spec({ flow: f, info: info({ "n-mockups": mockups, "n-cards": cardsFromJpgs }), inputs: { ...(await spec()).inputs, "in-photos": [path.join(dir, "honey.png"), path.join(dir, "jam.png")] }, onlyItems: new Set(["row-3"]) }),
+      hooks,
+    );
+    expect(res.nodes.find((n) => n.nodeId === "n-mockups")!.items.map((i) => i.status)).toEqual(["done", "done"]);
+    expect(res.nodes.find((n) => n.nodeId === "n-cards")!.items.map((i) => [i.key, i.status])).toEqual([["row-3", "done"]]);
+    expect(calls).toContain("figma:item:n-cards:card-Jam+jam.jpg");
   });
 
   it("fails the rest of a node when its app goes away", async () => {
@@ -333,6 +406,49 @@ describe("flow runner", () => {
     await runner.run(await spec(), hooks);
     expect((await fs.readdir(path.join(dir, "out"))).sort()).toEqual(["Honey-2.jpg", "Honey.jpg", "Jam.jpg"]);
     expect(await fs.readFile(path.join(dir, "out", "Honey.jpg"), "utf8")).toBe("mine");
+  });
+
+  it("names results that share a file name by their size", async () => {
+    await fs.mkdir(path.join(dir, "photos"));
+    for (const n of ["honey.png", "jam.png"]) await fs.writeFile(path.join(dir, "photos", n), fakeImage(n));
+    const sizes: Routine = { ...mockups, id: "sizes", name: "Sizes", inputs: [{ key: "photos", label: "Photos", type: "fileList", required: true, extensions: ["png"] }], iterate: { input: "photos" }, outputs: [{ key: "images", label: "Images", type: "fileList", required: true }] };
+    const resizer = {
+      id: "photoshop",
+      name: "Adobe Photoshop",
+      stageKind: "script",
+      qcChecks: [],
+      beginStage: async () => ({ state: {} }),
+      endStage: async () => undefined,
+      async runStageItem(_s: unknown, input: StageItemInput, ctx: StageRunContext) {
+        const item = input.item as { stem: string };
+        // Jam's two sizes are the same: nothing tells them apart but the order.
+        const made = await Promise.all(
+          (item.stem === "jam" ? [[500, 500], [500, 500]] : [[1080, 1350], [1080, 1080]]).map(async ([w, h], k) => {
+            const file = path.join(ctx.workDir, `size-${k}`, `${item.stem}.png`);
+            await fs.mkdir(path.dirname(file), { recursive: true });
+            await fs.writeFile(file, fakeImage(file, w, h));
+            return file;
+          }),
+        );
+        return { ok: true, outputs: made.map((f, k) => ({ key: `${input.key}-${k}`, label: path.basename(f), filePath: f })), values: { images: made }, findings: [], log: [] };
+      },
+    } as unknown as DesignAppAdapter;
+    const runFlow: Flow = {
+      ...flow(),
+      nodes: [
+        { id: "in", kind: "input", port: { key: "photos", label: "Photos", type: "fileList", required: true }, position: { x: 0, y: 0 } },
+        { id: "n", kind: "routine", routineId: "sizes", routineVersion: 1, position: { x: 0, y: 0 } },
+        { id: "out", kind: "output", port: { key: "out", label: "Images", type: "fileList", required: false }, position: { x: 0, y: 0 } },
+      ],
+      edges: [
+        { id: "e1", from: { nodeId: "in", port: "photos" }, to: { nodeId: "n", port: "photos" } },
+        { id: "e2", from: { nodeId: "n", port: "images" }, to: { nodeId: "out", port: "out" } },
+      ],
+    };
+    const runner = new FlowRunner(new AdapterRegistry([resizer]));
+    const result = await runner.run(await spec({ flow: runFlow, info: info({ n: sizes }), inputs: { in: path.join(dir, "photos") } }), hooks);
+    expect((await fs.readdir(path.join(dir, "out"))).sort()).toEqual(["honey-1080x1080.png", "honey-1080x1350.png", "jam-2.png", "jam.png"]);
+    expect(result.nodes.find((n) => n.nodeId === "out")?.note).toBe("2 results with the same name end with their size in pixels. 2 results with the same name end in -2, -3… in the order they were made.");
   });
 
   it("runs end to end with simulated apps and forced failures (dev panel)", async () => {

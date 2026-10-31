@@ -3,6 +3,7 @@ import { FigmaAdapter } from "../adapters/figma/figmaAdapter";
 import { FigmaPluginBridge } from "../adapters/figma/pluginBridge";
 import { InDesignAdapter } from "../adapters/indesign/indesignAdapter";
 import { PhotoshopAdapter } from "../adapters/photoshop/photoshopAdapter";
+import { filePreview } from "../adapters/previews";
 import { AdapterRegistry } from "../adapters/registry";
 import { BlockService } from "./blocks/candidates";
 import { AutoFixService } from "./services/autoFixService";
@@ -103,7 +104,7 @@ export async function createServices(
   const flows = new FlowService({ storage, library, starters, registry });
   // Building block candidates grow from saved routines; evidence comes from runs and feedback (never AI on reruns).
   let blockService: BlockService | null = null;
-  // Routines that fail on new files are fixed by Doppl on its own (see AutoFixService).
+  // Routines that fail on new files: Doppl offers a fix and makes it when the designer says yes (see AutoFixService).
   let autoFix: AutoFixService | null = null;
   const runs = new RunService({
     storage,
@@ -126,6 +127,15 @@ export async function createServices(
       await access.ensureReady();
       return ai.matchColumns(input, { onAiCall: () => undefined, isCancelled: () => false, creationId: `columns-${newId()}` });
     },
+    // Files for items that found none by name, only when the designer asks; pictures of files whose names say nothing.
+    matchFiles: async ({ pictures, ...input }) => {
+      await access.ensureReady();
+      const seen = await Promise.all((pictures ?? []).map(async (p) => ({ name: p.name, src: (await filePreview(p.path, p.name, 384).catch(() => undefined))?.src })));
+      return ai.matchFiles(
+        { ...input, pictures: seen.flatMap((p) => (p.src ? [{ name: p.name, src: p.src }] : [])) },
+        { onAiCall: () => undefined, isCancelled: () => false, creationId: `files-${newId()}` },
+      );
+    },
   });
   const routines = new RoutineService({
     storage,
@@ -143,7 +153,8 @@ export async function createServices(
     onSaved: (routine, info, previous) => void blockService?.capture(routine, info, previous).catch((err) => console.error("[blocks]", err)),
     onFeedback: (ids, kind) => void blockService?.noteFeedback(ids, kind).catch(() => undefined),
   });
-  autoFix = new AutoFixService({ routines, runs, library, flows, access });
+  const fixes = new AutoFixService({ routines, runs, library, flows, access });
+  autoFix = fixes;
   blockService = new BlockService({
     dir: path.join(paths.userData, "helpers", "candidates"),
     registry: blocks,
@@ -164,7 +175,7 @@ export async function createServices(
     chooseSavePath: emit.chooseSavePath,
   });
 
-  return { storage, settings, registry, apps, runs, routines, library, flows, starters, style, access, figmaSetup, bridge, dev, blocks: blockService };
+  return { storage, settings, registry, apps, runs, routines, library, flows, starters, style, access, figmaSetup, bridge, dev, blocks: blockService, autoFix: fixes };
 }
 
 export type Services = Awaited<ReturnType<typeof createServices>>;

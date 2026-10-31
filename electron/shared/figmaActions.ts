@@ -139,10 +139,15 @@ function makeCatalog<M extends Mode>(mode: M) {
       gap: z.union([num(z.number().min(0)), z.object({ x: num(z.number().min(0)), y: num(z.number().min(0)) })]),
       origin: z.object({ x: num(z.number()), y: num(z.number()) }).optional(),
     }),
-    action("setText", "Sets the text of a text node, loading its fonts first. Missing fonts are reported, not fatal.", {
-      node: ref,
-      text: z.union([z.string(), z.number()]),
-    }),
+    action(
+      "setText",
+      'Sets the text of a text node, loading its fonts first. Missing fonts are reported, not fatal. "fit": true shrinks the whole text (0.5 pt steps, every size alike) until it fits its box and no word breaks in the middle, down to "minSize" (default 70% of its size); still too long is reported.',
+      {
+        node: ref,
+        text: z.union([z.string(), z.number()]),
+        fit: z.union([z.boolean(), z.object({ minSize: num(z.number().min(1).max(1000)).optional() })]).optional(),
+      },
+    ),
     action("setTextStyleRanges", "Styles parts of a text node, by position or by matching text.", {
       node: ref,
       ranges: z
@@ -222,7 +227,7 @@ function makeCatalog<M extends Mode>(mode: M) {
       format: z.enum(EXPORT_FORMATS),
       scale: num(z.number().min(0.1).max(10)).optional().describe("PNG/JPG only (default 1)"),
       fileName: z.string().min(1).optional().describe("Without extension; default: the node's name"),
-      folder: z.string().min(1).optional().describe("A folder input ({{inputs.out}}); default: the routine's working folder"),
+      folder: z.string().min(1).optional().describe("Leave out: exports go into the routine's working folder (the designer's folders are read-only)"),
     }),
     action(
       "measure",

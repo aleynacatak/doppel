@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 import { QcChecks } from "@/components/results/QcChecks";
 import { RoutineBadges } from "@/components/routine/ContractView";
 import { Button, ButtonLink } from "@/components/ui/Button";
+import { Details } from "@/components/ui/Details";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
@@ -77,6 +78,7 @@ function RefineForm({ setup, flowLink, initialRequest = "" }: { setup: RefineSet
               {problem.itemLabel && <span className="ui-small ui-muted">{copy.refine.fromItem(problem.itemLabel)}</span>}
               {problem.input && problem.input !== problem.itemLabel && <span className="ui-small ui-muted truncate">{copy.refine.input(problem.input)}</span>}
               {problem.error && <span className="ui-small">{problem.error}</span>}
+              <Details text={problem.errorDetail} />
               {problem.qc && <QcChecks checks={problem.qc.checks} />}
             </div>
           </div>

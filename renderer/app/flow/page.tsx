@@ -2,7 +2,7 @@
 
 import type { Flow, FlowContext, FlowNode, InputValue, PortDef, PortType, Routine, Run } from "@core/types";
 import { wouldCreateCycle } from "@shared/flowGraph";
-import { describeSpec, isListType } from "@shared/ports";
+import { type Compatibility, acceptedByOutput, compatible, describeSpec, inputSpec, isListType, outputSpec } from "@shared/ports";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -34,6 +34,22 @@ const INPUT_LABELS: Record<PortType, { key: string; label: string }> = {
 
 type Menu = { at: { x: number; y: number }; flowAt: { x: number; y: number }; from: { nodeId: string; port: string; view: PortView } } | null;
 
+/** Where "+" puts a node: inputs in a column on the left, the rest to the right of everything, never on another node. */
+function freeSpot(nodes: FlowNode[], kind: FlowNode["kind"]): { x: number; y: number } {
+  // A node and the gap after it (routine cards are 256 px wide, inputs 224; heights vary).
+  const W = 320;
+  const H = 224;
+  if (!nodes.length) return { x: 64, y: 64 };
+  const xs = nodes.map((n) => n.position.x);
+  const inputs = nodes.filter((n) => n.kind === "input").map((n) => n.position.x);
+  const x = kind === "input" ? (inputs.length ? Math.min(...inputs) : Math.min(...xs) - W) : Math.max(...xs) + W;
+  const top = Math.min(...nodes.map((n) => n.position.y));
+  const taken = (y: number) => nodes.some((n) => Math.abs(n.position.x - x) < W && Math.abs(n.position.y - y) < H);
+  let y = top;
+  while (taken(y)) y += H;
+  return { x: Math.round(x / 16) * 16, y: Math.round(y / 16) * 16 };
+}
+
 function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Routine[]; starters: Routine[] } }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -52,6 +68,8 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
   const [showIssues, setShowIssues] = useState(false);
   const [picked, setPicked] = useState<Record<string, InputValue>>({});
   const [lastRun, setLastRun] = useState<Run | null>(null);
+  // A node added with "+": the canvas pans so it's in view.
+  const [reveal, setReveal] = useState<string | null>(null);
   const all = useMemo(() => [...routines.mine, ...routines.starters], [routines]);
 
   const setFlow = useCallback((next: Flow | ((f: Flow) => Flow)) => {
@@ -102,13 +120,34 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
     return routine ? { id: newId(), kind: "routine", routineId: routine.id, routineVersion: routine.version, position: at } : null;
   };
 
-  /** A new edge; one that fed the same input before is replaced. Joins get a suggested rule. */
+  /** Whether what `from` carries fits the input `to`; null when that can't be told (a routine that isn't loaded). */
+  const fits = (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }, base: Flow): Compatibility | null => {
+    const routineAt = (n: FlowNode | undefined) => (n?.kind === "routine" ? (ctx?.routines[n.id] ?? latestOf(n.routineId)) : undefined);
+    const source = base.nodes.find((n) => n.id === from.nodeId);
+    const target = base.nodes.find((n) => n.id === to.nodeId);
+    const maker = routineAt(source);
+    const produced = maker?.outputs.find((p) => p.key === from.port);
+    const spec = source?.kind === "input" ? (source.port.key === from.port ? inputSpec(source.port) : null) : maker && produced ? outputSpec(produced, !!maker.iterate, maker.appId) : null;
+    if (!spec || !target) return null;
+    if (target.kind === "output") return acceptedByOutput(spec);
+    const routine = routineAt(target);
+    const port = routine?.inputs.find((p) => p.key === to.port);
+    return routine && port ? compatible(spec, inputSpec(port, routine.appId)) : null;
+  };
+
+  /** A new edge; one that fed the same input before is replaced, unless it fits and the new one doesn't. Joins get a suggested rule. */
   const connect = async (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }, base = flow) => {
     if (wouldCreateCycle(base.edges, from.nodeId, to.nodeId)) {
       setNotice(copy.flow.noCycle);
       return;
     }
-    const replaced = base.edges.some((e) => e.to.nodeId === to.nodeId && e.to.port === to.port);
+    const current = base.edges.find((e) => e.to.nodeId === to.nodeId && e.to.port === to.port);
+    const fit = fits(from, to, base);
+    if (current && fit && !fit.ok && fits(current.from, current.to, base)?.ok) {
+      setNotice(copy.flow.kept(fit.reason));
+      return;
+    }
+    const replaced = !!current;
     const edge = { id: newId(), from, to };
     const next: Flow = { ...base, edges: [...base.edges.filter((e) => !(e.to.nodeId === to.nodeId && e.to.port === to.port)), edge] };
     setFlow(next);
@@ -267,8 +306,11 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
       <div className="flex min-h-0 flex-1 gap-3">
         <aside className="w-60 shrink-0 overflow-y-auto pr-1">
           <LibraryPanel mine={routines.mine} starters={routines.starters} onAdd={(item) => {
-            const node = nodeFor(item, { x: 64 + flow.nodes.length * 32, y: 64 + flow.nodes.length * 32 });
-            if (node) addNode(node);
+            const node = nodeFor(item, freeSpot(flow.nodes, item.kind));
+            if (node) {
+              addNode(node);
+              setReveal(node.id);
+            }
           }} />
         </aside>
         <main className="min-w-0 flex-1">
@@ -301,6 +343,7 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
                 }
               }}
               onConnect={(from, to) => void connect(from, to)}
+              reveal={reveal}
               onConnectToEmpty={(from, at) => setMenu({ at: at.client, flowAt: at.flow, from })}
               onDropItem={(item, at) => {
                 const node = nodeFor(item, at);

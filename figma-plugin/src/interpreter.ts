@@ -247,6 +247,32 @@ export class Interpreter {
     this.touch(node);
   }
 
+  /**
+   * setText's "fit": every size in the text goes down together in 0.5 pt steps until it fits its box and no word
+   * breaks in the middle, down to minSize (default 70% of the largest size). Still too long is a finding.
+   */
+  private async fitText(node: TextNode, opts: { minSize?: number }) {
+    const figma = this.host.figma;
+    const len = node.characters.length;
+    if (!len) return;
+    const segments: { start: number; end: number; size: number }[] =
+      node.fontSize === figma.mixed
+        ? node.getStyledTextSegments(["fontSize"]).map((g) => ({ start: g.start, end: g.end, size: g.fontSize }))
+        : [{ start: 0, end: len, size: node.fontSize as number }];
+    const largest = Math.max(...segments.map((g) => g.size));
+    const floor = Math.min(largest, opts.minSize ?? Math.round(largest * 1.4) / 2);
+    const fits = async () => !(await overflowsBox(node)) && !(await splitWord(figma, node));
+    let size = largest;
+    while (!(await fits()) && size - 0.5 >= floor) {
+      size -= 0.5;
+      if (segments.length === 1) node.fontSize = size;
+      else for (const g of segments) node.setRangeFontSize(g.start, g.end, Math.max(1, Math.round(((g.size * size) / largest) * 2) / 2));
+    }
+    if (size < largest) this.result.log.push(`setText: "${node.name}" set at ${size} pt to fit (from ${largest} pt)`);
+    if (!(await fits())) this.result.findings.push({ type: "text-overflow", message: `"${node.name}" still doesn't fit at ${size} pt`, nodeId: node.id });
+    this.touch(node);
+  }
+
   /** Structure of a node for the model and the dev panel (see inspectNode). */
   describe(n: BaseNode, depth: number): Record<string, unknown> {
     return this.inspect(n, depth);
@@ -386,6 +412,7 @@ export class Interpreter {
       case "setText": {
         const node = this.text(await this.one(a.node), "setText");
         await this.setCharacters(node, String(a.text), "setText");
+        if (a.fit && !node.hasMissingFont) await this.fitText(node, a.fit === true ? {} : a.fit);
         return this.record(a, [node], summary(node));
       }
       case "setTextStyleRanges": {
@@ -507,6 +534,8 @@ export class Interpreter {
           throw new ActionError(`Figma couldn't read the SVG: ${(err as Error).message}`);
         }
         if (a.name) placed.name = a.name;
+        // Artwork, not the designer's text: a barcode's first digit sits left of its bars by design.
+        placed.setPluginData("dopplSvg", "1");
         const fit = a.fit ?? "contain";
         const s = fit === "cover" ? Math.max(target.width / placed.width, target.height / placed.height) : Math.min(target.width / placed.width, target.height / placed.height);
         if (Number.isFinite(s) && s > 0) placed.rescale(s);
@@ -603,12 +632,16 @@ export class Interpreter {
   async measure(node: SceneNode, boundary: BaseNode, check: boolean) {
     const box = boxOf(node);
     const bbox = boxOf(boundary);
-    const textOverflow: { id: string; node: string; kind: "box" | "container"; container?: string }[] = [];
+    const textOverflow: { id: string; node: string; kind: "box" | "container" | "word"; container?: string; word?: string }[] = [];
     const outside: { id: string; node: string; edge: string }[] = [];
     const all: SceneNode[] = [node, ...("findAll" in node ? (node as ChildrenMixin).findAll((n) => n.visible !== false).slice(0, 2000) : [])];
     for (const n of all) {
       if (n.type !== "TEXT" || n.visible === false) continue;
       const t = n as TextNode;
+      let container: BaseNode | null = t.parent;
+      while (container && !["FRAME", "COMPONENT", "INSTANCE"].includes(container.type)) container = container.parent;
+      // Text inside placed SVG artwork (a barcode's digits) is drawn as it is: not checked.
+      if (container && "getPluginData" in container && container.getPluginData("dopplSvg") === "1") continue;
       if ((t.textAutoResize === "NONE" || t.textAutoResize === "TRUNCATE") && (await this.loadFonts(t))) {
         const probe = t.clone();
         probe.textTruncation = "DISABLED";
@@ -617,8 +650,8 @@ export class Interpreter {
         probe.remove();
         if (overflows) textOverflow.push({ id: t.id, node: t.name, kind: "box" });
       }
-      let container: BaseNode | null = t.parent;
-      while (container && !["FRAME", "COMPONENT", "INSTANCE"].includes(container.type)) container = container.parent;
+      const word = await splitWord(this.host.figma, t);
+      if (word) textOverflow.push({ id: t.id, node: t.name, kind: "word", word });
       const tb = boxOf(t);
       const cb = container ? boxOf(container) : null;
       if (tb && cb && edgeOutside(tb, cb)) textOverflow.push({ id: t.id, node: t.name, kind: "container", container: container!.name });
@@ -636,7 +669,7 @@ export class Interpreter {
       for (const o of textOverflow) {
         this.result.findings.push({
           type: "text-overflow",
-          message: o.kind === "box" ? `"${o.node}" doesn't fit its text box` : `"${o.node}" runs past "${o.container}"`,
+          message: o.kind === "box" ? `"${o.node}" doesn't fit its text box` : o.kind === "word" ? wordMessage(o.node, o.word!) : `"${o.node}" runs past "${o.container}"`,
           nodeId: o.id,
         });
       }
@@ -668,7 +701,48 @@ export function runActions(actions: WireActionT[], host: Host): Promise<ActionRu
   return new Interpreter(host).runAll(actions);
 }
 
-/** Checks a frame the routine made: text cut off by a clipping frame, missing fonts, blurry images. */
+const wordMessage = (node: string, word: string) => `"${node}" breaks “${word}” in the middle: the word is wider than its text box`;
+
+/** Text in a fixed box that needs more height than the box has (the probe grows with the text instead). */
+async function overflowsBox(t: TextNode): Promise<boolean> {
+  if (t.textAutoResize !== "NONE" && t.textAutoResize !== "TRUNCATE") return false;
+  const probe = t.clone();
+  try {
+    probe.textTruncation = "DISABLED";
+    probe.textAutoResize = "HEIGHT";
+    return probe.height > t.height + 0.5;
+  } finally {
+    probe.remove();
+  }
+}
+
+/**
+ * A word wider than its text box, which Figma breaks in the middle ("Passionfr" / "uit Mango"): the widest of the
+ * longest words, measured on one line in the text's own font. Null when every word fits (or it can't be measured).
+ */
+async function splitWord(figma: PluginAPI, t: TextNode): Promise<string | null> {
+  if (t.textAutoResize === "WIDTH_AND_HEIGHT" || t.hasMissingFont || t.visible === false) return null;
+  const words = [...new Set(t.characters.split(/[\s\-‐–—/]+/).filter((w) => w.length > 2))].sort((a, b) => b.length - a.length).slice(0, 3);
+  if (!words.length) return null;
+  try {
+    for (const font of t.getRangeAllFontNames(0, t.characters.length)) await figma.loadFontAsync(font);
+  } catch {
+    return null;
+  }
+  const probe = t.clone();
+  try {
+    probe.textAutoResize = "WIDTH_AND_HEIGHT";
+    for (const w of words) {
+      probe.characters = w;
+      if (probe.width > t.width + 0.5) return w;
+    }
+    return null;
+  } finally {
+    probe.remove();
+  }
+}
+
+/** Checks a frame the routine made: text cut off by a clipping frame, words broken in the middle, missing fonts, blurry images. */
 export async function checkNode(figma: PluginAPI, frame: SceneNode): Promise<Finding[]> {
   const findings: Finding[] = [];
   const box = boxOf(frame);
@@ -681,6 +755,8 @@ export async function checkNode(figma: PluginAPI, frame: SceneNode): Promise<Fin
       const nb = boxOf(n);
       const edge = clips && nb ? edgeOutside(nb, box, 1) : null;
       if (edge) findings.push({ type: "cut-off", message: `"${n.name}" is cut off at the ${edge} edge`, nodeId: n.id });
+      const word = await splitWord(figma, n as TextNode);
+      if (word) findings.push({ type: "text-overflow", message: wordMessage(n.name, word), nodeId: n.id });
     }
     if ("fills" in n && Array.isArray((n as GeometryMixin).fills)) {
       for (const fill of (n as GeometryMixin).fills as Paint[]) {

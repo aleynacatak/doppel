@@ -6,7 +6,7 @@ import type { AiAccess, AiCustomEndpoint, AiModelSettings, AiModelsInfo, AiProvi
 import { newId } from "../util";
 import { AiError, checkMetaKey, fetchDemoSession } from "./aiTransport";
 import { type SecretStore, secretHint } from "./secretStore";
-import type { SettingsService } from "./settingsService";
+import { type SettingsService, thisMonth } from "./settingsService";
 
 /**
  * Settings → AI access and Advanced → AI models: how Doppl reaches models (the demo Worker with an access code, Meta
@@ -136,7 +136,7 @@ export class AiAccessService {
       accessCode: { saved: !!code, hint: secretHint(code) },
       session: code ? this.session : null,
       ownKey: { saved: !!key, hint: secretHint(key) },
-      ownKeySpend: { month: new Date().toISOString().slice(0, 7), estUsd: settings.ownKeySpend(), limit: settings.current.monthlySpendLimit },
+      ownKeySpend: { month: thisMonth(), estUsd: settings.ownKeySpend(), limit: settings.current.monthlySpendLimit },
     };
   }
 
@@ -239,7 +239,7 @@ export class AiAccessService {
       providerSpend: spendProviders.map((p) => ({
         provider: p.id,
         displayName: p.displayName,
-        month: new Date().toISOString().slice(0, 7),
+        month: thisMonth(),
         estUsd: p.id === "meta" ? settings.ownKeySpend() : settings.providerSpend(p.id),
         limit: p.id === "meta" ? settings.current.monthlySpendLimit : (this.models.providerLimits[p.id] ?? 0),
       })),

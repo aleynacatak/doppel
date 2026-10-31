@@ -93,11 +93,15 @@ const labelRoutine = {
   actions_O: labelActions,
 };
 
+/** A test's own AI answers for routine turns, in place of the scripted ones. */
+let answers: ((messages: ChatMessage[]) => Record<string, unknown>) | null = null;
+
 function scriptedAi(log: string[]): AiService {
   let figmaProposals = 0;
   return {
     async turn(messages: ChatMessage[], schema, _actions, ctx) {
       ctx.onAiCall();
+      if (answers) return answers(messages);
       const system = String(messages[0].content);
       if (schema.name === "doppl_plan_turn") {
         log.push("plan");
@@ -128,6 +132,7 @@ beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-create-"));
   matchedFiles.length = 0;
   aiLog = [];
+  answers = null;
   const registry = new AdapterRegistry([fakeApp("photoshop"), fakeApp("figma")]);
   const storage = new JsonStorage(path.join(dir, "data"));
   const starters = new StarterService(path.join(dir, "starters"));
@@ -181,6 +186,43 @@ describe("creating with the AI", () => {
     const saved = await service.save(c.id, { name: "Product cards" });
     expect(saved.routine).toMatchObject({ name: "Product cards", version: 1, createdWithAiCalls: 2, format: 2 });
     expect((await library.list()).map((r) => r.name)).toEqual(["Product cards"]);
+  });
+
+  it("says when a request isn't a task instead of inventing a routine, after an answer in the designer's own words", async () => {
+    const seen: string[] = [];
+    answers = (messages) => {
+      seen.push(String(messages[messages.length - 1].content));
+      return seen.length === 1
+        ? { action: "ask_question", question: { text: "What should the routine do?", options: [{ id: "a", label: "Export the frames" }, { id: "b", label: "Something else — I'll describe it" }] } }
+        : { action: "decline", reason: "This is a greeting, not design work to automate." };
+    };
+    const c = await service.create({ request: "How are you?", references: [], appId: "figma", apps: [{ appId: "figma" }] });
+    const asked = await until(c.id, (x) => x.status === "waiting" && !!x.question);
+    service.answer(c.id, asked.question!.id, "Nothing, I was just saying hi");
+    for (let i = 0; i < 400 && service.getCreation(c.id)!.status !== "failed"; i++) await new Promise((r) => setTimeout(r, 5));
+    const failed = service.getCreation(c.id)!;
+    expect(seen[1]).toContain("Answer: Nothing, I was just saying hi.");
+    expect(failed.error).toMatchObject({ kind: "not-a-task", message: "This is a greeting, not design work to automate." });
+    expect(failed.canContinue).toBe(false);
+    expect(await library.list()).toEqual([]);
+  });
+
+  it("lets the AI ask a follow-up question when the first answer left it open, but no third", async () => {
+    const seen: string[] = [];
+    const question = (text: string) => ({ action: "ask_question", question: { text, options: [{ id: "a", label: "PNG" }, { id: "b", label: "PDF" }] } });
+    answers = (messages) => {
+      seen.push(String(messages[messages.length - 1].content));
+      return seen.length <= 3 ? question(`Question ${seen.length}`) : { action: "decline", reason: "Stop here." };
+    };
+    const c = await service.create({ request: "Export the cards", references: [], appId: "figma", apps: [{ appId: "figma" }] });
+    for (const n of [1, 2]) {
+      const asked = await until(c.id, (x) => x.status === "waiting" && x.question?.text === `Question ${n}`);
+      service.answer(c.id, asked.question!.id, "a");
+    }
+    for (let i = 0; i < 400 && service.getCreation(c.id)!.status !== "failed"; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(seen[3]).toContain("Don't ask now.");
+    // Work under way isn't dropped by a late decline.
+    expect(seen[4]).toContain("Don't decline now: propose the routine.");
   });
 
   it("asks for missing sample files instead of failing, then goes on without asking the AI again", async () => {

@@ -71,10 +71,12 @@ export function LibraryPanel({ mine, starters, onAdd }: { mine: Routine[]; start
         <div className="ui-label">{copy.flow.libraryMine}</div>
         {mine.length ? <ul className="flex flex-col gap-1">{mine.map(routineItem)}</ul> : <p className="ui-small ui-muted">{copy.library.noMyRoutines}</p>}
       </section>
-      <section className="flex flex-col gap-1">
-        <div className="ui-label">{copy.flow.libraryStarters}</div>
-        {starters.length ? <ul className="flex flex-col gap-1">{starters.map(routineItem)}</ul> : <p className="ui-small ui-muted">{copy.library.noStarters}</p>}
-      </section>
+      {starters.length > 0 && (
+        <section className="flex flex-col gap-1">
+          <div className="ui-label">{copy.flow.libraryStarters}</div>
+          <ul className="flex flex-col gap-1">{starters.map(routineItem)}</ul>
+        </section>
+      )}
     </div>
   );
 }

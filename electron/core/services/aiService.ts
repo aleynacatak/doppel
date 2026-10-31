@@ -39,10 +39,13 @@ export interface AiService {
   noteFailedTrial?(creationId: string): void;
   /** Which of a file's columns holds each column a routine expects, when the names don't say (see ModelAiService). */
   matchColumns?(input: { routine: string; expected: string[]; columns: string[]; rows: Record<string, unknown>[] }, ctx: AiCallContext): Promise<Record<string, string | null>>;
+  /** Which of the designer's files goes with each item that found none by name (see ModelAiService). */
+  /** `pictures`: previews (data URLs) of files whose names say nothing, for the AI to look at. */
+  matchFiles?(input: { routine: string; what: string; items: string[]; files: string[]; pictures?: { name: string; src: string }[] }, ctx: AiCallContext): Promise<Record<string, string | null>>;
   /** Which model serves a role now (for provenance). */
   modelFor?(role: Role, creationId?: string): string;
   /** Look at a trial run's result (stage "Checking result"). Returns extra checks per output id. */
-  reviewTrial(task: Task, draft: { name: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>>;
+  reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>>;
   /** Visual judgement on one output ("Automatic check + AI review" on reruns). */
   reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck>;
   /** SAM: is <object> inside <region> in this output's preview? Two segment calls, each counted. */

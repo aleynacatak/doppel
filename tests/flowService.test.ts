@@ -10,6 +10,7 @@ import { LibraryService } from "../electron/core/services/libraryService";
 import { StarterService } from "../electron/core/services/starterService";
 import { JsonStorage } from "../electron/core/services/storage";
 import type { Flow, Routine } from "../electron/core/types";
+import { fakeImage } from "./helpers/images";
 
 const registry = new AdapterRegistry([
   { id: "figma", name: "Figma", stageKind: "actions" } as unknown as DesignAppAdapter,
@@ -179,7 +180,7 @@ describe("joins in the editor", () => {
     const csv = path.join(dir, "products.csv");
     await fs.writeFile(csv, "title,photo\nApricot,apricot.jpg\nFig,fig.jpg\nPlum,plum.jpg\n");
     const photos = [path.join(dir, "Apricot.png"), path.join(dir, "fig.png")];
-    for (const p of photos) await fs.writeFile(p, "png");
+    for (const p of photos) await fs.writeFile(p, fakeImage(p));
     const preview = await flows.previewMatch(f, "e3", null, { "in-data": csv, "in-photos": photos });
     expect(preview.rule).toEqual({ by: "fileNameEqualsColumn", column: "photo", ignoreExtension: true, loose: true });
     expect(preview.pairs).toEqual([

@@ -11,7 +11,7 @@ export class FakeNode {
   children: FakeNode[] = [];
   x = 0;
   y = 0;
-  width = 100;
+  private _width = 100;
   private _height = 100;
   visible = true;
   removed = false;
@@ -52,12 +52,28 @@ export class FakeNode {
     figma.all.push(this);
   }
 
-  /** Text with auto height grows with its content (10 px per character, 20 px per line). */
+  /** At 12 pt, a character is 10 px wide and a line 20 px high; other sizes scale. */
+  private get scale() {
+    return this.fontSize / 12;
+  }
+
+  /** Text with auto width is as wide as its text (one line). */
+  get width() {
+    if (this.type === "TEXT" && this.textAutoResize === "WIDTH_AND_HEIGHT") return this.characters.length * 10 * this.scale;
+    return this._width;
+  }
+
+  set width(v: number) {
+    this._width = v;
+  }
+
+  /** Text with auto height grows with its content, breaking lines anywhere. */
   get height() {
     if (this.type === "TEXT" && this.textAutoResize === "HEIGHT") {
-      const perLine = Math.max(1, Math.floor(this.width / 10));
-      return Math.max(1, Math.ceil(this.characters.length / perLine)) * 20;
+      const perLine = Math.max(1, Math.floor(this.width / (10 * this.scale)));
+      return Math.max(1, Math.ceil(this.characters.length / perLine)) * 20 * this.scale;
     }
+    if (this.type === "TEXT" && this.textAutoResize === "WIDTH_AND_HEIGHT") return 20 * this.scale;
     return this._height;
   }
 
@@ -93,21 +109,24 @@ export class FakeNode {
 
   remove() {
     this.detach();
+    if (this.type === "PAGE") this.figma.root.children = this.figma.root.children.filter((p) => p !== this);
     this.removed = true;
   }
 
-  /** Like Figma: the copy lands on the current page until it is moved. */
+  /** Like Figma: the copy lands on the current page until it is moved; a page's copy comes right after it. */
   clone(): FakeNode {
     const copy = this.copyTree();
-    this.figma.currentPage.appendChild(copy);
+    if (this.type === "PAGE") this.figma.root.children.splice(this.figma.root.children.indexOf(this) + 1, 0, copy);
+    else this.figma.currentPage.appendChild(copy);
     return copy;
   }
 
   private copyTree(): FakeNode {
     const copy = new FakeNode(this.figma, this.type, this.name);
-    for (const key of ["x", "y", "width", "visible", "characters", "fontSize", "hasMissingFont", "textAutoResize", "layoutMode", "clipsContent"] as const) {
+    for (const key of ["x", "y", "visible", "characters", "fontSize", "hasMissingFont", "textAutoResize", "layoutMode", "clipsContent"] as const) {
       (copy as any)[key] = (this as any)[key];
     }
+    copy.width = this._width;
     copy.height = this._height;
     copy.fontName = { ...this.fontName };
     copy.fills = [...this.fills];

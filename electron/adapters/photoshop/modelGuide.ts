@@ -34,7 +34,7 @@ export const PHOTOSHOP_HELPER_CATALOG = `Helper functions (use these; don't call
 - setTextLayer(layer, text): sets a text layer's text (reports fonts that aren't installed).
 - setLayerVisible(layer, visible)
 - exportImage(path, format, quality) -> path: exports the ACTIVE document as "png", "jpg" (quality 0-100) or "tif".
-  The path must be inside ctx.workDir or a folder input. Use app.activeDocument = someDoc to choose what to export.
+  The path must be inside ctx.workDir: the designer's files and folders are read-only. Use app.activeDocument = someDoc to choose what to export.
 - saveCopy(folder, fileName) -> path: saves a PSD copy of the active document as "<fileName>.psd" in a folder
   (e.g. saveCopy(ctx.workDir, ctx.item.sku)); saveCopy() alone saves "<name>_doppl.psd" next to the source.
   Never overwrites anything (an existing name gets "-2"). Only when the request asks for a saved PSD.
