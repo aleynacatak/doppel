@@ -71,6 +71,7 @@ export class PhotoshopAdapter implements DesignAppAdapter {
   readonly qcChecks = [
     { level: "rule" as const, types: ["font-missing" as const], label: () => "Fonts are installed" },
     { level: "rule" as const, types: ["file-missing" as const], label: () => "Images and files exist" },
+    { level: "rule" as const, types: ["cutout-suspect" as const], label: () => "Cutout found the subject", onlyWhenFound: true },
   ];
 
   private readonly adobe: AdobeConnection;

@@ -270,7 +270,7 @@ const APP_ABILITIES: Record<string, string> = {
   figma:
     "Figma: works on a Figma file open with the Doppl plugin, with an action list: duplicate template frames, set texts, images, colors and barcodes from data, arrange, export frames as PNG, JPG, SVG or PDF.",
   photoshop:
-    "Photoshop: scripts on images and PSDs: open images, cut out white backgrounds, trim, replace Smart Objects, set text layers, find dominant colors, export PNG, JPG or TIFF, save PSD copies. Never changes the designer's PSD.",
+    "Photoshop: scripts on images and PSDs: open images, cut out subjects on white or any other background, trim, replace Smart Objects, set text layers, find dominant colors, export PNG, JPG or TIFF, save PSD copies. Never changes the designer's PSD.",
   indesign: "InDesign: scripts on an open InDesign document: place text and images, apply styles, add pages, preflight, export PDF or PNG pages.",
 };
 

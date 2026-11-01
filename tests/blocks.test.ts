@@ -8,6 +8,7 @@ import { INDESIGN_HELPERS } from "../electron/adapters/indesign/helpers";
 import { indesignLibrary } from "../electron/adapters/indesign/library";
 import { lintPhotoshopScript } from "../electron/adapters/photoshop/lint";
 import { PHOTOSHOP_HELPERS } from "../electron/adapters/photoshop/helpers";
+import { PHOTOSHOP_MODEL_GUIDE } from "../electron/adapters/photoshop/modelGuide";
 import { photoshopLibrary } from "../electron/adapters/photoshop/library";
 import { AdapterRegistry } from "../electron/adapters/registry";
 import type { DesignAppAdapter, StageItemInput, StageRunContext } from "../electron/adapters/types";
@@ -60,6 +61,12 @@ describe("the built-in library", () => {
 });
 
 describe("retrieval", () => {
+  it("offers the Select Subject cutout for a photo that isn't on white", () => {
+    expect(blocks.rank("photoshop", "Cut out the subject of photos on a busy background")[0].call).toBe("maskSubject");
+    expect(blocks.rank("photoshop", "Remove the white background with a layer mask and keep highlights")[0].call).toBe("maskWhiteBackground");
+    expect(PHOTOSHOP_MODEL_GUIDE).toContain("maskSubject(layer?)");
+  });
+
   it("ranks blocks by the request and gives a compact index with the top ones in full", () => {
     const ranked = blocks.rank("photoshop", "Remove the white background with a layer mask and keep highlights");
     expect(ranked[0].call).toBe("maskWhiteBackground");

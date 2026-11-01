@@ -78,6 +78,8 @@ export interface QcCheckDef {
   level: QcLevel;
   types: RuleFindingType[];
   label: (minPpi: number) => string;
+  /** Only listed when it finds something: for a check most routines have nothing to do with. */
+  onlyWhenFound?: boolean;
 }
 
 // ---------- Running a routine (begin → item × n → end) ----------

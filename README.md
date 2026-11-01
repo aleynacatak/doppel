@@ -144,6 +144,7 @@ It can use these helpers:
 | `saveCopy(folder?)` | Saves a PSD copy named `_doppl.psd` that never overwrites anything; only when a stage asks to save. |
 | `closeWithoutSaving(doc?)` | Closes a document; only documents Doppl opened. |
 | `removeWhiteBackground(doc?, tolerance?)` | Makes a plain white background that touches the corners transparent; white inside the subject stays. |
+| `maskSubject(layer?)` | Cuts out the main subject on any background with Photoshop's Select Subject, as an editable layer mask. No AI. Returns `{ bounds, kept }`, and flags a cutout that keeps under 10% or over 95% of the picture. |
 | `trimTransparent(doc?)` | Crops to the visible content. |
 | `dominantColor(docOrPath, { ignoreWhite? })` | The most common color, ignoring transparent pixels: `{ hex, r, g, b, share }`. |
 | `setSolidColor(layer, color)` | Sets a Solid Color fill layer's color (`"#RRGGBB"` or `{ r, g, b }`). |
@@ -182,6 +183,7 @@ Available to every routine's quality check (no AI):
 - layers outside a boundary;
 - missing images or data files;
 - missing fonts and font styles;
+- a Photoshop cutout that keeps under 10% or over 95% of the picture (listed only when it happens);
 - invalid barcode check digits;
 - InDesign's preflight checks (links, resolution, bleed).
 

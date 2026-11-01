@@ -593,6 +593,8 @@ export type RuleFindingType =
   | "font-style-missing"
   /** A barcode value has the wrong check digit or format. */
   | "barcode-invalid"
+  /** Photoshop: a cutout kept very little or nearly all of the picture, so it may have missed the subject. */
+  | "cutout-suspect"
   /** The document an output came from couldn't be checked (the routine closed it first). */
   | "not-checked";
 

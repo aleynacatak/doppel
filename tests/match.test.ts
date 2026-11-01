@@ -189,6 +189,8 @@ describe("why an item failed", () => {
     expect(failureCause("Barcode 2910260000072: The last digit of this EAN-13 barcode should be 9, not 2. Check the number for a typo.", false)).toBe("files");
     expect(failureCause("EAN-13 barcode needs 12 or 13 digits, but this one has 11.", false)).toBe("files");
     expect(failureCause("Cannot open the file because the open options are incorrect.", false)).toBe("files");
+    // A picture with nothing to cut out: no AI fix can help.
+    expect(failureCause("Photoshop couldn't find a subject in blank.png. Check the picture, or use one with a clear subject.", false)).toBe("files");
     expect(failureCause("The Doppl plugin in Figma was closed before the step finished.", false)).toBe("app");
     // A saved routine whose template isn't on the page: the file changed, the routine needs no repair.
     expect(failureCause('Action 1 (duplicateNode): No layer named "template" on page "Page 10 (Doppl copy)"', false)).toBe("files");

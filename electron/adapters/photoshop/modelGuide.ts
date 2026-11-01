@@ -49,6 +49,14 @@ export const PHOTOSHOP_HELPER_CATALOG = `Helper functions (use these; don't call
   removes a white fringe. Throws when the image's corners aren't white. Use it whenever the request asks for a mask
   or for removing white inside the subject. Then cropToBounds(doc, result.bounds, padding?) (trimTransparent
   doesn't see masks).
+- maskSubject(layer?) -> { bounds, kept }: cuts out the main subject on ANY background with Photoshop's Select
+  Subject, as a LAYER MASK on the layer (pixels kept, editable by hand later). No AI calls. kept is the share of the
+  picture that stays, 0-1. Use it when the backgrounds aren't plain white, or only some are (maskWhiteBackground
+  throws on those); for plain white ones maskWhiteBackground is exact and also clears white gaps inside the subject.
+  It decides what the subject is: it can't be told which object (two products stay together) and tight close-ups can
+  go wrong, so a cutout keeping under 10% or over 95% of the picture is flagged for the designer to look at. A small
+  product in a big frame trips that flag too, so the flag alone doesn't mean the routine is wrong. Throws when it
+  finds no subject. Then cropToBounds(doc, result.bounds, padding?) (trimTransparent doesn't see masks).
 - cropToBounds(doc, [left, top, right, bottom], padding?): crops the document to those pixel bounds.
 - trimTransparent(doc?): crops to the visible content (cuts off transparent edges).
 - dominantColor(docOrPath, { ignoreWhite? }) -> { hex: "#RRGGBB", r, g, b, share }: the most common color,
