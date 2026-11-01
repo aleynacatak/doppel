@@ -6,7 +6,7 @@ import path from "node:path";
 import type { AppStatus, DocumentRef, DocumentSummary, ParamOption, PreviewImage } from "../../core/types";
 import { shortVersion } from "../../core/util";
 import { filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, ManifestOptions, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
+import type { AdapterOutput, DesignAppAdapter, ManifestOptions, Progress, RuleCheckOptions, RuleFinding, ScriptContext, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession } from "../types";
 import { AdobeConnection } from "../adobe/connection";
 import { BridgeError, indesignBridge } from "./bridge";
 import { lintExtendScript } from "./lint";
@@ -23,7 +23,6 @@ import {
   PROBE,
   RULE_CHECKS,
   SAVE_DOCUMENT,
-  STYLE_FACTS,
   wrapRoutine,
 } from "./jsx/scripts";
 
@@ -228,12 +227,6 @@ export class InDesignAdapter implements DesignAppAdapter {
 
   lintScript(script: string): string[] {
     return lintExtendScript(script);
-  }
-
-  /** Page size, margins, columns, bleed and paragraph styles of an .indd file (InDesign must be running). */
-  async readStyleFacts(filePath: string): Promise<StyleFacts> {
-    if (!(await indesignBridge.isRunning())) throw new BridgeError("not-running", "Open InDesign to read this file's styles.");
-    return this.call<StyleFacts>(STYLE_FACTS, { path: filePath });
   }
 
   async connect(): Promise<AppStatus> {

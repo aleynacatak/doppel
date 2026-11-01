@@ -59,10 +59,11 @@ export class QcService {
         const unchecked = mine.find((f) => f.type === "not-checked");
         for (const def of adapter.qcChecks) {
           if (unchecked) {
-            checks.push({ level: def.level, label: def.label(minPpi), passed: true, skipped: true, reason: unchecked.message });
+            if (!def.onlyWhenFound) checks.push({ level: def.level, label: def.label(minPpi), passed: true, skipped: true, reason: unchecked.message });
             continue;
           }
           const hits = mine.filter((f) => def.types.includes(f.type) && (f.type !== "low-res" || f.value === undefined || f.value < minPpi));
+          if (def.onlyWhenFound && hits.length === 0) continue;
           checks.push({ level: def.level, label: def.label(minPpi), passed: hits.length === 0, reason: summarize(hits) });
         }
       }

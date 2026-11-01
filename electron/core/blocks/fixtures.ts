@@ -12,8 +12,12 @@ const GENERATORS: Record<string, () => Buffer> = {
   "product-on-white": () => encodePng(360, 240, (x, y) => (d(x, y, 230, 110) <= 6 ? WHITE : d(x, y, 180, 120) <= 80 ? [230, 120, 30, 255] : WHITE)),
   /** A blue ring on white: white around it and inside it. */
   "ring-on-white": () => encodePng(360, 240, (x, y) => (d(x, y, 180, 120) >= 35 && d(x, y, 180, 120) <= 90 ? [40, 80, 200, 255] : WHITE)),
+  /** An orange product on a gray gradient: a subject with no white around it. */
+  "product-on-gray": () => encodePng(360, 240, (x, y) => (d(x, y, 180, 120) <= 80 ? [Math.round(250 - d(x, y, 150, 90)), Math.round(135 - d(x, y, 150, 90) / 2), 30, 255] : [Math.round(200 - y / 5), Math.round(200 - y / 5), Math.round(200 - y / 5), 255])),
   /** A 600 × 400 gradient (no white background). */
   photo: () => encodePng(600, 400, (x, y) => [Math.round((x / 600) * 255), Math.round((y / 400) * 255), 140, 255]),
+  /** A blank white image: Select Subject finds nothing in it. */
+  "blank-white": () => encodePng(200, 120, () => WHITE),
   /** A solid red image (#E02020). */
   red: () => encodePng(200, 120, () => [224, 32, 32, 255]),
 };

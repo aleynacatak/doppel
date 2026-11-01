@@ -11,7 +11,6 @@ export const copy = {
   nav: {
     newTask: "New task",
     library: "Library",
-    style: "Style profile",
     settings: "Settings",
     apps: "Apps",
   },
@@ -95,7 +94,7 @@ export const copy = {
       noSessions: "The plugin isn't running in any Figma file right now.",
       session: (file: string, page?: string, version?: string) => `${file}${page ? ` · page “${page}”` : ""}${version ? ` · plugin ${version}` : ""}`,
       linksTitle: "2. Files by link (optional)",
-      linksHelp: "Add links to the files you use, to open them in Figma with one click and to read them for your Style profile without the plugin.",
+      linksHelp: "Add links to the files you use, to open them in Figma with one click.",
       tokenTitle: "Figma access token",
       tokenHelp: "Lets Doppl read files by link. In Figma: account menu → Settings → Security → Personal access tokens → Generate new token. Give it the scopes “file_content:read” and “current_user:read”, then paste it here.",
       tokenPlaceholder: "Paste your Figma access token",
@@ -737,30 +736,13 @@ export const copy = {
     refinedNotice: (v: number) => `Saved as version ${v}. This flow keeps the version it uses until you update the node.`,
   },
 
-  style: {
-    title: "Style profile",
-    subtitle: "Doppl reads the house style from past projects and uses it whenever it writes a routine.",
-    sourcesTitle: "Past projects",
-    addInDesign: "Add InDesign files…",
-    inDesignHint: "InDesign must be open; Doppl opens each file in the background to read it.",
-    figmaPlaceholder: "Paste a Figma file link",
-    addFigma: "Add Figma file",
-    reading: "Reading…",
-    remove: "Remove",
-    noSources: "No projects added yet.",
-    readFailed: "Couldn't read this file",
-    rulesTitle: "House style",
-    noRules: "Add a past project to see its styles, grid and margins here.",
-  },
-
-
   aiModels: {
     title: "AI models",
     intro: "Doppl picks the models by default. Change them only to try another model for one part of the work; reruns of saved routines never use AI.",
     rolesTitle: "Which model does what",
     roles: {
       planner: { label: "Planning", hint: "Understands the request, looks at documents, asks questions, plans flows and changes." },
-      coder: { label: "Writing code", hint: "Writes the scripts and Figma action lists." },
+      coder: { label: "Writing code", hint: "Writes the scripts and Figma action lists. When trial runs keep failing, Doppl's pick switches to a stronger model; a model you pick here stays." },
       reviewer: { label: "Reviewing", hint: "Looks at previews and outputs (needs a model that sees images)." },
       segmenter: { label: "Finding objects", hint: "Finds objects in images for quality checks." },
     } satisfies Record<AiRole, { label: string; hint: string }>,

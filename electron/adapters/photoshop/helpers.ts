@@ -349,6 +349,61 @@ function maskWhiteBackground(layer, options) {
 }`,
   }),
   ps({
+    id: "ps.maskSubject",
+    set: "masking",
+    call: "maskSubject",
+    summary: "Cuts out the main subject on any background (busy or colored, not only white) with Photoshop's Select Subject, as an editable layer mask.",
+    signature: { params: [{"name": "layer", "type": "Layer", "optional": true, "doc": "default: the active layer"}], returns: "{ bounds: [left, top, right, bottom], kept: share of the picture that stays, 0-1 }" },
+    sideEffects: ["adds (or replaces) the layer's mask", "flags the output when the cutout keeps under 10% or over 95% of the picture"],
+    doc: "maskSubject(layer?) -> { bounds, kept }: cuts out the main subject on ANY background with Photoshop's Select Subject, as a LAYER MASK on the layer (pixels kept, editable by hand later). No AI calls. Use it when the backgrounds aren't plain white, or only some are; for plain white ones maskWhiteBackground is exact and also clears white gaps inside the subject. It decides what the subject is: it can't be told which object (two products stay together) and tight close-ups can go wrong, so a cutout keeping under 10% or over 95% of the picture is flagged for the designer to look at. A small product in a big frame trips that flag too, so the flag alone doesn't mean the routine is wrong. Throws when it finds no subject. Then cropToBounds(doc, result.bounds, padding?) (trimTransparent doesn't see masks).\nExample: var cut = maskSubject(img.activeLayer); cropToBounds(img, cut.bounds, 4);",
+    tests: [{"name": "cuts out the subject on a gray background as a mask, with no flag", "inputs": {"image": "gen:product-on-gray"}, "script": "var d = openDocument(params.image);\nvar cut = maskSubject(d.activeLayer);\nvar masked = DopplPS.hasLayerMask();\nctx.output(\"files\", exportImage(ctx.join(ctx.workDir, \"subject.png\"), \"png\"));\nreturn { masked: masked, left: cut.bounds[0] > 0, plausible: cut.kept > 0.1 && cut.kept < 0.95, flags: DopplPS.state.findings.length };", "checks": [{"type": "cornerPixelsTransparent", "port": "files"}, {"type": "hasTransparency", "port": "files"}], "expect": {"masked": true, "left": true, "plausible": true, "flags": 0}}, {"name": "leaves a hidden copy of the photo out of the cutout", "inputs": {"image": "gen:product-on-gray"}, "script": "var d = openDocument(params.image);\nvar photo = d.activeLayer;\nif (photo.isBackgroundLayer) { photo.isBackgroundLayer = false; }\nvar original = photo.duplicate();\noriginal.name = \"Original\";\noriginal.visible = false;\nvar cut = maskSubject(photo);\nctx.output(\"files\", exportImage(ctx.join(ctx.workDir, \"subject.png\"), \"png\"));\nreturn { plausible: cut.kept > 0.1 && cut.kept < 0.95 };", "checks": [{"type": "cornerPixelsTransparent", "port": "files"}], "expect": {"plausible": true}}, {"name": "says so when a picture has no subject", "inputs": {"image": "gen:blank-white"}, "script": "var d = openDocument(params.image);\nvar said = \"\";\ntry { maskSubject(d.activeLayer); } catch (e) { said = e.message; }\nreturn { noSubject: said.indexOf(\"couldn't find a subject\") >= 0, flags: DopplPS.state.findings.length };", "checks": [], "expect": {"noSubject": true, "flags": 0}}, {"name": "flags a cutout that keeps the whole picture", "inputs": {"image": "gen:red"}, "script": "var d = openDocument(params.image);\nvar cut = maskSubject(d.activeLayer);\nreturn { kept: cut.kept, flag: DopplPS.state.findings[0].type };", "checks": [], "expect": {"kept": 1, "flag": "cutout-suspect"}}],
+    code: String.raw`/**
+ * Cuts out the main subject with Photoshop's Select Subject, as a LAYER MASK on the layer (default: the active layer);
+ * its pixels stay as they are, so the mask can be refined by hand. An existing mask on the layer is replaced. Works on
+ * any background, but Photoshop decides what the subject is, so a cutout that keeps under 10% or over 95% of the
+ * picture is flagged for the designer to look at.
+ * Returns { bounds: [left, top, right, bottom], kept: 0-1 }, the bounds for cropToBounds. Throws when there's no subject.
+ */
+function maskSubject(layer) {
+  var target = layer || app.activeDocument.activeLayer;
+  var d = DopplPS.documentOf(target);
+  app.activeDocument = d;
+  if (target.isBackgroundLayer) { target.isBackgroundLayer = false; }
+  d.activeLayer = target;
+  if (DopplPS.hasLayerMask()) { DopplPS.deleteLayerMask(); }
+  d.selection.deselect();
+  var noSubject = "Photoshop couldn't find a subject in " + d.name + ". Check the picture, or use one with a clear subject.";
+  var thisLayerOnly = new ActionDescriptor();
+  thisLayerOnly.putBoolean(stringIDToTypeID("sampleAllLayers"), false);
+  try {
+    executeAction(stringIDToTypeID("autoCutout"), thisLayerOnly, DialogModes.NO);
+  } catch (e) {
+    if (/not currently valid/.test(e.message)) { throw new Error(noSubject); }
+    throw e;
+  }
+  var bounds;
+  try {
+    bounds = DopplPS.px(d.selection.bounds);
+  } catch (e2) {
+    throw new Error(noSubject);
+  }
+
+  // With a selection, a channel's histogram counts only the selected pixels.
+  var levels = d.channels[0].histogram, selected = 0;
+  for (var i = 0; i < levels.length; i++) { selected += levels[i]; }
+  var kept = selected / (d.width.as("px") * d.height.as("px"));
+  if (kept < 0.1) {
+    var percent = Math.round(kept * 100);
+    DopplPS.finding("cutout-suspect", "The cutout of " + d.name + " kept only " + (percent < 1 ? "under 1" : percent) + "% of the picture. Check that it found the whole subject.");
+  } else if (kept > 0.95) {
+    DopplPS.finding("cutout-suspect", "The cutout of " + d.name + " kept almost the whole picture. Check that it found a subject.");
+  }
+  DopplPS.addLayerMask(true);
+  d.selection.deselect();
+  return { bounds: bounds, kept: Math.round(kept * 1000) / 1000 };
+}`,
+  }),
+  ps({
     id: "ps.cropToBounds",
     set: "masking",
     call: "cropToBounds",

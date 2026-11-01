@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AppId, Flow, InputValue, MatchRule, ParamValue, Routine, Run, Settings, StyleProfile } from "../types";
+import type { AppId, Flow, InputValue, MatchRule, ParamValue, Routine, Run, Settings } from "../types";
 
 /** Values picked last time for a routine or flow, on this Mac only (they hold paths). */
 export interface LastValues {
@@ -44,8 +44,6 @@ export interface Storage {
   saveLastFolder(folder: string): Promise<void>;
   getSettings(): Promise<Settings | null>;
   saveSettings(settings: Settings): Promise<void>;
-  getStyleProfile(): Promise<StyleProfile | null>;
-  saveStyleProfile(profile: StyleProfile): Promise<void>;
   /** Marker files, e.g. "demo-data-removed". */
   hasMarker(name: string): Promise<boolean>;
   setMarker(name: string): Promise<void>;
@@ -183,14 +181,6 @@ export class JsonStorage implements Storage {
 
   saveSettings(settings: Settings) {
     return this.writeJson(path.join(this.root, "settings.json"), settings);
-  }
-
-  getStyleProfile() {
-    return this.readJson<StyleProfile>(path.join(this.root, "style-profile.json"));
-  }
-
-  saveStyleProfile(profile: StyleProfile) {
-    return this.writeJson(path.join(this.root, "style-profile.json"), profile);
   }
 
   async hasMarker(name: string) {

@@ -1,6 +1,6 @@
 import type { DesignAppAdapter, RoutineTemplate } from "../../adapters/types";
 import { paramsToContract } from "../routines/legacy";
-import type { AppId, FlowPlanRoutine, StyleProfile } from "../types";
+import type { AppId, FlowPlanRoutine } from "../types";
 
 // Prompts and structured-output schemas for Muse Spark (response_format json_schema, not strict).
 //
@@ -270,7 +270,7 @@ const APP_ABILITIES: Record<string, string> = {
   figma:
     "Figma: works on a Figma file open with the Doppl plugin, with an action list: duplicate template frames, set texts, images, colors and barcodes from data, arrange, export frames as PNG, JPG, SVG or PDF.",
   photoshop:
-    "Photoshop: scripts on images and PSDs: open images, cut out white backgrounds, trim, replace Smart Objects, set text layers, find dominant colors, export PNG, JPG or TIFF, save PSD copies. Never changes the designer's PSD.",
+    "Photoshop: scripts on images and PSDs: open images, cut out subjects on white or any other background, trim, replace Smart Objects, set text layers, find dominant colors, export PNG, JPG or TIFF, save PSD copies. Never changes the designer's PSD.",
   indesign: "InDesign: scripts on an open InDesign document: place text and images, apply styles, add pages, preflight, export PDF or PNG pages.",
 };
 
@@ -532,7 +532,6 @@ export interface TaskFacts {
   folders: { path: string; files: string[] }[];
   samples: { file: string; columns: string[]; rows: Record<string, unknown>[]; totalRows: number; errors: string[] }[];
   documents: { appId: string; id: string; name: string; inspection: unknown }[];
-  style: StyleProfile | null;
   /** The input check: what was attached, how it pairs and what the designer decided (see inputs/inputCheck). */
   inputs?: string[];
 }
@@ -543,7 +542,6 @@ const clip = (value: unknown, max: number) => {
 };
 
 function factLines(f: TaskFacts, inspectionChars: number) {
-  const rules = f.style?.rules.length ? f.style.rules.map((r) => `${r.label}: ${r.value}`).join("; ") : "none";
   return [
     `Request: "${f.request}"`,
     `Reference files (names only): ${f.references.length ? f.references.map((r) => r.split("/").pop()).join(", ") : "none"}`,
@@ -553,7 +551,6 @@ function factLines(f: TaskFacts, inspectionChars: number) {
     ),
     ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
     ...(f.inputs?.length ? ["Inputs Doppl checked (follow these; the designer confirmed the choices marked so):", ...f.inputs.map((l) => `- ${l}`)] : []),
-    `House style: ${rules}`,
     "Open documents:",
     ...(f.documents.length
       ? f.documents.map((d) => (d.id ? `- ${d.appId} document id "${d.id}" (${d.name}): ${clip(d.inspection, inspectionChars)}` : `- ${d.appId}: ${String(d.inspection)}`))

@@ -68,7 +68,6 @@ import type {
   RunOutput,
   SaveRoutineInput,
   SaveRoutineResult,
-  StyleProfile,
   Task,
   TaskApp,
 } from "../types";
@@ -171,7 +170,7 @@ interface LoopProgress {
   lastProblem: string;
 }
 
-/** What Doppl read for the task: documents, sample data, folders, house style. */
+/** What Doppl read for the task: documents, sample data, folders. */
 interface Gathered {
   facts: TaskFacts;
   samples: ValidationSamples;
@@ -244,6 +243,8 @@ const clip = (value: unknown, max = RESULT_CHARS) => {
 
 const copyItems = (n: number) => plural(n, "test item");
 const withProvenance = (p: Provenance | undefined) => (p ? { provenance: p } : {});
+/** Every model that served a role, in order: a backup may take over during a creation. */
+const servedBy = (soFar: string, model: string) => (soFar.split(" → ").includes(model) ? soFar : `${soFar} → ${model}`);
 
 /** Columns of the sample data the routine's code reads from its rows: item.Flavor, item["Ürün Adı"], {{item.Price}}. */
 export function usedColumns(code: string, columns: string[]): string[] {
@@ -359,7 +360,6 @@ export class RoutineService {
       ai: AiService;
       access: AiAccessService;
       qc: QcService;
-      getStyle: () => Promise<StyleProfile | null>;
       apps: AppStatusService;
       emit: (creation: Creation) => void;
       workRoot: string;
@@ -1119,7 +1119,7 @@ export class RoutineService {
       if (budgets && !budgets.includes(budget)) continue;
       for (const [role, r] of Object.entries(acc) as [Role, NonNullable<Provenance[Role]>][]) {
         const o = (out[role] ??= { model: r.model, provider: r.provider, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
-        Object.assign(o, { model: r.model, provider: r.provider });
+        Object.assign(o, { model: r.model.split(" → ").reduce(servedBy, o.model), provider: r.provider });
         o.calls += r.calls;
         o.inputTokens += r.inputTokens;
         o.outputTokens += r.outputTokens;
@@ -1233,7 +1233,8 @@ export class RoutineService {
       onUsage: (u) => {
         const acc = state.usage.get(budget) ?? {};
         const r = (acc[u.role] ??= { model: u.model, provider: u.provider, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
-        Object.assign(r, { model: u.model, provider: u.provider });
+        // A call that cost nothing never got an answer (a backup that couldn't answer): it didn't serve the role.
+        Object.assign(r, { model: u.costUsd > 0 ? servedBy(r.model, u.model) : r.model, provider: u.provider });
         r.calls += 1;
         r.inputTokens += u.usage?.input ?? 0;
         r.outputTokens += u.usage?.output ?? 0;
@@ -1282,7 +1283,7 @@ export class RoutineService {
     this.emit(c);
   }
 
-  /** What the model gets to start: the apps' documents (inspected), sample data, folder file names, house style. */
+  /** What the model gets to start: the apps' documents (inspected), sample data, folder file names. */
   private async gather(c: Creation, isCancelled: () => boolean): Promise<Gathered> {
     const { registry } = this.deps;
     const apps = taskApps(c.task);
@@ -1321,9 +1322,8 @@ export class RoutineService {
     const read = await this.readSamples(c.task);
     const versions: Record<string, string> = {};
     for (const a of apps) versions[a.appId] = (await registry.get(a.appId).getAppVersion().catch(() => null)) ?? "";
-    const style = await this.deps.getStyle().catch(() => null);
     return {
-      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents, style },
+      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents },
       samples: { values: read.values, allowed: documents.flatMap((d) => [...namesIn(d.inspection)]), dataColumns: read.dataColumns },
       dataFiles: read.dataFiles,
       versions,
@@ -2066,9 +2066,11 @@ export class RoutineService {
         if (problems.length || res.progress.status === "failed") {
           await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
           progress.lastProblem = [res.progress.errorDetail ?? res.progress.error, ...problems.map((i) => `${i.label}: ${i.error}`)].filter(Boolean).join(" · ") || "The trial failed.";
+          const coder = this.deps.ai.modelFor?.("coder", spec.budget);
           this.deps.ai.noteFailedTrial?.(spec.budget);
           if (spent() >= MAX_CREATION_CALLS - REVIEW_RESERVE || turn >= MAX_TURNS || outOfCalls()) throw new ExecutionError("The trial run of the routine failed.", progress.lastProblem, "generic", true);
           this.note(c, `The trial run failed, sent back to fix: ${progress.lastProblem.length > 240 ? `${progress.lastProblem.slice(0, 237)}…` : progress.lastProblem}`);
+          if (this.deps.ai.modelFor?.("coder", spec.budget) !== coder) this.note(c, "The trial runs keep failing, so a stronger AI model writes the code from here");
           this.setStage(state, "run", "pending", "");
           this.setStage(state, "write", "active", "Fixing problems from the trial run");
           reply(this.describeTrial(res, "The trial run on a sample item failed. Fix the routine and propose it again:"));

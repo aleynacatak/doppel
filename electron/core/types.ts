@@ -593,6 +593,8 @@ export type RuleFindingType =
   | "font-style-missing"
   /** A barcode value has the wrong check digit or format. */
   | "barcode-invalid"
+  /** Photoshop: a cutout kept very little or nearly all of the picture, so it may have missed the subject. */
+  | "cutout-suspect"
   /** The document an output came from couldn't be checked (the routine closed it first). */
   | "not-checked";
 
@@ -831,23 +833,6 @@ export interface Run {
   onlyItems?: string[];
   /** Dev panel: every app was simulated. */
   mocked?: boolean;
-}
-
-export interface StyleSource {
-  id: string;
-  kind: "indesign" | "figma";
-  name: string;
-  /** InDesign file path, or Figma file link. */
-  path?: string;
-  addedAt: string;
-  /** Facts read from the file (styles, grid, margins…), used to build the rules. */
-  facts?: { label: string; value: string }[];
-  error?: string;
-}
-
-export interface StyleProfile {
-  sources: StyleSource[];
-  rules: { label: string; value: string }[];
 }
 
 // ---------- Creation (routine creation and repair sessions) ----------
@@ -1338,13 +1323,6 @@ export interface DoppelApi {
   // Native pickers
   pickFiles(options?: PickFileOptions): Promise<string[]>;
   pickFolder(): Promise<string | null>;
-
-  // Style profile
-  getStyleProfile(): Promise<StyleProfile>;
-  /** Pick InDesign files and read their styles (InDesign must be running). */
-  addStyleSources(): Promise<StyleProfile>;
-  addStyleFigmaLink(url: string): Promise<CheckResult<StyleProfile>>;
-  removeStyleSource(id: string): Promise<StyleProfile>;
 
   // Settings
   getSettings(): Promise<Settings>;

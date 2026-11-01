@@ -15,7 +15,7 @@ There is no mock data and there are no sample routines: every app connection, AI
 | Photoshop | The same bridge; works on duplicates and never saves over your PSD |
 | Figma | The Doppl plugin runs declarative action lists; files can also be connected by link (REST API) |
 | Multi-app routines | Stages in order, handing files to each other, once per data row or file |
-| AI (writing, previews, fixing, repairing routines) | Muse Spark 1.3 through the demo Worker (access code) or your own Meta API key |
+| AI (writing, previews, fixing, repairing routines) | Muse Spark 1.3, with Muse Wonder 1.0 writing the code when trials keep failing, through the demo Worker (access code) or your own Meta API key |
 | Checks | Each app's own rule and object checks; optional visual review and object checks (SAM 3.1) |
 | Storage | JSON in `userData`; codes, keys and tokens encrypted with the macOS Keychain |
 
@@ -46,7 +46,7 @@ Routines run inside Figma through the Doppl plugin, a development plugin you imp
 
 Keep the small Doppl window open in Figma while routines run. Each file with the plugin running shows up in Doppl (Connect apps lists them); routines pick the file to work on. The window shows what it is doing and has a **Cancel** button.
 
-**Optional: files by link.** With a Figma personal access token (scopes `file_content:read` and `current_user:read`), you can add file links: Doppl opens them in Figma with one click and reads them for the Style profile without the plugin.
+**Optional: files by link.** With a Figma personal access token (scopes `file_content:read` and `current_user:read`), you can add file links: Doppl opens them in Figma with one click.
 
 ### How the plugin connects
 - **Connection:** the plugin's window opens a WebSocket to Doppl at `ws://localhost:47810`. The port can be changed in Settings; Doppl then rewrites the plugin copy in its data folder, so import it again.
@@ -144,6 +144,7 @@ It can use these helpers:
 | `saveCopy(folder?)` | Saves a PSD copy named `_doppl.psd` that never overwrites anything; only when a stage asks to save. |
 | `closeWithoutSaving(doc?)` | Closes a document; only documents Doppl opened. |
 | `removeWhiteBackground(doc?, tolerance?)` | Makes a plain white background that touches the corners transparent; white inside the subject stays. |
+| `maskSubject(layer?)` | Cuts out the main subject on any background with Photoshop's Select Subject, as an editable layer mask. No AI. Returns `{ bounds, kept }`, and flags a cutout that keeps under 10% or over 95% of the picture. |
 | `trimTransparent(doc?)` | Crops to the visible content. |
 | `dominantColor(docOrPath, { ignoreWhite? })` | The most common color, ignoring transparent pixels: `{ hex, r, g, b, share }`. |
 | `setSolidColor(layer, color)` | Sets a Solid Color fill layer's color (`"#RRGGBB"` or `{ r, g, b }`). |
@@ -153,7 +154,7 @@ Documents stay open across a stage's items and are closed without saving when th
 ## How a routine gets written
 
 InDesign-only tasks use the single-script flow:
-1. **Draft:** Muse Spark gets the request, the document summary, InDesign's scripting guide, two example routines and your house style. It may ask one question.
+1. **Draft:** Muse Spark gets the request, the document summary, InDesign's scripting guide and two example routines. It may ask one question.
 2. **Safety check:** the script is checked (syntax, unsupported or unsafe calls, fixed locations).
 3. **Trial:** the routine runs on a hidden copy, so the preview and checks are real.
 4. **Fixes:** problems go back to the model, up to twice.
@@ -173,6 +174,8 @@ It works in turns, each one AI call. The Worker forwards structured JSON output 
 
 At most 15 AI calls per creation (the Worker's limit). The creation screen shows the live count and what the AI tried. Saving and rerunning never call AI.
 
+After two failed trials of one routine, Muse Wonder writes its code for the rest of that creation (`escalation` in `electron/ai/roles.json`); Muse Spark keeps planning. Wonder costs more per token, so it stays out of normal creations and can't be picked in Settings. If it can't answer (no access to it, an outage), Spark carries on. A model picked by hand for writing code stays, and the routine's Details show which models served each role.
+
 ## Checks
 
 Available to every routine's quality check (no AI):
@@ -180,6 +183,7 @@ Available to every routine's quality check (no AI):
 - layers outside a boundary;
 - missing images or data files;
 - missing fonts and font styles;
+- a Photoshop cutout that keeps under 10% or over 95% of the picture (listed only when it happens);
 - invalid barcode check digits;
 - InDesign's preflight checks (links, resolution, bleed).
 
@@ -231,7 +235,7 @@ electron/
     helpers/           barcodes, data files
     services/          routineService (creation loop, save), runService (runs, QC), qcService, modelAiService +
                        aiPrompts, aiTransport (demo Worker / Meta), aiAccessService + secretStore, figmaService,
-                       devService, connectionLog, styleService, storage, settings, appStatus
+                       devService, connectionLog, storage, settings, appStatus
   adapters/
     types.ts           DesignAppAdapter interface (incl. beginStage / runStageItem / endStage)
     adobe/             shared bridge: osascript via execFile, temp .jsx + JSON polyfill, status, lint
@@ -247,7 +251,7 @@ worker/                Cloudflare Worker for demo access codes (own package; see
 Data lives in `~/Library/Application Support/Doppl/`:
 - **Routines:** `routines/<id>.json`, one per routine.
 - **Runs:** `runs/<id>.json`, plus `runs/<id>/<stageId>/` for multi-app runs.
-- **Settings and style:** `settings.json` and `style-profile.json`.
+- **Settings:** `settings.json`.
 - **Secrets:** `secrets.json` (access code, Meta key, Figma token), encrypted with the Keychain.
 - **Plugin:** `Figma plugin/`, the copy you import into Figma.
 

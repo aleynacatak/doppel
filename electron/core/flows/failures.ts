@@ -4,7 +4,7 @@ import type { FailureCause } from "../types";
 
 const APP = /not connected|isn't connected|isn't running|is not running|start the doppl plugin|plugin isn't|plugin in figma was closed|no document is open|document (was |is )?closed|couldn't reach|isn't open|open a document in|didn't finish within|took too long to answer/i;
 /** Messages apps give for files they can't open: a damaged file, a format they don't read. */
-const FILES = /cannot parse the file|not compatible with this version|corrupt|damaged|unsupported (file )?format|isn't a valid (image|file)|is not a valid (image|file)|open options are incorrect|isn't a readable/i;
+const FILES = /cannot parse the file|not compatible with this version|corrupt|damaged|unsupported (file )?format|isn't a valid (image|file)|is not a valid (image|file)|open options are incorrect|isn't a readable|couldn't find a subject/i;
 /** The designer's Figma file no longer has what the routine was made on: a page, or a layer on the page (renamed, removed). */
 const DOCUMENT = /no layer named "[^"]*" on page|no layer "[^"]*" on page|no page named/i;
 /** A value in the designer's data that can't be used as it is: a barcode with a typo, an empty barcode. */

@@ -259,6 +259,7 @@ export class AiAccessService {
       }
       const model = registry.model(b.model);
       if (model.dataPolicy.trainsOnData) throw new Error(`${model.displayName} may train on what it's sent; Doppl doesn't use it for routines.`);
+      if (model.backupOnly) throw new Error(`${model.displayName} only takes over when trial runs keep failing; it can't be picked here.`);
       if (role === "segmenter" ? !model.capabilities.segmentation : model.capabilities.segmentation) {
         throw new Error(role === "segmenter" ? `${model.displayName} can't segment images.` : `${model.displayName} only segments images.`);
       }
