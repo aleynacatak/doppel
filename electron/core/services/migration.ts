@@ -5,7 +5,7 @@ const MARKER = ".migrated-from-doppel";
 
 /**
  * Earlier builds were called "Doppel" and kept their data in Application Support/Doppel. Copies routines,
- * runs, settings and the style profile into the Doppl folder once; the old folder stays as it is.
+ * runs and settings into the Doppl folder once; the old folder stays as it is.
  * Codes, keys and tokens are not copied: they were encrypted under the old name and must be entered again.
  */
 export async function migrateDoppelData(appData: string, userData: string): Promise<boolean> {
@@ -27,7 +27,7 @@ export async function migrateDoppelData(appData: string, userData: string): Prom
       await fs.copyFile(path.join(oldDir, dir, name), path.join(userData, dir, name));
     }
   }
-  for (const file of ["settings.json", "style-profile.json", ".demo-data-removed"]) {
+  for (const file of ["settings.json", ".demo-data-removed"]) {
     await fs.copyFile(path.join(oldDir, file), path.join(userData, file)).catch(() => undefined);
   }
   await fs.writeFile(path.join(userData, MARKER), new Date().toISOString());

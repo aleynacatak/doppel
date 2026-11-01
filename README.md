@@ -46,7 +46,7 @@ Routines run inside Figma through the Doppl plugin, a development plugin you imp
 
 Keep the small Doppl window open in Figma while routines run. Each file with the plugin running shows up in Doppl (Connect apps lists them); routines pick the file to work on. The window shows what it is doing and has a **Cancel** button.
 
-**Optional: files by link.** With a Figma personal access token (scopes `file_content:read` and `current_user:read`), you can add file links: Doppl opens them in Figma with one click and reads them for the Style profile without the plugin.
+**Optional: files by link.** With a Figma personal access token (scopes `file_content:read` and `current_user:read`), you can add file links: Doppl opens them in Figma with one click.
 
 ### How the plugin connects
 - **Connection:** the plugin's window opens a WebSocket to Doppl at `ws://localhost:47810`. The port can be changed in Settings; Doppl then rewrites the plugin copy in its data folder, so import it again.
@@ -153,7 +153,7 @@ Documents stay open across a stage's items and are closed without saving when th
 ## How a routine gets written
 
 InDesign-only tasks use the single-script flow:
-1. **Draft:** Muse Spark gets the request, the document summary, InDesign's scripting guide, two example routines and your house style. It may ask one question.
+1. **Draft:** Muse Spark gets the request, the document summary, InDesign's scripting guide and two example routines. It may ask one question.
 2. **Safety check:** the script is checked (syntax, unsupported or unsafe calls, fixed locations).
 3. **Trial:** the routine runs on a hidden copy, so the preview and checks are real.
 4. **Fixes:** problems go back to the model, up to twice.
@@ -231,7 +231,7 @@ electron/
     helpers/           barcodes, data files
     services/          routineService (creation loop, save), runService (runs, QC), qcService, modelAiService +
                        aiPrompts, aiTransport (demo Worker / Meta), aiAccessService + secretStore, figmaService,
-                       devService, connectionLog, styleService, storage, settings, appStatus
+                       devService, connectionLog, storage, settings, appStatus
   adapters/
     types.ts           DesignAppAdapter interface (incl. beginStage / runStageItem / endStage)
     adobe/             shared bridge: osascript via execFile, temp .jsx + JSON polyfill, status, lint
@@ -247,7 +247,7 @@ worker/                Cloudflare Worker for demo access codes (own package; see
 Data lives in `~/Library/Application Support/Doppl/`:
 - **Routines:** `routines/<id>.json`, one per routine.
 - **Runs:** `runs/<id>.json`, plus `runs/<id>/<stageId>/` for multi-app runs.
-- **Settings and style:** `settings.json` and `style-profile.json`.
+- **Settings:** `settings.json`.
 - **Secrets:** `secrets.json` (access code, Meta key, Figma token), encrypted with the Keychain.
 - **Plugin:** `Figma plugin/`, the copy you import into Figma.
 

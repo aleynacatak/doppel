@@ -68,7 +68,6 @@ import type {
   RunOutput,
   SaveRoutineInput,
   SaveRoutineResult,
-  StyleProfile,
   Task,
   TaskApp,
 } from "../types";
@@ -171,7 +170,7 @@ interface LoopProgress {
   lastProblem: string;
 }
 
-/** What Doppl read for the task: documents, sample data, folders, house style. */
+/** What Doppl read for the task: documents, sample data, folders. */
 interface Gathered {
   facts: TaskFacts;
   samples: ValidationSamples;
@@ -359,7 +358,6 @@ export class RoutineService {
       ai: AiService;
       access: AiAccessService;
       qc: QcService;
-      getStyle: () => Promise<StyleProfile | null>;
       apps: AppStatusService;
       emit: (creation: Creation) => void;
       workRoot: string;
@@ -1282,7 +1280,7 @@ export class RoutineService {
     this.emit(c);
   }
 
-  /** What the model gets to start: the apps' documents (inspected), sample data, folder file names, house style. */
+  /** What the model gets to start: the apps' documents (inspected), sample data, folder file names. */
   private async gather(c: Creation, isCancelled: () => boolean): Promise<Gathered> {
     const { registry } = this.deps;
     const apps = taskApps(c.task);
@@ -1321,9 +1319,8 @@ export class RoutineService {
     const read = await this.readSamples(c.task);
     const versions: Record<string, string> = {};
     for (const a of apps) versions[a.appId] = (await registry.get(a.appId).getAppVersion().catch(() => null)) ?? "";
-    const style = await this.deps.getStyle().catch(() => null);
     return {
-      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents, style },
+      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents },
       samples: { values: read.values, allowed: documents.flatMap((d) => [...namesIn(d.inspection)]), dataColumns: read.dataColumns },
       dataFiles: read.dataFiles,
       versions,

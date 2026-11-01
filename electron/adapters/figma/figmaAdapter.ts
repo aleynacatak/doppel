@@ -6,8 +6,8 @@ import path from "node:path";
 import { CancelledError } from "../../core/util";
 import type { AppStatus, DocumentRef, DocumentSummary, FigmaActionList, FigmaFile, FigmaPageRef, ParamOption, PreviewImage, RuleFinding } from "../../core/types";
 import { bufferPreview, filePreview } from "../previews";
-import type { AdapterOutput, DesignAppAdapter, ManifestOptions, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession, StyleFacts } from "../types";
-import { FigmaApiError, fileLink, getFile, parseFigmaLink, renderNodes, topFrames } from "./figmaRest";
+import type { AdapterOutput, DesignAppAdapter, ManifestOptions, ScriptResult, StageItemInput, StageItemResult, StageRunContext, StageSession } from "../types";
+import { fileLink, getFile, renderNodes, topFrames } from "./figmaRest";
 import { figmaCapabilityManifest, FIGMA_MODEL_GUIDE } from "./modelGuide";
 import { type FigmaPluginBridge, PluginCancelledError, PluginNotConnectedError } from "./pluginBridge";
 import { parseWireActions } from "../../shared/figmaActions";
@@ -411,27 +411,5 @@ export class FigmaAdapter implements DesignAppAdapter {
 
   async closeDocument() {
     // Trial pages are removed in endRun.
-  }
-
-  /** Frame sizes, text and color styles of a Figma file (for the style profile). */
-  async readStyleFacts(link: string): Promise<StyleFacts> {
-    const parsed = parseFigmaLink(link);
-    if (!parsed) throw new FigmaApiError(400, "That doesn't look like a Figma file link.");
-    const token = await this.deps.getToken();
-    if (!token) throw new FigmaApiError(401, "Add your Figma access token in Connect apps → Figma first.");
-    const data = await getFile(token, parsed.key, 2);
-    const frames = topFrames(data);
-    const sizes = new Map<string, number>();
-    for (const f of frames) sizes.set(`${f.width}×${f.height}`, (sizes.get(`${f.width}×${f.height}`) ?? 0) + 1);
-    const topSizes = [...sizes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
-    const styles = Object.values(data.styles ?? {});
-    const named = (type: string) => styles.filter((s) => s.styleType === type).map((s) => s.name);
-    const facts = [
-      topSizes.length ? { label: "Frame sizes", value: topSizes.map(([s, n]) => `${s} (${n})`).join(", ") } : null,
-      named("TEXT").length ? { label: "Text styles", value: named("TEXT").slice(0, 10).join(", ") } : null,
-      named("FILL").length ? { label: "Color styles", value: named("FILL").slice(0, 10).join(", ") } : null,
-      named("GRID").length ? { label: "Layout grids", value: named("GRID").slice(0, 6).join(", ") } : null,
-    ].filter((f): f is { label: string; value: string } => f !== null);
-    return { name: data.name, facts };
   }
 }

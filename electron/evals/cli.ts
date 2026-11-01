@@ -210,7 +210,6 @@ export async function runEvalCli(argv: string[], paths: { userData: string; temp
         ai,
         access,
         qc,
-        getStyle: async () => null,
         apps,
         emit: () => undefined,
         workRoot: path.join(dataDir, "work"),

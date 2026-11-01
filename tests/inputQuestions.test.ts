@@ -96,7 +96,6 @@ beforeEach(async () => {
     ai,
     access: { ensureReady: async () => undefined, provider: () => "meta-api", noteQuota: () => undefined } as unknown as AiAccessService,
     qc: new QcService(ai),
-    getStyle: async () => null,
     apps: { statusOf: async () => "connected" } as unknown as AppStatusService,
     emit: () => undefined,
     workRoot: path.join(dir, "work"),

@@ -833,23 +833,6 @@ export interface Run {
   mocked?: boolean;
 }
 
-export interface StyleSource {
-  id: string;
-  kind: "indesign" | "figma";
-  name: string;
-  /** InDesign file path, or Figma file link. */
-  path?: string;
-  addedAt: string;
-  /** Facts read from the file (styles, grid, margins…), used to build the rules. */
-  facts?: { label: string; value: string }[];
-  error?: string;
-}
-
-export interface StyleProfile {
-  sources: StyleSource[];
-  rules: { label: string; value: string }[];
-}
-
 // ---------- Creation (routine creation and repair sessions) ----------
 
 export type CreationStageKey = "read" | "write" | "run" | "check" | "ready";
@@ -1338,13 +1321,6 @@ export interface DoppelApi {
   // Native pickers
   pickFiles(options?: PickFileOptions): Promise<string[]>;
   pickFolder(): Promise<string | null>;
-
-  // Style profile
-  getStyleProfile(): Promise<StyleProfile>;
-  /** Pick InDesign files and read their styles (InDesign must be running). */
-  addStyleSources(): Promise<StyleProfile>;
-  addStyleFigmaLink(url: string): Promise<CheckResult<StyleProfile>>;
-  removeStyleSource(id: string): Promise<StyleProfile>;
 
   // Settings
   getSettings(): Promise<Settings>;

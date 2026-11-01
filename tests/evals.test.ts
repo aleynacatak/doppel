@@ -393,7 +393,7 @@ describe("running tasks through the creation loop", () => {
         const apps = { statusOf: async () => "connected" } as unknown as AppStatusService;
         const qc = new QcService(ai);
         const runs = new RunService({ storage, library, flows, registry, apps, qc, access, emit: () => undefined, runsDir: path.join(dataDir, "runs"), copiesDir: path.join(dataDir, "copies") });
-        const routines = new RoutineService({ storage, registry, library, flows, ai, access, qc, getStyle: async () => null, apps, emit: () => undefined, workRoot: path.join(dataDir, "work"), templates: [] });
+        const routines = new RoutineService({ storage, registry, library, flows, ai, access, qc, apps, emit: () => undefined, workRoot: path.join(dataDir, "work"), templates: [] });
         return { routines, runs, library };
       },
     };

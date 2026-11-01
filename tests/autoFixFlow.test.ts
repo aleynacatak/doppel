@@ -101,7 +101,7 @@ describe("Doppl's own fix, the whole way", () => {
       copiesDir: path.join(dir, "copies"),
       onRunFinished: (run) => void done.push(autoFix!.consider(run)),
     });
-    const routines = new RoutineService({ storage, registry, library, flows, ai, access, qc, getStyle: async () => null, apps, emit: () => undefined, workRoot: path.join(dir, "work"), templates: [] });
+    const routines = new RoutineService({ storage, registry, library, flows, ai, access, qc, apps, emit: () => undefined, workRoot: path.join(dir, "work"), templates: [] });
     autoFix = new AutoFixService({ routines, runs, library, access, pollMs: 5 });
 
     const now = new Date().toISOString();

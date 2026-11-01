@@ -113,7 +113,6 @@ beforeEach(async () => {
     ai,
     access: { ensureReady: async () => undefined, provider: () => "doppl-demo", refreshSession: async () => ({ ok: true, value: { session: null } }), noteQuota: () => undefined, callLimit: () => callLimit } as unknown as AiAccessService,
     qc: new QcService(ai),
-    getStyle: async () => null,
     apps: { statusOf: async () => "connected" } as unknown as AppStatusService,
     emit: () => undefined,
     workRoot: path.join(dir, "work"),

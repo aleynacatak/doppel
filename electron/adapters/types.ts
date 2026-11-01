@@ -136,12 +136,6 @@ export interface StageSession {
   documentName?: string;
 }
 
-/** Facts about a document's house style (for the style profile). */
-export interface StyleFacts {
-  name: string;
-  facts: { label: string; value: string }[];
-}
-
 /** An example routine shown to the model (real, working code). */
 export interface RoutineTemplate {
   id: string;
@@ -207,8 +201,6 @@ export interface DesignAppAdapter {
   connect(): Promise<AppStatus>;
   /** Problems in a routine script that must be fixed before it runs (syntax, unsupported or unsafe APIs). */
   lintScript?(script: string): string[];
-  /** Reads house-style facts from a file (InDesign path or Figma link). */
-  readStyleFacts?(source: string): Promise<StyleFacts>;
 
   // Running a routine: the core calls begin → item × n → end.
   /** What this app's routines are: an action list (Figma) or a script. */

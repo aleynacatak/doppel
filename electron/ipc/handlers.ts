@@ -116,18 +116,6 @@ export function registerIpc(s: Services) {
     },
     pickFolder: async () => (await showOpenDialog(s, { properties: ["openDirectory", "createDirectory"] }))[0] ?? null,
 
-    // Style profile
-    getStyleProfile: () => s.style.get(),
-    addStyleSources: async () => {
-      const paths = await showOpenDialog(s, {
-        properties: ["openFile", "multiSelections"],
-        filters: [{ name: "InDesign documents", extensions: ["indd"] }],
-      });
-      return paths.length ? s.style.addInDesignFiles(paths) : s.style.get();
-    },
-    addStyleFigmaLink: (url) => s.style.addFigmaLink(url),
-    removeStyleSource: (id) => s.style.removeSource(id),
-
     // Settings
     getSettings: async () => s.settings.current,
     saveSettings: async (patch) => {

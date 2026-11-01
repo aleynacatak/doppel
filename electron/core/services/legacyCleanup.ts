@@ -4,9 +4,9 @@ import type { Storage } from "./storage";
 const SIMULATED_FIGMA_VERSION = "126.2";
 
 /**
- * Earlier builds filled the library with example routines that had made-up run history, and the
- * style profile with example projects. Remove them once, along with routines made against the
- * simulated Figma file (they never ran on a real one); other routines people saved stay.
+ * Earlier builds filled the library with example routines that had made-up run history. Remove them
+ * once, along with routines made against the simulated Figma file (they never ran on a real one);
+ * other routines people saved stay.
  */
 export async function removeLegacyDemoData(storage: Storage) {
   if (await storage.hasMarker("demo-data-removed")) return;
@@ -16,11 +16,6 @@ export async function removeLegacyDemoData(storage: Storage) {
     if (!seeded && !simulatedFigma) continue;
     for (const run of routine.runs) await storage.deleteRun(run.id);
     await storage.deleteRoutine(routine.id);
-  }
-  const style = await storage.getStyleProfile();
-  if (style?.sources.some((s) => s.id.startsWith("seed-style-"))) {
-    const sources = style.sources.filter((s) => !s.id.startsWith("seed-style-"));
-    await storage.saveStyleProfile({ sources, rules: sources.length ? style.rules : [] });
   }
   await storage.setMarker("demo-data-removed");
 }

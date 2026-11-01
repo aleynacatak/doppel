@@ -26,7 +26,6 @@ import { SecretStore } from "./services/secretStore";
 import { SettingsService } from "./services/settingsService";
 import { StarterService } from "./services/starterService";
 import { JsonStorage } from "./services/storage";
-import { StyleService } from "./services/styleService";
 import { EXAMPLE_ROUTINES } from "./templates";
 import { simulatedApps } from "./flows/mockAdapters";
 import type { App, Creation, Run } from "./types";
@@ -90,7 +89,6 @@ export async function createServices(
   const registry = process.env.DOPPL_SIMULATE_APPS === "1" ? new AdapterRegistry(simulatedApps(realApps).list()) : realApps;
 
   const access = new AiAccessService({ settings, secrets, workerUrl });
-  const style = new StyleService(storage, registry);
   const ai = new ModelAiService({ gateway: access.gateway });
   const qc = new QcService(ai);
   const apps = new AppStatusService(registry, emit.apps);
@@ -145,7 +143,6 @@ export async function createServices(
     ai,
     access,
     qc,
-    getStyle: () => style.get(),
     apps,
     emit: emit.creation,
     workRoot,
@@ -175,7 +172,7 @@ export async function createServices(
     chooseSavePath: emit.chooseSavePath,
   });
 
-  return { storage, settings, registry, apps, runs, routines, library, flows, starters, style, access, figmaSetup, bridge, dev, blocks: blockService, autoFix: fixes };
+  return { storage, settings, registry, apps, runs, routines, library, flows, starters, access, figmaSetup, bridge, dev, blocks: blockService, autoFix: fixes };
 }
 
 export type Services = Awaited<ReturnType<typeof createServices>>;
