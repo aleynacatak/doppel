@@ -5,15 +5,19 @@ import { blocks } from "../core/blocks/registry";
 import { runHelperTests } from "../core/blocks/testRunner";
 import type { Services } from "../core/config";
 import { connectionLog } from "../core/services/connectionLog";
+import { pickerStart, rememberPick } from "../core/services/lastFolder";
 import { errorMessage } from "../core/util";
 import type { ApiMethods, IpcResult } from "./api";
 
 type Handlers = { [K in keyof ApiMethods]: (...args: Parameters<ApiMethods[K]>) => ReturnType<ApiMethods[K]> };
 
-async function showOpenDialog(options: OpenDialogOptions) {
+async function showOpenDialog(s: Services, picker: OpenDialogOptions) {
   const win = BrowserWindow.getFocusedWindow();
+  const options = { ...picker, defaultPath: await pickerStart(s.storage) };
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
-  return result.canceled ? [] : result.filePaths;
+  if (result.canceled) return [];
+  await rememberPick(s.storage, result.filePaths).catch((err) => console.error("[pickers]", err));
+  return result.filePaths;
 }
 
 /** Wires every window.doppel method to a core service. Errors come back as plain-language messages. */
@@ -105,17 +109,17 @@ export function registerIpc(s: Services) {
       const properties: OpenDialogOptions["properties"] = ["openFile"];
       if (options.multiple) properties.push("multiSelections");
       if (options.allowFolders) properties.push("openDirectory");
-      return showOpenDialog({
+      return showOpenDialog(s, {
         properties,
         filters: options.extensions?.length ? [{ name: options.extensions.join(", "), extensions: options.extensions }] : undefined,
       });
     },
-    pickFolder: async () => (await showOpenDialog({ properties: ["openDirectory", "createDirectory"] }))[0] ?? null,
+    pickFolder: async () => (await showOpenDialog(s, { properties: ["openDirectory", "createDirectory"] }))[0] ?? null,
 
     // Style profile
     getStyleProfile: () => s.style.get(),
     addStyleSources: async () => {
-      const paths = await showOpenDialog({
+      const paths = await showOpenDialog(s, {
         properties: ["openFile", "multiSelections"],
         filters: [{ name: "InDesign documents", extensions: ["indd"] }],
       });

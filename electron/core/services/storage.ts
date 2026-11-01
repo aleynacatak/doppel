@@ -39,6 +39,9 @@ export interface Storage {
   /** Last-used values per routine or flow ("routine:<id>", "flow:<id>"). */
   getLastValues(scope: string): Promise<LastValues | null>;
   saveLastValues(scope: string, values: LastValues): Promise<void>;
+  /** The folder of the last file or folder picked, on this Mac. */
+  getLastFolder(): Promise<string | null>;
+  saveLastFolder(folder: string): Promise<void>;
   getSettings(): Promise<Settings | null>;
   saveSettings(settings: Settings): Promise<void>;
   getStyleProfile(): Promise<StyleProfile | null>;
@@ -140,6 +143,14 @@ export class JsonStorage implements Storage {
     const all = (await this.readJson<Record<string, LastValues>>(this.lastValuesFile())) ?? {};
     all[scope] = values;
     await this.writeJson(this.lastValuesFile(), all);
+  }
+
+  async getLastFolder() {
+    return (await this.readJson<{ folder: string }>(path.join(this.root, "last-folder.json")))?.folder ?? null;
+  }
+
+  saveLastFolder(folder: string) {
+    return this.writeJson(path.join(this.root, "last-folder.json"), { folder });
   }
 
   getRoutine(id: string) {

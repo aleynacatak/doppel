@@ -10,7 +10,8 @@ import type { AdapterOutput, DesignAppAdapter, ManifestOptions, ScriptResult, St
 import { FigmaApiError, fileLink, getFile, parseFigmaLink, renderNodes, topFrames } from "./figmaRest";
 import { figmaCapabilityManifest, FIGMA_MODEL_GUIDE } from "./modelGuide";
 import { type FigmaPluginBridge, PluginCancelledError, PluginNotConnectedError } from "./pluginBridge";
-import { ItemDataError, prepareActions } from "./prepareActions";
+import { parseWireActions } from "../../shared/figmaActions";
+import { ItemDataError, neededEmptyCells, prepareActions } from "./prepareActions";
 
 interface ItemResponse {
   ok: boolean;
@@ -255,6 +256,12 @@ export class FigmaAdapter implements DesignAppAdapter {
         return { ok: false, error: err.message, cause: err.fault, outputs: [], values: {}, findings: err.finding ? [err.finding] : [], log: [] };
       }
       throw err;
+    }
+    const checked = parseWireActions({ actions: prepared.actions });
+    const emptyCells = checked.ok ? [] : neededEmptyCells(ctx.stage.body, input.item, checked.issues);
+    if (emptyCells.length) {
+      const names = emptyCells.map((c) => `"${c}"`).join(" and ");
+      return { ok: false, error: `${names} ${emptyCells.length === 1 ? "is" : "are"} empty, and this routine needs a value there. Fill it in and run again.`, cause: "files", outputs: [], values: {}, findings: [], log: [] };
     }
     let res: ItemResponse;
     try {
