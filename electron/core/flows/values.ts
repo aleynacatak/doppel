@@ -186,7 +186,10 @@ export function scriptValue(value: PortValue | undefined): unknown {
   return value.value;
 }
 
-/** An item as {{item}} / ctx.item: a row object, or a file with its parts. */
+/** An item as {{item}} / ctx.item: a row object (an empty cell is empty text, in every app), or a file with its parts. */
 export function itemValue(listType: "fileList" | "rows", item: ListItem): unknown {
-  return listType === "fileList" ? fileItem(String(item.value)) : item.value;
+  if (listType === "fileList") return fileItem(String(item.value));
+  const row = item.value;
+  if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+  return Object.fromEntries(Object.entries(row).map(([column, cell]) => [column, cell ?? ""]));
 }

@@ -235,6 +235,29 @@ describe("flow runner", () => {
     ]);
   });
 
+  it("hands a row's empty cell on as empty text, in actions and in scripts", async () => {
+    const csv = path.join(dir, "no-allergens.csv");
+    await fs.writeFile(csv, "name,allergens\nFig,walnuts\nPlum,\n");
+    const seen: unknown[] = [];
+    const figma = fakeFigma();
+    const run = figma.runStageItem.bind(figma);
+    figma.runStageItem = async (session, input, ctx, onProgress) => {
+      seen.push([(input.item as { allergens: unknown }).allergens, (input.body as { actions: { ranges?: { matchAny: unknown }[] }[] }).actions.find((a) => a.ranges)?.ranges?.[0].matchAny]);
+      return run(session, input, ctx, onProgress);
+    };
+    const bold: Routine = {
+      ...labels,
+      inputs: [labels.inputs[0], { ...labels.inputs[1], columns: ["name", "allergens"] }],
+      actions: [...labels.actions!, { action: "setTextStyleRanges", node: "$l.#Name", ranges: [{ matchAny: "{{item.allergens}}" }], style: { fontStyle: "Bold" } }],
+    };
+    const res = await new FlowRunner(new AdapterRegistry([figma, fakePhotoshop()])).run(await spec({ inputs: { "in-products": csv }, info: info({ "n-labels": bold, "n-mockups": mockups }) }), hooks);
+    expect(res.nodes[1].items.map((i) => i.status)).toEqual(["done", "done"]);
+    expect(seen).toEqual([
+      ["walnuts", "walnuts"],
+      ["", ""],
+    ]);
+  });
+
   it("previews the files a routine saved, and the copies saved to the folder show the same preview", async () => {
     const preview = (target: string) => ({ kind: "image" as const, src: `data:image/png;base64,${Buffer.from(target).toString("base64")}`, label: path.basename(target) });
     const photoshop = { ...fakePhotoshop(), renderPreview: async (target: string) => preview(target) } as unknown as DesignAppAdapter;

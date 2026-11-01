@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BarcodeError, type BarcodeType, barcodeSvg, validateBarcode } from "../../core/helpers/barcode";
 import { DataFileError, resolveFileInFolder } from "../../core/helpers/dataFiles";
+import { findPlaceholders } from "../../core/routines/placeholders";
 import type { FailureCause, RuleFinding } from "../../core/types";
 
 // Turns an expanded action list into what the plugin receives: images and SVG files are read into the message,
@@ -11,6 +12,19 @@ import type { FailureCause, RuleFinding } from "../../core/types";
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif"];
 const MAX_IMAGE_PX = 4096;
 const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
+
+/**
+ * The columns a row leaves empty where the action list must have a value (a file name from {{item.sku}}), from the
+ * catalog's complaints about the expanded list. Those are the row's to fix, not the routine's.
+ */
+export function neededEmptyCells(template: unknown, item: unknown, issues: { path: string }[]): string[] {
+  const row = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+  const within = (spot: string, issue: string) => spot === issue || spot.startsWith(`${issue}.`) || spot.startsWith(`${issue}[`);
+  const columns = findPlaceholders(template)
+    .filter((p) => p.expr.startsWith("item.") && row[p.expr.slice("item.".length)] === "" && issues.some((i) => within(p.path, i.path)))
+    .map((p) => p.expr.slice("item.".length));
+  return [...new Set(columns)];
+}
 
 /** A problem with the current item's data; the stage goes on with the next item. */
 export class ItemDataError extends Error {

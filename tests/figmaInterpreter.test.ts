@@ -1,5 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CancelledInFigma, type Host, Interpreter, mapIds } from "../figma-plugin/src/interpreter";
+import { neededEmptyCells } from "../electron/adapters/figma/prepareActions";
+import { itemValue } from "../electron/core/flows/values";
+import { readDataFile } from "../electron/core/helpers/dataFiles";
+import { expandValue } from "../electron/core/routines/placeholders";
 import { parseWireActions } from "../electron/shared/figmaActions";
 import { FakeFigma, type FakeNode } from "./helpers/fakeFigma";
 
@@ -126,6 +133,46 @@ describe("text", () => {
     figma.missingFonts.add("Inter/Black");
     const res2 = await run(figma, [{ action: "setTextStyleRanges", node: "Title", ranges: [{ start: 0, end: 5 }], style: { fontStyle: "Black" } }]);
     expect(res2.findings.map((f) => f.type)).toContain("font-style-missing");
+  });
+
+  it("makes a row with an empty cell, from the data file to the plugin: nothing to bold, an empty text box", async () => {
+    const { figma, title } = setup();
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-empty-cell-"));
+    const csv = path.join(dir, "jams.csv");
+    await fs.writeFile(csv, "name,allergens,tagline\nPlum,,\n");
+    const table = await readDataFile(csv, { requiredColumns: ["name", "allergens", "tagline"] });
+    expect(table.errors).toEqual([]);
+    const item = itemValue("rows", { key: "row-1", label: "Plum", value: table.rows[0] });
+    const actions = expandValue(
+      [
+        { action: "setText", node: "Price", text: "{{item.tagline}}" },
+        { action: "setText", node: "Title", text: "{{item.name}} with figs" },
+        { action: "setTextStyleRanges", node: "Title", ranges: [{ matchAny: "{{item.allergens}}", separator: ",", wholeWord: true }], style: { fontStyle: "Bold" } },
+      ],
+      { inputs: {}, settings: {}, item },
+    );
+    const res = await run(figma, actions);
+    expect(res.error).toBeUndefined();
+    expect(res.ok).toBe(true);
+    expect(title.characters).toBe("Plum with figs");
+    expect(title.rangeCalls.filter((c) => c.method === "fontName")).toEqual([]);
+    expect(figma.currentPage.findOne((n) => n.name === "Price")!.characters).toBe("");
+  });
+
+  it("says a row's empty cell is what's missing when the routine must have a value there", () => {
+    const template = {
+      actions: [
+        { action: "setText", node: "Title", text: "{{item.allergens}}" },
+        { action: "exportNode", node: "Card", format: "PNG", fileName: "{{item.sku}}" },
+      ],
+    };
+    const item = { sku: "", allergens: "", name: "Plum" };
+    const parsed = parseWireActions(expandValue(template, { inputs: {}, settings: {}, item }));
+    if (parsed.ok) throw new Error("An empty file name should not pass");
+    // Only the cell the complaint is about: an empty allergens cell is fine here.
+    expect(neededEmptyCells(template, item, parsed.issues)).toEqual(["sku"]);
+    // A complaint that has nothing to do with the row stays the routine's.
+    expect(neededEmptyCells(template, { ...item, sku: "JAD-001" }, parsed.issues)).toEqual([]);
   });
 });
 
