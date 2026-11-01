@@ -186,12 +186,24 @@ describe("request validation", () => {
   it("rejects models outside the allowlist, including contributor variants", async () => {
     const { code } = await makeCode();
     const upstream = mockUpstream();
-    for (const model of ["muse-spark-1.3-contributor", "muse-wonder-1.0"]) {
+    for (const model of ["muse-spark-1.3-contributor", "muse-spark-1.2"]) {
       const res = await chat(code, newCreation(), { model });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe("model_not_allowed");
     }
     expect(upstream).toHaveLength(0);
+  });
+
+  it("serves Muse Wonder, the app's backup model, and records its higher cost", async () => {
+    const { code } = await makeCode();
+    const upstream = mockUpstream();
+    const creation = newCreation();
+    const res = await chat(code, creation, { model: "muse-wonder-1.0" });
+    expect(res.status).toBe(200);
+    expect(upstream).toHaveLength(1);
+    const event = await env.DB.prepare("SELECT model, est_cost_usd FROM usage_events WHERE creation_id = ?").bind(creation).first<any>();
+    expect(event.model).toBe("muse-wonder-1.0");
+    expect(event.est_cost_usd).toBeCloseTo((800 * 4 + 200 * 0.2 + 500 * 20) / 1e6, 10);
   });
 
   it("rejects oversized requests", async () => {

@@ -15,7 +15,7 @@ There is no mock data and there are no sample routines: every app connection, AI
 | Photoshop | The same bridge; works on duplicates and never saves over your PSD |
 | Figma | The Doppl plugin runs declarative action lists; files can also be connected by link (REST API) |
 | Multi-app routines | Stages in order, handing files to each other, once per data row or file |
-| AI (writing, previews, fixing, repairing routines) | Muse Spark 1.3 through the demo Worker (access code) or your own Meta API key |
+| AI (writing, previews, fixing, repairing routines) | Muse Spark 1.3, with Muse Wonder 1.0 writing the code when trials keep failing, through the demo Worker (access code) or your own Meta API key |
 | Checks | Each app's own rule and object checks; optional visual review and object checks (SAM 3.1) |
 | Storage | JSON in `userData`; codes, keys and tokens encrypted with the macOS Keychain |
 
@@ -172,6 +172,8 @@ It works in turns, each one AI call. The Worker forwards structured JSON output 
 - `ask_question`: at most once, at the start.
 
 At most 15 AI calls per creation (the Worker's limit). The creation screen shows the live count and what the AI tried. Saving and rerunning never call AI.
+
+After two failed trials of one routine, Muse Wonder writes its code for the rest of that creation (`escalation` in `electron/ai/roles.json`); Muse Spark keeps planning. Wonder costs more per token, so it stays out of normal creations and can't be picked in Settings. If it can't answer (no access to it, an outage), Spark carries on. A model picked by hand for writing code stays, and the routine's Details show which models served each role.
 
 ## Checks
 

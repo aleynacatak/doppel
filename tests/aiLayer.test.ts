@@ -367,5 +367,9 @@ describe("AI access: routes, keys and spend per provider", () => {
     const { a } = await access("meta-api", { metaApiKey: "k" });
     await expect(a.setRoleOverrides({ planner: { model: "spark-contributor" } })).rejects.toThrow("may train on what it's sent");
     await expect(a.setRoleOverrides({ reviewer: { model: "plain" } })).rejects.toThrow("can't look at images");
+    data.models.push({ ...data.models[0], id: "backup", backupOnly: true });
+    await expect(a.setRoleOverrides({ coder: { model: "backup" } })).rejects.toThrow("can't be picked here");
+    expect((await a.modelsInfo()).models.map((m) => m.id)).not.toContain("backup");
+    data.models.pop();
   });
 });

@@ -23,13 +23,25 @@
   },
   {
     "id": "spark-blocks",
-    "description": "spark-fixed with building blocks retrieved on demand: a ranked index of the helpers plus search_helpers and get_helper_docs (Doppl's current default).",
+    "description": "spark-fixed with building blocks retrieved on demand: a ranked index of the helpers plus search_helpers and get_helper_docs.",
     "creation": { "codeFormat": "separate", "planField": true, "workedExamples": true, "helperDocs": "index" },
     "roles": {
       "planner": { "model": "muse-spark-1.3", "reasoningEffort": "high" },
       "coder": { "model": "muse-spark-1.3", "reasoningEffort": "max" },
       "reviewer": { "model": "muse-spark-1.3", "reasoningEffort": "low" },
       "segmenter": { "model": "sam-3.1" }
+    }
+  },
+  {
+    "id": "wonder-backup",
+    "description": "spark-blocks with Muse Wonder writing the code after two failed trials (Doppl's current default).",
+    "creation": { "codeFormat": "separate", "planField": true, "workedExamples": true, "helperDocs": "index" },
+    "roles": {
+      "planner": { "model": "muse-spark-1.3", "reasoningEffort": "high" },
+      "coder": { "model": "muse-spark-1.3", "reasoningEffort": "max" },
+      "reviewer": { "model": "muse-spark-1.3", "reasoningEffort": "low" },
+      "segmenter": { "model": "sam-3.1" },
+      "escalation": { "coder": { "afterFailedTrials": 2, "to": { "model": "muse-wonder-1.0", "reasoningEffort": "high" } } }
     }
   }
 ]

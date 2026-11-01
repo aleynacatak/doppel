@@ -26,6 +26,8 @@ export interface ModelEntry {
   quirks: Quirk[];
   dataPolicy: { trainsOnData: boolean };
   enabled: boolean;
+  /** Only takes over when a role's own model keeps failing (see escalation in roles.json): not offered in Settings. */
+  backupOnly?: boolean;
   /** Settings → Advanced: an endpoint the designer added. */
   experimental?: boolean;
 }
@@ -102,7 +104,7 @@ export class ModelRegistry {
 
   /** Models that can be picked for a role (enabled ones, plus custom endpoints). */
   enabled(): ModelEntry[] {
-    return this.models.filter((m) => m.enabled);
+    return this.models.filter((m) => m.enabled && !m.backupOnly);
   }
 
   /** The demo access provider, which serves the given provider's models for designers without their own key. */

@@ -40,7 +40,12 @@ export function mergeRoles(base: RoleConfig, ...overrides: (Partial<RoleConfig> 
   const out: RoleConfig = { ...base, escalation: { ...(base.escalation ?? {}) } };
   for (const o of overrides) {
     if (!o) continue;
-    for (const r of ROLES) if (o[r]) out[r] = { ...o[r]! };
+    for (const r of ROLES) {
+      if (!o[r]) continue;
+      out[r] = { ...o[r]! };
+      // A model picked by hand stays: it may be a local one, chosen to keep files on this Mac.
+      delete out.escalation![r];
+    }
     if (o.escalation) out.escalation = { ...out.escalation, ...o.escalation };
   }
   return out;
@@ -98,6 +103,9 @@ export interface Routing {
   spend?: { check: (providerId: string) => void; add: (providerId: string, usd: number) => Promise<void> | void };
 }
 
+/** Errors that say a backup model can't serve this designer right now (no access to it, an outage). */
+const BACKUP_UNAVAILABLE = new Set(["model_not_allowed", "model_not_found", "own_key_forbidden", "provider_forbidden", "upstream_error", "rate_limited", "timeout"]);
+
 const EFFORTS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** The wanted effort, or the closest the model supports below it (never above). */
@@ -151,6 +159,8 @@ export function parseJsonAnswer(content: string): Record<string, any> | null {
 export class AiGateway {
   /** Failed trials per creation, for escalation. */
   private failures = new Map<string, number>();
+  /** Creations whose backup model couldn't answer: they stay on the role's own model. */
+  private noBackup = new Set<string>();
 
   constructor(private readonly routing: Routing) {}
 
@@ -158,7 +168,7 @@ export class AiGateway {
   binding(role: Role, creationId?: string): RoleBinding {
     const roles = this.routing.roles();
     const rule = roles.escalation?.[role];
-    if (rule && creationId && (this.failures.get(creationId) ?? 0) >= rule.afterFailedTrials) return rule.to;
+    if (rule && creationId && !this.noBackup.has(creationId) && (this.failures.get(creationId) ?? 0) >= rule.afterFailedTrials) return rule.to;
     return roles[role];
   }
 
@@ -177,6 +187,7 @@ export class AiGateway {
 
   forget(creationId: string) {
     this.failures.delete(creationId);
+    this.noBackup.delete(creationId);
   }
 
   private guard(model: ModelEntry, messages: ChatMessage[], dataClass: "user" | "public" = "user") {
@@ -224,6 +235,11 @@ export class AiGateway {
       );
     } catch (err) {
       ctx.onUsage?.({ role, model: model.id, provider: entry.id, usage: null, costUsd: 0 });
+      // The backup can't answer: the role's own model carries on rather than the creation failing.
+      if (ctx.creationId && binding.model !== this.routing.roles()[role].model && err instanceof AiError && BACKUP_UNAVAILABLE.has(err.code)) {
+        this.noBackup.add(ctx.creationId);
+        return this.chat(role, req, ctx);
+      }
       throw err;
     }
     // Without usage (an interrupted stream), assume the full output allowance so spend limits stay safe.

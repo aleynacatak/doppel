@@ -145,7 +145,7 @@ Limits:
 
 Safety and privacy:
 - **Your key:** the tester's `Authorization` header is replaced with yours on the upstream request only.
-- **Models:** only the allowlisted standard models (`muse-spark-1.3`, `sam-3.1`) are accepted. The `-contributor` variants are rejected, because Meta may train on their request data.
+- **Models:** only the allowlisted standard models (`muse-spark-1.3`, `muse-wonder-1.0`, `sam-3.1`) are accepted. Wonder is the backup the app switches to when a routine's trials keep failing. The `-contributor` variants are rejected, because Meta may train on their request data.
 - **Retention:** `store: false` is always sent, so Meta keeps no copy of requests. The Responses API used for SAM stores requests by default.
 - **Request fields:** only an allowlist is forwarded, so no tools and no background jobs. `max_completion_tokens` is clamped to the demo's `maxOutputTokens` (8000) from the same registry.
 - **Logging:** request and response bodies are never stored or logged; `usage_events` holds counts only. No CORS headers: the app calls from Electron's main process. Workers Logs aren't turned on, because they'd record request headers, and those include access codes.

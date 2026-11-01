@@ -742,7 +742,7 @@ export const copy = {
     rolesTitle: "Which model does what",
     roles: {
       planner: { label: "Planning", hint: "Understands the request, looks at documents, asks questions, plans flows and changes." },
-      coder: { label: "Writing code", hint: "Writes the scripts and Figma action lists." },
+      coder: { label: "Writing code", hint: "Writes the scripts and Figma action lists. When trial runs keep failing, Doppl's pick switches to a stronger model; a model you pick here stays." },
       reviewer: { label: "Reviewing", hint: "Looks at previews and outputs (needs a model that sees images)." },
       segmenter: { label: "Finding objects", hint: "Finds objects in images for quality checks." },
     } satisfies Record<AiRole, { label: string; hint: string }>,

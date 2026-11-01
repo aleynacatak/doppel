@@ -55,6 +55,24 @@
       "enabled": false
     },
     {
+      "id": "muse-wonder-1.0",
+      "provider": "meta",
+      "displayName": "Muse Wonder 1.0",
+      "capabilities": {
+        "tools": true,
+        "structuredOutput": true,
+        "vision": true,
+        "reasoningEffort": ["minimal", "low", "medium", "high", "xhigh", "max"],
+        "contextWindow": 1048576
+      },
+      "location": "cloud",
+      "pricing": { "inputPerM": 4, "cachedInputPerM": 0.2, "outputPerM": 20 },
+      "quirks": ["alphabeticalFields"],
+      "dataPolicy": { "trainsOnData": false },
+      "enabled": true,
+      "backupOnly": true
+    },
+    {
       "id": "sam-3.1",
       "provider": "meta",
       "displayName": "SAM 3.1",
