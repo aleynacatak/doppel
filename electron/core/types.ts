@@ -1329,6 +1329,8 @@ export interface DoppelApi {
   saveSettings(patch: Partial<Settings>): Promise<Settings>;
 
   // AI access (Settings → AI access)
+  /** Opening the app: what is saved, without reading the Keychain. */
+  getAiAccessSummary(): Promise<AiAccess>;
   getAiAccess(): Promise<AiAccess>;
   setAiProvider(provider: AiProvider): Promise<AiAccess>;
   /** Checks the code with the demo Worker; saves it (encrypted) only if it works. */

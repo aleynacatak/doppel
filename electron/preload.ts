@@ -73,6 +73,7 @@ const METHODS: Record<keyof ApiMethods, true> = {
   pickFolder: true,
   getSettings: true,
   saveSettings: true,
+  getAiAccessSummary: true,
   getAiAccess: true,
   setAiProvider: true,
   saveAccessCode: true,

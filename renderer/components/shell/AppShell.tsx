@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     // Subscribe first, so a status change that lands while loading isn't lost.
     const unsubscribe = api.onAppStatusChange(setApps);
     api.listApps().then(setApps);
-    Promise.all([api.getSettings(), api.getAiAccess()]).then(([settings, aiAccess]) => setBoot({ settings, aiAccess }));
+    Promise.all([api.getSettings(), api.getAiAccessSummary()]).then(([settings, aiAccess]) => setBoot({ settings, aiAccess }));
     return unsubscribe;
   }, [setBoot, setBridgeMissing, setApps]);
 

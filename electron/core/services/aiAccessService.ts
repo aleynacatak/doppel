@@ -125,18 +125,33 @@ export class AiAccessService {
     return known.length ? Math.min(...known) : undefined;
   }
 
-  async describe(): Promise<AiAccess> {
+  /** What opening the app needs: only whether things are saved, so a Keychain prompt can't hold up the window. */
+  async summary(): Promise<AiAccess> {
     const { settings, secrets } = this.deps;
-    const [code, key] = await Promise.all([secrets.get("accessCode"), secrets.get("metaApiKey")]);
+    const [code, key] = await Promise.all([secrets.has("accessCode"), secrets.has("metaApiKey")]);
     return {
       provider: this.provider(),
       model: this.roles().coder.model,
       workerUrl: this.deps.workerUrl,
-      encryptionAvailable: await secrets.available(),
+      encryptionAvailable: true,
+      accessCode: { saved: code, hint: null },
+      session: code ? this.session : null,
+      ownKey: { saved: key, hint: null },
+      ownKeySpend: { month: thisMonth(), estUsd: settings.ownKeySpend(), limit: settings.current.monthlySpendLimit },
+    };
+  }
+
+  async describe(): Promise<AiAccess> {
+    const { secrets } = this.deps;
+    const summary = await this.summary();
+    const [code, key] = await Promise.all([secrets.get("accessCode"), secrets.get("metaApiKey")]);
+    return {
+      ...summary,
+      // Nothing saved means nothing to unlock, and saving says so if encryption is off.
+      encryptionAvailable: summary.accessCode.saved || summary.ownKey.saved ? await secrets.available() : true,
       accessCode: { saved: !!code, hint: secretHint(code) },
       session: code ? this.session : null,
       ownKey: { saved: !!key, hint: secretHint(key) },
-      ownKeySpend: { month: thisMonth(), estUsd: settings.ownKeySpend(), limit: settings.current.monthlySpendLimit },
     };
   }
 

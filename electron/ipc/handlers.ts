@@ -127,6 +127,7 @@ export function registerIpc(s: Services) {
     },
 
     // AI access
+    getAiAccessSummary: () => s.access.summary(),
     getAiAccess: () => s.access.describe(),
     setAiProvider: (provider) => s.access.setProvider(provider),
     saveAccessCode: (code) => s.access.saveAccessCode(code),

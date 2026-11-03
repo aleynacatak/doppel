@@ -70,11 +70,11 @@ export function AiAccessSettings() {
     if (aiAccess) setLimit(String(aiAccess.ownKeySpend.limit));
   }, [aiAccess]);
 
-  // Show current quota when the page opens.
+  // Show the saved code and key and the current quota when the page opens.
   useEffect(() => {
-    doppel()
-      .refreshDemoSession()
-      .then((r) => (r.ok ? setAiAccess(r.value) : r.error.code !== "no_access" && setCodeError(r.error.message)));
+    const api = doppel();
+    api.getAiAccess().then(setAiAccess);
+    api.refreshDemoSession().then((r) => (r.ok ? setAiAccess(r.value) : r.error.code !== "no_access" && setCodeError(r.error.message)));
   }, [setAiAccess]);
 
   if (!aiAccess) return null;

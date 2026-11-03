@@ -23,7 +23,7 @@ There is no mock data and there are no sample routines: every app connection, AI
 
 1. Download `Doppl-<version>-arm64.dmg` and drag Doppl to Applications.
 2. The first time, right-click Doppl → **Open** (the app isn't notarized). If macOS only offers "Move to Trash", go to System Settings → Privacy & Security and click **Open Anyway**.
-3. If macOS asks for your password so Doppl can use "Doppl Safe Storage", type your Mac password and click **Always Allow**.
+3. If macOS asks for your password so Doppl can use "Doppl Safe Storage", type your Mac password and click **Always Allow**. This can happen after you install a new version, the first time Doppl needs a saved code, key or token.
 4. **Connect apps.**
    - **InDesign, Photoshop:** open them; Doppl connects on its own. The first time, macOS asks whether Doppl may control each app; click **OK**.
    - **Figma:** see [Figma setup](#figma-setup) below (about 3 minutes, once).
