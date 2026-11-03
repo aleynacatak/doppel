@@ -1,17 +1,17 @@
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { fileName } from "@/lib/format";
-import { Button } from "../ui/Button";
+import { Button } from "@/components/ui/button";
 
 function PathList({ paths, onRemove }: { paths: string[]; onRemove: (p: string) => void }) {
   return (
-    <ul className="flex flex-col gap-1">
+    <ul className="flex flex-col gap-1.5">
       {paths.map((f) => (
         <li key={f} className="flex items-center gap-2">
           <span className="truncate" title={f}>
             {fileName(f)}
           </span>
-          <Button variant="ghost" size="small" onClick={() => onRemove(f)}>
+          <Button variant="ghost" size="sm" onClick={() => onRemove(f)}>
             {copy.newTask.remove}
           </Button>
         </li>
@@ -41,19 +41,19 @@ export function ReferencePicker({
     if (folder && !folders.includes(folder)) onFoldersChange([...folders, folder]);
   };
   return (
-    <div className="flex flex-col gap-2">
-      <div className="ui-label">{copy.newTask.referencesLabel}</div>
-      <p className="ui-small ui-muted">{copy.newTask.referencesHint}</p>
+    <div className="flex flex-col gap-3">
+      <div className="text-sm font-medium">{copy.newTask.referencesLabel}</div>
+      <p className="text-sm text-muted-foreground">{copy.newTask.referencesHint}</p>
       {files.length > 0 && <PathList paths={files} onRemove={(f) => onChange(files.filter((x) => x !== f))} />}
       {folders.length > 0 && (
         <>
           <PathList paths={folders} onRemove={(f) => onFoldersChange(folders.filter((x) => x !== f))} />
-          <p className="ui-small ui-muted">{copy.newTask.folderNote}</p>
+          <p className="text-sm text-muted-foreground">{copy.newTask.folderNote}</p>
         </>
       )}
       <div className="flex gap-2">
-        <Button onClick={attach}>{copy.newTask.attach}</Button>
-        <Button onClick={addFolder}>{copy.newTask.addFolder}</Button>
+        <Button variant="outline" onClick={attach}>{copy.newTask.attach}</Button>
+        <Button variant="outline" onClick={addFolder}>{copy.newTask.addFolder}</Button>
       </div>
     </div>
   );

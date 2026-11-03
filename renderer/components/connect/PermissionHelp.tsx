@@ -1,7 +1,7 @@
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { Button } from "../ui/Button";
-import { Notice } from "../ui/Notice";
+import { Notice } from "../common/Notice";
+import { Button } from "@/components/ui/button";
 
 /** macOS Automation permission was denied: explain how to turn it back on. */
 export function PermissionHelp({ appName }: { appName: string }) {
@@ -9,7 +9,7 @@ export function PermissionHelp({ appName }: { appName: string }) {
     <Notice
       tone="warning"
       title={copy.connect.permission.title}
-      actions={<Button onClick={() => doppel().openAutomationSettings()}>{copy.connect.permission.open}</Button>}
+      actions={<Button variant="outline" onClick={() => doppel().openAutomationSettings()}>{copy.connect.permission.open}</Button>}
     >
       <p>{copy.connect.permission.body(appName)}</p>
       <ol className="list-decimal pl-5">

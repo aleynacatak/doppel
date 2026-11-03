@@ -4,8 +4,10 @@ import type { PreflightIssue, PreviewImage, PreflightReport as Report } from "@c
 import { useEffect, useState } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { Button } from "../ui/Button";
-import { Spinner } from "../ui/Progress";
+import { Spinner } from "../common/Progress";
+import { Button } from "@/components/ui/button";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Card, CardContent } from "@/components/ui/card";
 
 type Partner = Extract<PreflightIssue, { kind: "partner" }>;
 
@@ -30,9 +32,9 @@ function CandidatePictures({ issue, onPick }: { issue: Partner; onPick: (file: s
   return (
     <div className="flex flex-wrap gap-2">
       {withPicture.map((c) => (
-        <button key={c} type="button" className="ui-card flex w-24 flex-col items-center gap-1 p-1" title={copy.run.preflight.useFile(c)} onClick={() => onPick(c)}>
+        <button key={c} type="button" className="rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10 flex w-24 flex-col items-center gap-1.5 p-1" title={copy.run.preflight.useFile(c)} onClick={() => onPick(c)}>
           <img src={pictures[issue.files![c]].src} alt="" className="h-20 w-full object-contain" />
-          <span className="ui-small w-full truncate">{c}</span>
+          <span className="text-sm w-full truncate">{c}</span>
         </button>
       ))}
     </div>
@@ -89,26 +91,26 @@ export function PreflightReport({
   const notes = report.notes ?? [];
   const nothing = report.fixed.length === 0 && needs.length === 0 && report.skipped.length === 0 && notes.length === 0;
   return (
-    <div className="flex flex-col gap-3">
-      <p className="ui-small ui-muted flex items-center gap-2">
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-muted-foreground flex items-center gap-2">
         {nothing ? copy.run.preflight.allGood : copy.run.preflight.summary(report.fixed.length, needs.length, report.skipped.length + skipped.size, notes.length)}
-        {aiCalls > 0 && <span className="ui-muted">· {copy.run.preflight.aiCalls(aiCalls)}</span>}
+        {aiCalls > 0 && <span className="text-muted-foreground">· {copy.run.preflight.aiCalls(aiCalls)}</span>}
         {loading && <Spinner />}
       </p>
       {canPickPartners && onSuggestPartners && unpaired.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {suggested === null ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={suggest} disabled={suggesting}>
+              <Button variant="outline" onClick={suggest} disabled={suggesting}>
                 {suggesting ? copy.run.preflight.suggesting : copy.run.preflight.suggest}
               </Button>
-              <span className="ui-small ui-muted">{copy.run.preflight.suggestHint}</span>
+              <span className="text-sm text-muted-foreground">{copy.run.preflight.suggestHint}</span>
               {suggesting && <Spinner />}
             </div>
           ) : open.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="ui-small">{copy.run.preflight.suggested(open.length)}</span>
-              <Button
+              <span className="text-sm">{copy.run.preflight.suggested(open.length)}</span>
+              <Button variant="outline"
                 onClick={() => {
                   for (const i of open) onPickPartner(i, suggested[i.id]);
                   setAnswered(true);
@@ -116,76 +118,80 @@ export function PreflightReport({
               >
                 {copy.run.preflight.useSuggested}
               </Button>
-              <Button onClick={() => setAnswered(true)}>{copy.run.preflight.dismissSuggested}</Button>
+              <Button variant="outline" onClick={() => setAnswered(true)}>{copy.run.preflight.dismissSuggested}</Button>
             </div>
           ) : (
-            !answered && Object.keys(suggested).length === 0 && <span className="ui-small ui-muted">{copy.run.preflight.noSuggestions}</span>
+            !answered && Object.keys(suggested).length === 0 && <span className="text-sm text-muted-foreground">{copy.run.preflight.noSuggestions}</span>
           )}
-          {suggestError && <span className="ui-small">{suggestError}</span>}
+          {suggestError && <span className="text-sm">{suggestError}</span>}
         </div>
       )}
       {needs.length > 0 && (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-3">
           {needs.map((i) => (
-            <li key={i.id} className="ui-card flex flex-col gap-2 p-3">
-              <span>⚠ {i.text}</span>
-              {i.kind === "partner" && open.includes(i) && <span className="ui-small">{copy.run.preflight.suggestion(suggested![i.id])}</span>}
-              {i.kind === "column" && (
-                <select className="ui-select max-w-xs" value="" aria-label={copy.run.preflight.chooseColumn} onChange={(e) => e.target.value && onPickColumn(i, e.target.value)}>
-                  <option value="">{copy.run.preflight.chooseColumn}</option>
-                  {i.candidates.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              )}
-              {i.kind === "partner" && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {canPickPartners && i.candidates.length > 0 && (
-                    <select className="ui-select max-w-xs" value="" aria-label={copy.run.preflight.chooseFile} onChange={(e) => e.target.value && onPickPartner(i, e.target.value)}>
-                      <option value="">{copy.run.preflight.chooseFile}</option>
+            <li key={i.id}>
+              <Card size="sm">
+                <CardContent className="flex flex-col gap-3">
+                  <span>⚠ {i.text}</span>
+                  {i.kind === "partner" && open.includes(i) && <span className="text-sm">{copy.run.preflight.suggestion(suggested![i.id])}</span>}
+                  {i.kind === "column" && (
+                    <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseColumn} onChange={(e) => e.target.value && onPickColumn(i, e.target.value)}>
+                      <NativeSelectOption value="">{copy.run.preflight.chooseColumn}</NativeSelectOption>
                       {i.candidates.map((c) => (
-                        <option key={c}>{c}</option>
+                        <NativeSelectOption key={c}>{c}</NativeSelectOption>
                       ))}
-                    </select>
+                    </NativeSelect>
                   )}
-                  <Button onClick={() => setSkipped((s) => new Set(s).add(i.id))}>{copy.run.preflight.skip}</Button>
-                </div>
-              )}
-              {i.kind === "partner" && canPickPartners && i.files && <CandidatePictures issue={i} onPick={(file) => onPickPartner(i, file)} />}
+                  {i.kind === "partner" && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canPickPartners && i.candidates.length > 0 && (
+                        <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseFile} onChange={(e) => e.target.value && onPickPartner(i, e.target.value)}>
+                          <NativeSelectOption value="">{copy.run.preflight.chooseFile}</NativeSelectOption>
+                          {i.candidates.map((c) => (
+                            <NativeSelectOption key={c}>{c}</NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      )}
+                      <Button variant="outline" onClick={() => setSkipped((s) => new Set(s).add(i.id))}>{copy.run.preflight.skip}</Button>
+                    </div>
+                  )}
+                  {i.kind === "partner" && canPickPartners && i.files && <CandidatePictures issue={i} onPick={(file) => onPickPartner(i, file)} />}
+                </CardContent>
+              </Card>
             </li>
           ))}
         </ul>
       )}
       {report.fixed.length > 0 && (
-        <ul className="ui-small flex flex-col gap-1">
+        <ul className="text-sm flex flex-col gap-1.5">
           {report.fixed.map((n, k) => (
             <li key={k} className="flex flex-wrap items-center gap-2">
               <span>
                 ✓ {n.text}
-                {details && n.detail && <span className="ui-muted"> · {n.detail}</span>}
+                {details && n.detail && <span className="text-muted-foreground"> · {n.detail}</span>}
               </span>
               {/* A column Doppl matched on its own: the designer can pick another. */}
               {n.change && (
-                <select className="ui-select ui-small max-w-xs" value="" aria-label={copy.run.preflight.changeColumn} onChange={(e) => e.target.value && onPickColumn(n.change!, e.target.value)}>
-                  <option value="">{copy.run.preflight.changeColumn}</option>
+                <NativeSelect className="w-full text-sm max-w-xs" value="" aria-label={copy.run.preflight.changeColumn} onChange={(e) => e.target.value && onPickColumn(n.change!, e.target.value)}>
+                  <NativeSelectOption value="">{copy.run.preflight.changeColumn}</NativeSelectOption>
                   {n.change.candidates.map((c) => (
-                    <option key={c}>{c}</option>
+                    <NativeSelectOption key={c}>{c}</NativeSelectOption>
                   ))}
-                </select>
+                </NativeSelect>
               )}
             </li>
           ))}
         </ul>
       )}
       {notes.length > 0 && (
-        <ul className="ui-small flex flex-col gap-1">
+        <ul className="text-sm flex flex-col gap-1.5">
           {notes.map((n, k) => (
             <li key={k}>ⓘ {n.text}</li>
           ))}
         </ul>
       )}
       {(report.skipped.length > 0 || skipped.size > 0) && (
-        <ul className="ui-small ui-muted flex flex-col gap-1">
+        <ul className="text-sm text-muted-foreground flex flex-col gap-1.5">
           {report.needs
             .filter((i) => skipped.has(i.id))
             .map((i) => (
@@ -197,9 +203,9 @@ export function PreflightReport({
         </ul>
       )}
       {report.fixed.some((n) => n.detail) && (
-        <button type="button" className="ui-link ui-small self-start" onClick={() => setDetails((d) => !d)}>
+        <Button variant="link" className="h-auto p-0 text-sm self-start" onClick={() => setDetails((d) => !d)}>
           {details ? copy.run.preflight.hideDetails : copy.run.preflight.showDetails}
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -6,8 +6,11 @@ import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { fileName } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
-import { Button } from "../ui/Button";
-import { Field } from "../ui/Field";
+import { Field } from "../common/Field";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Props {
   routineId: string;
@@ -33,8 +36,8 @@ function PathPicker({ param, value, onChange }: Omit<Props, "routineId" | "docum
   const path = typeof value === "string" && value ? value : null;
   return (
     <div className="flex items-center gap-3">
-      <Button onClick={pick}>{path ? copy.run.change : copy.run.choose}</Button>
-      <span className={path ? "truncate" : "ui-muted"} title={path ?? undefined}>
+      <Button variant="outline" onClick={pick}>{path ? copy.run.change : copy.run.choose}</Button>
+      <span className={path ? "truncate" : "text-muted-foreground"} title={path ?? undefined}>
         {path ? fileName(path) : copy.run.notChosen}
       </span>
     </div>
@@ -54,14 +57,14 @@ function SelectField({ routineId, documentId, param, value, onChange }: Props) {
     }
   }, [options, value, param.default, onChange]);
   return (
-    <select id={param.key} className="ui-select max-w-md" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} disabled={loading}>
-      {loading && <option>{copy.run.loadingOptions}</option>}
+    <NativeSelect id={param.key} className="w-full max-w-md" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} disabled={loading}>
+      {loading && <NativeSelectOption>{copy.run.loadingOptions}</NativeSelectOption>}
       {options?.map((o) => (
-        <option key={o.value} value={o.value}>
+        <NativeSelectOption key={o.value} value={o.value}>
           {o.label}
-        </option>
+        </NativeSelectOption>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -70,19 +73,19 @@ function FormatList({ param, value, onChange }: Omit<Props, "routineId" | "docum
   const options = param.options ?? [];
   const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <div className="flex gap-3">
-        <button type="button" className="ui-small ui-link" onClick={() => onChange(options.map((o) => o.value))}>
+        <Button variant="link" className="h-auto p-0 text-sm" onClick={() => onChange(options.map((o) => o.value))}>
           {copy.run.selectAll}
-        </button>
-        <button type="button" className="ui-small ui-link" onClick={() => onChange([])}>
+        </Button>
+        <Button variant="link" className="h-auto p-0 text-sm" onClick={() => onChange([])}>
           {copy.run.selectNone}
-        </button>
+        </Button>
       </div>
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
         {options.map((o) => (
-          <label key={o.value} className="ui-choice">
-            <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
+          <label key={o.value} className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+            <Checkbox className="mt-0.5" checked={selected.includes(o.value)} onCheckedChange={() => toggle(o.value)} />
             <span>{o.label}</span>
           </label>
         ))}
@@ -98,11 +101,11 @@ export function ParamField(props: Props) {
 
   if (param.type === "boolean") {
     return (
-      <label className="ui-choice">
-        <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
+      <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+        <Checkbox className="mt-0.5" checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
         <span>
           {param.label}
-          {param.help && <span className="ui-small ui-muted block">{param.help}</span>}
+          {param.help && <span className="text-sm text-muted-foreground block">{param.help}</span>}
         </span>
       </label>
     );
@@ -123,10 +126,10 @@ export function ParamField(props: Props) {
       break;
     case "number":
       input = (
-        <input
+        <Input
           id={param.key}
           type="number"
-          className="ui-input max-w-40"
+          className="max-w-40"
           min={param.min}
           max={param.max}
           value={value === null || value === undefined ? "" : String(value)}
@@ -136,9 +139,9 @@ export function ParamField(props: Props) {
       break;
     default:
       input = (
-        <input
+        <Input
           id={param.key}
-          className="ui-input max-w-md"
+          className="max-w-md"
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value)}
         />

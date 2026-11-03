@@ -1,7 +1,9 @@
 import type { App } from "@core/types";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
-import { Segmented } from "../ui/Segmented";
+import { Segmented } from "../common/Segmented";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 
 export type LibraryView = "grid" | "list";
 
@@ -24,22 +26,22 @@ export function LibraryToolbar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <input
+      <Input
         type="search"
-        className="ui-input max-w-xs"
+        className="max-w-xs"
         placeholder={copy.library.search}
         aria-label={copy.library.search}
         value={query}
         onChange={(e) => onQuery(e.target.value)}
       />
-      <select className="ui-select w-44" aria-label="App" value={appFilter} onChange={(e) => onAppFilter(e.target.value)}>
-        <option value="all">{copy.library.allApps}</option>
+      <NativeSelect className="w-full w-44" aria-label="App" value={appFilter} onChange={(e) => onAppFilter(e.target.value)}>
+        <NativeSelectOption value="all">{copy.library.allApps}</NativeSelectOption>
         {apps.map((a) => (
-          <option key={a.id} value={a.id}>
+          <NativeSelectOption key={a.id} value={a.id}>
             {appLabel(a.id)}
-          </option>
+          </NativeSelectOption>
         ))}
-      </select>
+      </NativeSelect>
       <div className="ml-auto">
         <Segmented<LibraryView>
           label="View"

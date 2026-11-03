@@ -2,34 +2,35 @@ import type { AppId, MatchRule, PortDef, SettingDef } from "@core/types";
 import { describeSpec, inputSpec, outputSpec } from "@shared/ports";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
-import { Tag } from "../ui/Tag";
+import { Tag } from "../common/Tag";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** One port: label, what it takes or gives in plain words, required or not. */
 function PortRow({ port, what }: { port: PortDef; what: string }) {
   return (
-    <tr>
-      <td className="py-2 pr-4">
+    <TableRow>
+      <TableCell className="py-3 pr-4">
         <div>{port.label}</div>
-        {port.description && <div className="ui-small ui-muted">{port.description}</div>}
-      </td>
-      <td className="ui-muted py-2 pr-4">{capitalize(what)}</td>
-      <td className="ui-muted py-2">{port.required ? copy.ports.required : copy.ports.optional}</td>
-    </tr>
+        {port.description && <div className="text-sm text-muted-foreground">{port.description}</div>}
+      </TableCell>
+      <TableCell className="text-muted-foreground py-3 pr-4">{capitalize(what)}</TableCell>
+      <TableCell className="text-muted-foreground py-3">{port.required ? copy.ports.required : copy.ports.optional}</TableCell>
+    </TableRow>
   );
 }
 
 export function PortTable({ ports, describe, empty }: { ports: PortDef[]; describe: (p: PortDef) => string; empty: string }) {
-  if (ports.length === 0) return <p className="ui-muted">{empty}</p>;
+  if (ports.length === 0) return <p className="text-muted-foreground">{empty}</p>;
   return (
-    <table className="ui-table">
-      <tbody>
+    <Table>
+      <TableBody>
         {ports.map((p) => (
           <PortRow key={p.key} port={p} what={describe(p)} />
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -41,22 +42,22 @@ function describeDefault(s: SettingDef) {
 }
 
 export function SettingsTable({ settings }: { settings: SettingDef[] }) {
-  if (settings.length === 0) return <p className="ui-muted">{copy.routine.noSettings}</p>;
+  if (settings.length === 0) return <p className="text-muted-foreground">{copy.routine.noSettings}</p>;
   return (
-    <table className="ui-table">
-      <tbody>
+    <Table>
+      <TableBody>
         {settings.map((s) => (
-          <tr key={s.key}>
-            <td className="py-2 pr-4">
+          <TableRow key={s.key}>
+            <TableCell className="py-3 pr-4">
               <div>{s.label}</div>
-              {s.help && <div className="ui-small ui-muted">{s.help}</div>}
-            </td>
-            <td className="ui-muted py-2 pr-4">{copy.routine.paramTypes[s.type]}</td>
-            <td className="ui-muted py-2">{describeDefault(s)}</td>
-          </tr>
+              {s.help && <div className="text-sm text-muted-foreground">{s.help}</div>}
+            </TableCell>
+            <TableCell className="text-muted-foreground py-3 pr-4">{copy.routine.paramTypes[s.type]}</TableCell>
+            <TableCell className="text-muted-foreground py-3">{describeDefault(s)}</TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -72,27 +73,27 @@ export function ContractView({
   const describeInput = (p: PortDef) => (p.type === "document" ? copy.routine.documentPort(appLabel(routine.appId)) : describeSpec(inputSpec(p, routine.appId)));
   return (
     <div className={`grid grid-cols-1 gap-6 ${compact ? "" : "lg:grid-cols-2"}`}>
-      <div className="flex flex-col gap-2">
-        <div className="ui-h3">{copy.routine.inputsTitle}</div>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium">{copy.routine.inputsTitle}</div>
         <PortTable ports={routine.inputs} describe={describeInput} empty={copy.routine.noInputs} />
-        <p className="ui-small ui-muted flex flex-wrap items-center gap-1">
+        <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
           {iterPort ? copy.routine.iterates(iterPort.label) : copy.routine.runsOnce}
         </p>
         {Object.entries(routine.matches ?? {}).map(([key, rule]) => {
           const port = routine.inputs.find((p) => p.key === key);
           return port ? (
-            <p key={key} className="ui-small ui-muted">
+            <p key={key} className="text-sm text-muted-foreground">
               {copy.routine.pairs(port.label, copy.match.describe(rule))}
             </p>
           ) : null;
         })}
       </div>
-      <div className="flex flex-col gap-2">
-        <div className="ui-h3">{copy.routine.outputsTitle}</div>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium">{copy.routine.outputsTitle}</div>
         <PortTable ports={routine.outputs} describe={(p) => describeSpec(outputSpec(p, !!routine.iterate, routine.appId))} empty={copy.routine.noOutputs} />
         {routine.settings && (
           <>
-            <div className="ui-h3 pt-2">{copy.routine.settingsTitle}</div>
+            <div className="text-sm font-medium pt-2">{copy.routine.settingsTitle}</div>
             <SettingsTable settings={routine.settings} />
           </>
         )}

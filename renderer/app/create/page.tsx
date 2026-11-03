@@ -11,16 +11,17 @@ import { NeedsSamples } from "@/components/create/NeedsSamples";
 import { RefineReview } from "@/components/create/RefineReview";
 import { StageList } from "@/components/create/StageList";
 import { NodeProgressList } from "@/components/run/NodeProgressList";
-import { AiCallCounter } from "@/components/ui/AiCallCounter";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading } from "@/components/ui/Progress";
+import { AiCallCounter } from "@/components/common/AiCallCounter";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Loading } from "@/components/common/Progress";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useCreation } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 function CreateScreen() {
   const id = useSearchParams().get("task");
@@ -80,14 +81,14 @@ function CreateScreen() {
   const planWaiting = creation.kind === "flow" && creation.status === "waiting" && !!creation.plan && !creation.planConfirmed && !creation.question && !creation.needs;
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
       <PageHeader
         back={creation.flowLink ? { href: `/flow?id=${creation.flowLink.flowId}`, label: copy.create.backToFlow } : undefined}
         title={creation.mode === "refine" ? copy.refine.titleCreating : creation.mode === "repair" ? copy.create.titleRepair : creation.kind === "flow" ? copy.create.titleFlow : copy.create.titleCreate}
         subtitle={<>“{creation.task.request}”</>}
         actions={
           running ? (
-            <Button onClick={() => api.cancelCreation(creation.id)}>{copy.common.cancel}</Button>
+            <Button variant="outline" onClick={() => api.cancelCreation(creation.id)}>{copy.common.cancel}</Button>
           ) : undefined
         }
       />
@@ -95,17 +96,17 @@ function CreateScreen() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_auto]">
         <StageList creation={creation} />
-        <div className="flex flex-col gap-2 md:w-72">
+        <div className="flex flex-col gap-3 md:w-72">
           <AiCallCounter count={creation.aiCalls} label={copy.create.aiCallsLabel} hint={copy.create.aiCallsHint} />
-          {creation.activity !== undefined && <p className="ui-small ui-muted">{creation.steps ? copy.create.stepsOf(creation.steps, 15) : copy.create.aiCallsLimit(15)}</p>}
-          {creation.quota && <p className="ui-small">{copy.create.quota(creation.quota.used, creation.quota.max)}</p>}
+          {creation.activity !== undefined && <p className="text-sm text-muted-foreground">{creation.steps ? copy.create.stepsOf(creation.steps, 15) : copy.create.aiCallsLimit(15)}</p>}
+          {creation.quota && <p className="text-sm">{copy.create.quota(creation.quota.used, creation.quota.max)}</p>}
         </div>
       </div>
 
       {creation.activity && creation.activity.length > 0 && (
-        <section className="flex flex-col gap-2">
-          <div className="ui-h3">{copy.create.activityTitle}</div>
-          <ol className="ui-small flex list-decimal flex-col gap-0.5 pl-5">
+        <section className="flex flex-col gap-3">
+          <div className="text-sm font-medium">{copy.create.activityTitle}</div>
+          <ol className="text-sm flex list-decimal flex-col gap-1 pl-5">
             {creation.activity.map((a, i) => (
               <li key={i}>{a}</li>
             ))}
@@ -114,29 +115,29 @@ function CreateScreen() {
       )}
 
       {creation.kind === "flow" && creation.flowRoutines && (
-        <section className="flex flex-col gap-2">
-          <div className="ui-h3">{copy.create.flowRoutinesTitle}</div>
+        <section className="flex flex-col gap-3">
+          <div className="text-sm font-medium">{copy.create.flowRoutinesTitle}</div>
           <FlowRoutinesProgress creation={creation} />
         </section>
       )}
 
       {planWaiting && (
-        <section className="flex flex-col gap-4">
-          <div className="ui-h2">{copy.create.planTitle}</div>
-          <p className="ui-muted">{copy.create.planHint}</p>
+        <section className="flex flex-col gap-6">
+          <div className="text-base font-semibold">{copy.create.planTitle}</div>
+          <p className="text-muted-foreground">{copy.create.planHint}</p>
           <FlowPlanView plan={creation.plan!} />
           <div className="flex gap-2">
-            <Button variant="primary" onClick={() => run(api.confirmPlan(creation.id))}>
+            <Button onClick={() => run(api.confirmPlan(creation.id))}>
               {copy.create.planConfirm}
             </Button>
-            <Button onClick={discard}>{copy.common.discard}</Button>
+            <Button variant="outline" onClick={discard}>{copy.common.discard}</Button>
           </div>
         </section>
       )}
 
       {creation.trial && running && (
-        <section className="flex flex-col gap-2">
-          <div className="ui-h3">{copy.create.trialTitle}</div>
+        <section className="flex flex-col gap-3">
+          <div className="text-sm font-medium">{copy.create.trialTitle}</div>
           <NodeProgressList nodes={[creation.trial]} />
         </section>
       )}
@@ -145,7 +146,7 @@ function CreateScreen() {
         <Notice
           title={copy.create.flowSavedTitle}
           actions={
-            <ButtonLink href={`/flow?id=${creation.savedFlowId}`} variant="primary">
+            <ButtonLink href={`/flow?id=${creation.savedFlowId}`} variant="default">
               {copy.create.openFlow}
             </ButtonLink>
           }
@@ -185,11 +186,11 @@ function CreateScreen() {
           actions={
             <>
               {creation.canContinue && (
-                <Button variant="primary" onClick={() => run(api.continueCreation(creation.id))}>
+                <Button onClick={() => run(api.continueCreation(creation.id))}>
                   {copy.create.continue}
                 </Button>
               )}
-              <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={() => run(api.retryCreation(creation.id))}>
+              <Button variant={creation.canContinue ? "outline" : "default"} onClick={() => run(api.retryCreation(creation.id))}>
                 {creation.canContinue ? copy.create.startOver : copy.common.tryAgain}
               </Button>
               <ButtonLink href="/">{copy.create.newTask}</ButtonLink>

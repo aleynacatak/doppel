@@ -5,14 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import { RunProgress } from "@/components/run/RunProgress";
 import { RunSetupForm } from "@/components/run/RunSetupForm";
-import { ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading } from "@/components/ui/Progress";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Loading } from "@/components/common/Progress";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useAsync, useRun } from "@/lib/hooks";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 function RunInProgress({ target, runId }: { target: RunTarget; runId: string }) {
   const router = useRouter();
@@ -28,7 +28,7 @@ function RunInProgress({ target, runId }: { target: RunTarget; runId: string }) 
   if (run.status === "cancelled") {
     return (
       <Notice title={copy.run.cancelledTitle} actions={<ButtonLink href={`/run?${target.kind}=${target.id}`}>{copy.run.runAgain}</ButtonLink>}>
-        {run.workDir && <p className="ui-small ui-muted">{copy.results.runFolder(run.workDir)}</p>}
+        {run.workDir && <p className="text-sm text-muted-foreground">{copy.results.runFolder(run.workDir)}</p>}
       </Notice>
     );
   }
@@ -49,7 +49,7 @@ function RunScreen() {
 
   const back = target.kind === "flow" ? `/flow?id=${target.id}` : `/routine?id=${target.id}`;
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <PageHeader back={{ href: back, label: setup.name }} title={copy.run.title(setup.name)} />
       {runId ? <RunInProgress target={target} runId={runId} /> : <RunSetupForm key={`${target.kind}:${target.id}`} setup={setup} keepPicks={params.get("picked") === "1"} />}
     </div>

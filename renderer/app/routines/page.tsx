@@ -5,24 +5,25 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { type LibraryView, LibraryToolbar } from "@/components/library/LibraryToolbar";
 import { FlowCard, RoutineCard, RoutineTable } from "@/components/library/RoutineCard";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
-import { Segmented } from "@/components/ui/Segmented";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Loading } from "@/components/common/Progress";
+import { Section } from "@/components/common/Section";
+import { Segmented } from "@/components/common/Segmented";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { flowApps } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 type Tab = "routines" | "flows";
 
 function RoutineList({ routines, view }: { routines: Routine[]; view: LibraryView }) {
   return view === "grid" ? (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
       {routines.map((r) => (
         <RoutineCard key={r.id} routine={r} />
       ))}
@@ -63,12 +64,12 @@ function LibraryScreen() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title={copy.library.title}
         actions={
           <>
-            <Button onClick={newFlow}>{copy.library.newFlow}</Button>
+            <Button variant="outline" onClick={newFlow}>{copy.library.newFlow}</Button>
             <ButtonLink href="/">{copy.library.newTask}</ButtonLink>
           </>
         }
@@ -82,7 +83,7 @@ function LibraryScreen() {
           title={copy.library.emptyTitle}
           body={copy.library.emptyBody}
           action={
-            <ButtonLink href="/" variant="primary">
+            <ButtonLink href="/" variant="default">
               {copy.library.emptyAction}
             </ButtonLink>
           }
@@ -102,14 +103,14 @@ function LibraryScreen() {
           </div>
           <LibraryToolbar query={query} onQuery={setQuery} appFilter={appFilter} onAppFilter={setAppFilter} view={view} onView={setView} apps={apps} />
           {tab === "routines" ? (
-            <div className="flex flex-col gap-8">
+            <div className="flex flex-col gap-10">
               <Section title={copy.library.myRoutines}>
-                {mine.length ? <RoutineList routines={mine} view={view} /> : <p className="ui-muted">{data?.mine.length ? copy.library.noMatch : copy.library.noMyRoutines}</p>}
+                {mine.length ? <RoutineList routines={mine} view={view} /> : <p className="text-muted-foreground">{data?.mine.length ? copy.library.noMatch : copy.library.noMyRoutines}</p>}
               </Section>
               {/* No section when this version has no starter routines. */}
               {!!data?.starters.length && (
                 <Section title={copy.library.starterRoutines}>
-                  {starters.length ? <RoutineList routines={starters} view={view} /> : <p className="ui-muted">{copy.library.noMatch}</p>}
+                  {starters.length ? <RoutineList routines={starters} view={view} /> : <p className="text-muted-foreground">{copy.library.noMatch}</p>}
                 </Section>
               )}
             </div>
@@ -119,7 +120,7 @@ function LibraryScreen() {
               body={copy.library.flowsEmptyBody}
               action={
                 <div className="flex gap-2">
-                  <Button variant="primary" onClick={newFlow}>
+                  <Button onClick={newFlow}>
                     {copy.library.newFlow}
                   </Button>
                   <ButtonLink href="/">{copy.library.newTask}</ButtonLink>
@@ -127,9 +128,9 @@ function LibraryScreen() {
               }
             />
           ) : flows.length === 0 ? (
-            <p className="ui-muted">{copy.library.noMatch}</p>
+            <p className="text-muted-foreground">{copy.library.noMatch}</p>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
               {flows.map((f) => (
                 <FlowCard key={f.id} flow={f} />
               ))}

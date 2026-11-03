@@ -1,9 +1,10 @@
 import type { Creation, PortabilityIssue } from "@core/types";
 import { useState } from "react";
 import { copy } from "@/copy";
-import { Button } from "../ui/Button";
-import { Field } from "../ui/Field";
+import { Field } from "../common/Field";
 import { PortabilityIssues } from "./PortabilityIssues";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export function SaveRoutineForm({
   creation,
@@ -27,28 +28,28 @@ export function SaveRoutineForm({
 
   const saveLabel = creation.flowLink ? copy.create.compatSaved : creation.mode === "repair" ? copy.create.saveRepair(creation.nextVersion ?? 2) : copy.create.saveCreate;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <Field label={copy.create.nameLabel} htmlFor="routine-name">
-        <input id="routine-name" className="ui-input max-w-md" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input id="routine-name" className="max-w-md" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
       {issues && issues.length > 0 ? (
         <PortabilityIssues
           issues={issues}
           actions={
             <>
-              <Button onClick={() => save(true)} disabled={saving}>
+              <Button variant="outline" onClick={() => save(true)} disabled={saving}>
                 {copy.create.saveAnyway}
               </Button>
-              <Button onClick={onDiscard}>{copy.common.discard}</Button>
+              <Button variant="outline" onClick={onDiscard}>{copy.common.discard}</Button>
             </>
           }
         />
       ) : (
         <div className="flex gap-2">
-          <Button variant="primary" onClick={() => save(false)} disabled={saving || !name.trim()}>
+          <Button onClick={() => save(false)} disabled={saving || !name.trim()}>
             {saveLabel}
           </Button>
-          <Button onClick={onDiscard}>{copy.common.discard}</Button>
+          <Button variant="outline" onClick={onDiscard}>{copy.common.discard}</Button>
         </div>
       )}
     </div>

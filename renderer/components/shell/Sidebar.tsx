@@ -1,48 +1,68 @@
 "use client";
 
+import { IconLayoutGrid, IconPlus, IconSettings } from "@tabler/icons-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 import { copy } from "@/copy";
 import { useShell } from "@/lib/store";
 import { AppStatusChip } from "./AppStatusChip";
 
 const NAV = [
-  { href: "/", label: copy.nav.newTask, match: ["/", "/create"] },
-  { href: "/routines", label: copy.nav.library, match: ["/routines", "/routine", "/flow", "/run", "/results"] },
-  { href: "/settings", label: copy.nav.settings, match: ["/settings"] },
+  { href: "/", label: copy.nav.newTask, icon: IconPlus, match: ["/", "/create"] },
+  { href: "/routines", label: copy.nav.library, icon: IconLayoutGrid, match: ["/routines", "/routine", "/flow", "/run", "/results"] },
+  { href: "/settings", label: copy.nav.settings, icon: IconSettings, match: ["/settings"] },
 ];
 
-export function Sidebar() {
+export function AppSidebar() {
   const pathname = usePathname();
   const apps = useShell((s) => s.apps);
   return (
-    <nav className="ui-sidebar flex w-56 shrink-0 flex-col justify-between p-3" aria-label="Main">
-      <div className="flex flex-col gap-4">
-        <div className="ui-h2 px-2 pt-1">{copy.appName}</div>
-        <ul className="flex flex-col gap-0.5">
-          {NAV.map((item) => (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className="ui-nav-link px-2 py-1.5"
-                aria-current={item.match.includes(pathname) ? "page" : undefined}
-              >
-                {item.label}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="flex flex-col gap-2">
-        <div className="ui-label px-2">{copy.nav.apps}</div>
-        <ul className="flex flex-col gap-1">
-          {apps.map((app) => (
-            <li key={app.id}>
-              <AppStatusChip app={app} />
-            </li>
-          ))}
-        </ul>
-      </div>
-    </nav>
+    <Sidebar collapsible="none" className="border-r">
+      <SidebarHeader>
+        <div className="px-2 py-1.5 font-heading text-base font-semibold">{copy.appName}</div>
+      </SidebarHeader>
+      <SidebarContent>
+        <nav aria-label="Main">
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {NAV.map((item) => {
+                  const active = item.match.includes(pathname);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton isActive={active} render={<Link href={item.href} aria-current={active ? "page" : undefined} />}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </nav>
+        <SidebarGroup className="mt-auto">
+          <SidebarGroupLabel>{copy.nav.apps}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {apps.map((app) => (
+                <AppStatusChip key={app.id} app={app} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
   );
 }

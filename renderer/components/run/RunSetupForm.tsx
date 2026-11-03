@@ -11,16 +11,19 @@ import { useAsync, useLiveReload } from "@/lib/hooks";
 import { useAiReviewAvailable, useShell } from "@/lib/store";
 import { MatchRuleEditor } from "../flow/MatchRuleEditor";
 import { PreflightReport } from "./PreflightReport";
-import { AiCallCounter } from "../ui/AiCallCounter";
-import { Button } from "../ui/Button";
-import { Notice } from "../ui/Notice";
-import { Spinner } from "../ui/Progress";
-import { Section } from "../ui/Section";
-import { Tag } from "../ui/Tag";
+import { AiCallCounter } from "../common/AiCallCounter";
+import { Notice } from "../common/Notice";
+import { Spinner } from "../common/Progress";
+import { Section } from "../common/Section";
+import { Tag } from "../common/Tag";
 import { EnvironmentWarning } from "./EnvironmentWarning";
 import { InputValueField } from "./InputValueField";
 import { ParamField } from "./ParamField";
 import { QcModePicker } from "./QcModePicker";
+import { Button } from "@/components/ui/button";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Card, CardContent } from "@/components/ui/card";
 
 const DEFAULT_QC: QcOptions = { minPpiPrint: 300, minPpiWeb: 150 };
 const isEmpty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
@@ -142,10 +145,10 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   };
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
       {setup.issues.length > 0 && (
         <Notice tone="error" title={copy.run.blockedBy}>
-          <ul className="ui-small flex flex-col gap-0.5">
+          <ul className="text-sm flex flex-col gap-1">
             {setup.issues.map((i, n) => (
               <li key={n}>{i.message}</li>
             ))}
@@ -165,36 +168,40 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
         {!readiness && loading ? (
           <Spinner />
         ) : (
-          <ul className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-4">
             {readiness?.map((r) => (
-              <li key={r.appId} className="ui-card flex flex-col gap-2 p-3" data-selected={r.ok}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Tag tone="strong">{appLabel(r.appId)}</Tag>
-                    <span className="ui-small ui-muted">{copy.run.readinessStages(r.uses)}</span>
-                  </div>
-                  <Tag tone={r.ok ? "filled" : "default"}>{r.ok ? copy.run.readinessOk : copy.appStatus[r.status]}</Tag>
-                </div>
-                {r.needsDocument ? (
-                  r.documents.length > 0 && (
-                    <select
-                      className="ui-select max-w-md"
-                      aria-label={`${appLabel(r.appId)} ${copy.run.documentLabel}`}
-                      value={r.documentId ?? ""}
-                      onChange={(e) => setDocuments((d) => ({ ...d, [r.appId]: e.target.value }))}
-                    >
-                      {r.documents.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name} {d.active ? copy.newTask.activeDocument : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                ) : (
-                  <span className="ui-small ui-muted">{copy.run.noDocumentNeeded}</span>
-                )}
-                {!r.ok && r.message && <p className="ui-small">{r.message}</p>}
-                {r.appId === "photoshop" && <p className="ui-small ui-muted">{copy.run.photoshopSafety}</p>}
+              <li key={r.appId}>
+                <Card data-selected={r.ok} size="sm" className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
+                  <CardContent className="flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Tag tone="strong">{appLabel(r.appId)}</Tag>
+                        <span className="text-sm text-muted-foreground">{copy.run.readinessStages(r.uses)}</span>
+                      </div>
+                      <Tag tone={r.ok ? "filled" : "default"}>{r.ok ? copy.run.readinessOk : copy.appStatus[r.status]}</Tag>
+                    </div>
+                    {r.needsDocument ? (
+                      r.documents.length > 0 && (
+                        <NativeSelect
+                          className="w-full max-w-md"
+                          aria-label={`${appLabel(r.appId)} ${copy.run.documentLabel}`}
+                          value={r.documentId ?? ""}
+                          onChange={(e) => setDocuments((d) => ({ ...d, [r.appId]: e.target.value }))}
+                        >
+                          {r.documents.map((d) => (
+                            <NativeSelectOption key={d.id} value={d.id}>
+                              {d.name} {d.active ? copy.newTask.activeDocument : ""}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      )
+                    ) : (
+                      <span className="text-sm text-muted-foreground">{copy.run.noDocumentNeeded}</span>
+                    )}
+                    {!r.ok && r.message && <p className="text-sm">{r.message}</p>}
+                    {r.appId === "photoshop" && <p className="text-sm text-muted-foreground">{copy.run.photoshopSafety}</p>}
+                  </CardContent>
+                </Card>
               </li>
             ))}
           </ul>
@@ -203,7 +210,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
 
       {inputNodes.length > 0 && (
         <Section title={copy.run.inputsTitle}>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-6">
             {inputNodes.map((n) => (
               <InputValueField key={n.id} id={`in-${n.id}`} port={n.port} value={inputs[n.id]} onChange={(v) => setInputs((x) => ({ ...x, [n.id]: v }))} />
             ))}
@@ -217,8 +224,8 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
             const iterPort = routine.inputs.find((p) => p.key === routine.iterate!.input)!;
             const port = routine.inputs.find((p) => p.key === e.to.port)!;
             return (
-              <div key={e.id} className="flex flex-col gap-2">
-                <p className="ui-small ui-muted">{copy.flow.joinHint(routine.name, iterPort.label)}</p>
+              <div key={e.id} className="flex flex-col gap-3">
+                <p className="text-sm text-muted-foreground">{copy.flow.joinHint(routine.name, iterPort.label)}</p>
                 <MatchRuleEditor
                   flow={{ ...flow, edges: flow.edges.map((x) => (x.id === e.id ? { ...x, match: matches[port.key] ?? x.match } : x)) }}
                   edgeId={e.id}
@@ -263,7 +270,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
 
       {setup.settings.length > 0 && routine && (
         <Section title={copy.run.settingsTitle}>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-6">
             {setup.settings.map((s) => (
               <ParamField key={s.key} routineId={routine.id} documentId={readiness?.find((r) => r.appId === routine.appId)?.documentId} param={s} value={settings[s.key]} onChange={(v) => setSetting(s.key, v)} />
             ))}
@@ -273,12 +280,12 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
 
       {outputNodes.length > 0 && (
         <Section title={copy.run.outputsTitle}>
-          <p className="ui-small ui-muted">{target.kind === "flow" ? copy.run.outputsHintFlow : copy.run.outputsHint}</p>
-          <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">{target.kind === "flow" ? copy.run.outputsHintFlow : copy.run.outputsHint}</p>
+          <div className="flex flex-col gap-4">
             {outputNodes.map((n) => (
               <div key={n.id} className="flex flex-wrap items-center gap-3">
                 <span className="w-48">{n.port.label}</span>
-                <Button
+                <Button variant="outline"
                   onClick={async () => {
                     const folder = await doppel().pickFolder();
                     if (folder) setFolders((f) => ({ ...f, [n.id]: folder }));
@@ -286,14 +293,14 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
                 >
                   {folders[n.id] ? copy.run.change : copy.run.choose}
                 </Button>
-                <span className={folders[n.id] ? "truncate" : "ui-muted"} title={folders[n.id]}>
+                <span className={folders[n.id] ? "truncate" : "text-muted-foreground"} title={folders[n.id]}>
                   {folders[n.id] ? fileName(folders[n.id]) : copy.run.notChosen}
                 </span>
-                {folders[n.id] && sameFolderAs(folders[n.id]) && <span className="ui-small w-full">⚠ {copy.run.sameFolder(sameFolderAs(folders[n.id])!)}</span>}
+                {folders[n.id] && sameFolderAs(folders[n.id]) && <span className="text-sm w-full">⚠ {copy.run.sameFolder(sameFolderAs(folders[n.id])!)}</span>}
                 {folders[n.id] && target.kind === "routine" && (
-                  <button type="button" className="ui-small ui-link" onClick={() => setFolders((f) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== n.id)))}>
+                  <Button variant="link" className="h-auto p-0 text-sm" onClick={() => setFolders((f) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== n.id)))}>
                     {copy.run.clear}
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}
@@ -303,22 +310,22 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
 
       {canChooseTarget && (
         <Section title={copy.run.targetTitle}>
-          <div className="flex flex-col gap-2">
-            <label className="ui-choice">
-              <input type="radio" name="target" checked={target2 === "copy"} onChange={() => setTarget2("copy")} />
+          <RadioGroup className="flex flex-col gap-3" aria-label={copy.run.targetTitle} value={target2} onValueChange={(next) => setTarget2(next as typeof target2)}>
+            <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+              <RadioGroupItem className="mt-0.5" value="copy" />
               <span>
                 {appIds.has("figma") ? copy.run.figmaOnCopy : copy.run.onCopy}
-                <span className="ui-small ui-muted block">{appIds.has("figma") ? copy.run.figmaOnCopyHint() : copy.run.onCopyHint()}</span>
+                <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnCopyHint() : copy.run.onCopyHint()}</span>
               </span>
             </label>
-            <label className="ui-choice">
-              <input type="radio" name="target" checked={target2 === "original"} onChange={() => setTarget2("original")} />
+            <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+              <RadioGroupItem className="mt-0.5" value="original" />
               <span>
                 {appIds.has("figma") ? copy.run.figmaOnOriginal : copy.run.onOriginal}
-                <span className="ui-small ui-muted block">{appIds.has("figma") ? copy.run.figmaOnOriginalHint : copy.run.onOriginalHint}</span>
+                <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnOriginalHint : copy.run.onOriginalHint}</span>
               </span>
             </label>
-          </div>
+          </RadioGroup>
         </Section>
       )}
 
@@ -334,10 +341,10 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
       </Section>
 
       {error && <Notice tone="error">{error}</Notice>}
-      {missing.length > 0 && <p className="ui-small ui-muted">{`Pick ${missing.map((m) => `“${m}”`).join(", ")} first.`}</p>}
+      {missing.length > 0 && <p className="text-sm text-muted-foreground">{`Pick ${missing.map((m) => `“${m}”`).join(", ")} first.`}</p>}
 
       <div className="flex flex-wrap items-center gap-4">
-        <Button variant="primary" onClick={start} disabled={blocked || starting}>
+        <Button onClick={start} disabled={blocked || starting}>
           {starting ? copy.run.starting : copy.run.runButton}
         </Button>
         <div className="w-72">

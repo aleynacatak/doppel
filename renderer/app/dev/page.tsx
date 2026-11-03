@@ -15,39 +15,46 @@ import type {
 } from "@core/types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/Button";
-import { Field } from "@/components/ui/Field";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Spinner } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
+import { Field } from "@/components/common/Field";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Spinner } from "@/components/common/Progress";
+import { Section } from "@/components/common/Section";
 import { doppel } from "@/lib/doppel";
 import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 // Hidden dev panel (Cmd+Shift+D). Developer tool: plain labels, raw JSON.
 
 function DocumentPicker({ docs, value, onChange, allowNone }: { docs: DocumentRef[]; value: string; onChange: (v: string) => void; allowNone?: boolean }) {
   return (
-    <select className="ui-select max-w-md" value={value} onChange={(e) => onChange(e.target.value)}>
-      {allowNone && <option value="">No document</option>}
+    <NativeSelect className="w-full max-w-md" value={value} onChange={(e) => onChange(e.target.value)}>
+      {allowNone && <NativeSelectOption value="">No document</NativeSelectOption>}
       {docs.map((d) => (
-        <option key={d.id} value={d.id}>
+        <NativeSelectOption key={d.id} value={d.id}>
           {d.name}
-        </option>
+        </NativeSelectOption>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
 function RunResult({ result }: { result: DevRunResult }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <Notice tone={result.ok ? "info" : "error"} title={result.ok ? `OK · ${result.ms} ms` : `Failed · ${result.ms} ms`}>
-        {result.error && <pre className="ui-small whitespace-pre-wrap">{result.error}</pre>}
+        {result.error && <pre className="text-sm whitespace-pre-wrap">{result.error}</pre>}
       </Notice>
       {result.findings.length > 0 && (
-        <ul className="ui-small list-disc pl-5">
+        <ul className="text-sm list-disc pl-5">
           {result.findings.map((f, i) => (
             <li key={i}>
               {f.type}: {f.message}
@@ -56,7 +63,7 @@ function RunResult({ result }: { result: DevRunResult }) {
         </ul>
       )}
       {result.files.length > 0 && (
-        <ul className="ui-small">
+        <ul className="text-sm">
           {result.files.map((f) => (
             <li key={f}>{f}</li>
           ))}
@@ -65,12 +72,12 @@ function RunResult({ result }: { result: DevRunResult }) {
       {result.previews.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {result.previews.map((p, i) => (
-            <img key={i} src={p.src} alt={p.label} className="ui-card max-h-48" />
+            <img key={i} src={p.src} alt={p.label} className="rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10 max-h-48" />
           ))}
         </div>
       )}
-      {result.log.length > 0 && <pre className="ui-code max-h-40 p-2">{result.log.join("\n")}</pre>}
-      {result.data !== undefined && result.data !== null && <pre className="ui-code max-h-80 p-2">{JSON.stringify(result.data, null, 2)}</pre>}
+      {result.log.length > 0 && <pre className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre max-h-40 p-3">{result.log.join("\n")}</pre>}
+      {result.data !== undefined && result.data !== null && <pre className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre max-h-80 p-3">{JSON.stringify(result.data, null, 2)}</pre>}
     </div>
   );
 }
@@ -98,16 +105,16 @@ function FigmaRunner() {
   };
   return (
     <Section title="Figma action runner">
-      <p className="ui-small ui-muted">Runs on the current page of the file (one undo step in Figma). Placeholders: {"{{item.<field>}}"} from the sample item.</p>
-      {docs.length === 0 ? <p className="ui-small">Start the Doppl plugin in a Figma file.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} />}
+      <p className="text-sm text-muted-foreground">Runs on the current page of the file (one undo step in Figma). Placeholders: {"{{item.<field>}}"} from the sample item.</p>
+      {docs.length === 0 ? <p className="text-sm">Start the Doppl plugin in a Figma file.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} />}
       <Field label="Action list (JSON)" htmlFor="dev-actions">
-        <textarea id="dev-actions" className="ui-input ui-code h-56" value={actions} onChange={(e) => setActions(e.target.value)} spellCheck={false} />
+        <Textarea id="dev-actions" className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre h-56" value={actions} onChange={(e) => setActions(e.target.value)} spellCheck={false} />
       </Field>
       <Field label="Sample item (JSON, optional)" htmlFor="dev-item">
-        <textarea id="dev-item" className="ui-input ui-code h-20" value={item} onChange={(e) => setItem(e.target.value)} spellCheck={false} placeholder='{ "name": "…" }' />
+        <Textarea id="dev-item" className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre h-20" value={item} onChange={(e) => setItem(e.target.value)} spellCheck={false} placeholder='{ "name": "…" }' />
       </Field>
       <div>
-        <Button variant="primary" onClick={run} disabled={!doc || busy}>
+        <Button onClick={run} disabled={!doc || busy}>
           {busy ? <Spinner /> : "Run actions"}
         </Button>
       </div>
@@ -135,13 +142,13 @@ function PhotoshopRunner() {
   };
   return (
     <Section title="Photoshop script runner">
-      <p className="ui-small ui-muted">Runs on a working copy of the document (never saved; closed afterwards). The helper library is loaded: openDocument, findLayer, replaceSmartObject, setTextLayer, setLayerVisible, exportImage, saveCopy, closeWithoutSaving.</p>
-      {ps?.status !== "connected" ? <p className="ui-small">Photoshop isn't connected.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} allowNone />}
+      <p className="text-sm text-muted-foreground">Runs on a working copy of the document (never saved; closed afterwards). The helper library is loaded: openDocument, findLayer, replaceSmartObject, setTextLayer, setLayerVisible, exportImage, saveCopy, closeWithoutSaving.</p>
+      {ps?.status !== "connected" ? <p className="text-sm">Photoshop isn't connected.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} allowNone />}
       <Field label="Script (function body: doc, params, ctx)" htmlFor="dev-script">
-        <textarea id="dev-script" className="ui-input ui-code h-56" value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
+        <Textarea id="dev-script" className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre h-56" value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
       </Field>
       <div>
-        <Button variant="primary" onClick={run} disabled={ps?.status !== "connected" || busy}>
+        <Button onClick={run} disabled={ps?.status !== "connected" || busy}>
           {busy ? <Spinner /> : "Run script"}
         </Button>
       </div>
@@ -157,19 +164,19 @@ function BarcodeTester() {
   return (
     <Section title="Barcode tester">
       <div className="flex flex-wrap items-center gap-2">
-        <select className="ui-select max-w-40" value={type} onChange={(e) => setType(e.target.value)}>
+        <NativeSelect className="w-full max-w-40" value={type} onChange={(e) => setType(e.target.value)}>
           {["ean13", "ean8", "upca", "code128"].map((t) => (
-            <option key={t}>{t}</option>
+            <NativeSelectOption key={t}>{t}</NativeSelectOption>
           ))}
-        </select>
-        <input className="ui-input max-w-xs" value={value} onChange={(e) => setValue(e.target.value)} aria-label="Barcode value" />
-        <Button onClick={async () => setResult(await doppel().devBarcode(type, value))}>Draw</Button>
+        </NativeSelect>
+        <Input className="max-w-xs" value={value} onChange={(e) => setValue(e.target.value)} aria-label="Barcode value" />
+        <Button variant="outline" onClick={async () => setResult(await doppel().devBarcode(type, value))}>Draw</Button>
       </div>
       {result && !result.ok && <Notice tone="error">{result.error}</Notice>}
       {result?.ok && (
-        <div className="flex flex-col gap-1">
-          <span className="ui-small">Encoded: {result.value}</span>
-          <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg!)}`} alt={`Barcode ${result.value}`} className="max-w-xs bg-white p-2" />
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm">Encoded: {result.value}</span>
+          <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg!)}`} alt={`Barcode ${result.value}`} className="max-w-xs bg-white p-3" />
         </div>
       )}
     </Section>
@@ -211,94 +218,93 @@ function FlowLab() {
   };
   return (
     <Section title="Flow runner">
-      <p className="ui-small ui-muted">
+      <p className="text-sm text-muted-foreground">
         Runs a flow without AI. Simulated apps write placeholder files for each output, so handoffs, joins, partial failure and cancel can be tried without InDesign,
         Photoshop or Figma. Inputs nothing is picked for get three sample rows or files. Real apps use the values picked last time.
       </p>
       {flows.length === 0 ? (
-        <p className="ui-small">No flows yet.</p>
+        <p className="text-sm">No flows yet.</p>
       ) : (
         <>
-          <select className="ui-select max-w-md" value={flow?.id ?? ""} onChange={(e) => setFlowId(e.target.value)}>
+          <NativeSelect className="w-full max-w-md" value={flow?.id ?? ""} onChange={(e) => setFlowId(e.target.value)}>
             {flows.map((f) => (
-              <option key={f.id} value={f.id}>
+              <NativeSelectOption key={f.id} value={f.id}>
                 {f.name}
-              </option>
+              </NativeSelectOption>
             ))}
-          </select>
-          <label className="ui-choice">
-            <input type="checkbox" checked={mocked} onChange={(e) => setMocked(e.target.checked)} />
+          </NativeSelect>
+          <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+            <Checkbox className="mt-0.5" checked={mocked} onCheckedChange={(checked) => setMocked(checked)} />
             <span>Simulate every app</span>
           </label>
           {routineNodes.length > 0 && (
-            <table className="ui-table ui-small">
-              <thead>
-                <tr>
-                  <th className="py-1 pr-3">Routine node</th>
-                  <th className="py-1 pr-3">Fail the node</th>
-                  <th className="py-1">Fail items (1-based, e.g. 2, 4)</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="py-1.5 pr-3">Routine node</TableHead>
+                  <TableHead className="py-1.5 pr-3">Fail the node</TableHead>
+                  <TableHead className="py-1.5">Fail items (1-based, e.g. 2, 4)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {routineNodes.map((n) => (
-                  <tr key={n.id}>
-                    <td className="py-1 pr-3">{ctx?.routines[n.id]?.name ?? n.id}</td>
-                    <td className="py-1 pr-3">
-                      <input
-                        type="checkbox"
+                  <TableRow key={n.id}>
+                    <TableCell className="py-1.5 pr-3">{ctx?.routines[n.id]?.name ?? n.id}</TableCell>
+                    <TableCell className="py-1.5 pr-3">
+                      <Checkbox className="mt-0.5"
                         checked={failNodes.includes(n.id)}
-                        onChange={(e) => setFailNodes((f) => (e.target.checked ? [...f, n.id] : f.filter((x) => x !== n.id)))}
+                        onCheckedChange={(checked) => setFailNodes((f) => (checked ? [...f, n.id] : f.filter((x) => x !== n.id)))}
                         aria-label={`Fail ${n.id}`}
                       />
-                    </td>
-                    <td className="py-1">
-                      <input className="ui-input max-w-40" value={failItems[n.id] ?? ""} onChange={(e) => setFailItems((f) => ({ ...f, [n.id]: e.target.value }))} aria-label={`Fail items of ${n.id}`} />
-                    </td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <Input className="max-w-40" value={failItems[n.id] ?? ""} onChange={(e) => setFailItems((f) => ({ ...f, [n.id]: e.target.value }))} aria-label={`Fail items of ${n.id}`} />
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
           <div className="flex gap-2">
-            <Button onClick={async () => flow && setPlan(await doppel().devExecutionPlan(flow.id, {}))}>Show execution plan</Button>
-            <Button variant="primary" onClick={run}>
+            <Button variant="outline" onClick={async () => flow && setPlan(await doppel().devExecutionPlan(flow.id, {}))}>Show execution plan</Button>
+            <Button onClick={run}>
               Run flow
             </Button>
           </div>
           {error && <Notice tone="error">{error}</Notice>}
           {plan && (
-            <div className="flex flex-col gap-2">
-              <table className="ui-table ui-small">
-                <thead>
-                  <tr>
-                    <th className="py-1 pr-3">#</th>
-                    <th className="py-1 pr-3">Node</th>
-                    <th className="py-1 pr-3">Items</th>
-                    <th className="py-1">Note</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <div className="flex flex-col gap-3">
+              <Table className="text-sm">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="py-1.5 pr-3">#</TableHead>
+                    <TableHead className="py-1.5 pr-3">Node</TableHead>
+                    <TableHead className="py-1.5 pr-3">Items</TableHead>
+                    <TableHead className="py-1.5">Note</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {plan.steps.map((s, i) => (
-                    <tr key={s.nodeId}>
-                      <td className="py-1 pr-3">{i + 1}</td>
-                      <td className="py-1 pr-3">
+                    <TableRow key={s.nodeId}>
+                      <TableCell className="py-1.5 pr-3">{i + 1}</TableCell>
+                      <TableCell className="py-1.5 pr-3">
                         {s.kind} · {s.name}
                         {s.appId ? ` · ${s.appId}` : ""}
                         {s.iterates ? ` · per item of ${s.iterates}` : ""}
-                      </td>
-                      <td className="py-1 pr-3">{s.items ?? "?"}</td>
-                      <td className="ui-muted py-1">{s.note}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="py-1.5 pr-3">{s.items ?? "?"}</TableCell>
+                      <TableCell className="text-muted-foreground py-1.5">{s.note}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               {plan.joins.map((j) => (
-                <div key={j.edgeId} className="ui-small">
-                  <div className="ui-label">
+                <div key={j.edgeId} className="text-sm">
+                  <div className="text-sm font-medium">
                     Join into {j.into}: {JSON.stringify(j.rule)}
                   </div>
                   {j.preview.note ? (
-                    <p className="ui-muted">{j.preview.note}</p>
+                    <p className="text-muted-foreground">{j.preview.note}</p>
                   ) : (
                     <ul>
                       {j.preview.pairs.map((p, i) => (
@@ -310,7 +316,7 @@ function FlowLab() {
                   )}
                 </div>
               ))}
-              {plan.issues.length > 0 && <pre className="ui-code p-2">{plan.issues.map((i) => `${i.code}: ${i.message}`).join("\n")}</pre>}
+              {plan.issues.length > 0 && <pre className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre p-3">{plan.issues.map((i) => `${i.code}: ${i.message}`).join("\n")}</pre>}
             </div>
           )}
         </>
@@ -329,27 +335,27 @@ function ExportStarter() {
   const routine: Routine | undefined = routines.find((r) => r.id === id) ?? routines[0];
   return (
     <Section title="Export as starter">
-      <p className="ui-small ui-muted">
+      <p className="text-sm text-muted-foreground">
         Writes one of your routines in the starter format (run history, request notes and locations on this Mac taken out; inputs and outputs checked). Put the
         file into resources/starters/ to ship it as “Made by Doppl”. A converter has one input and one output and is offered for incompatible connections.
       </p>
       {routines.length === 0 ? (
-        <p className="ui-small">No routines yet.</p>
+        <p className="text-sm">No routines yet.</p>
       ) : (
         <>
-          <select className="ui-select max-w-md" value={routine?.id ?? ""} onChange={(e) => setId(e.target.value)}>
+          <NativeSelect className="w-full max-w-md" value={routine?.id ?? ""} onChange={(e) => setId(e.target.value)}>
             {routines.map((r) => (
-              <option key={r.id} value={r.id}>
+              <NativeSelectOption key={r.id} value={r.id}>
                 {r.name} (v{r.version})
-              </option>
+              </NativeSelectOption>
             ))}
-          </select>
-          <label className="ui-choice">
-            <input type="checkbox" checked={converter} onChange={(e) => setConverter(e.target.checked)} />
+          </NativeSelect>
+          <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+            <Checkbox className="mt-0.5" checked={converter} onCheckedChange={(checked) => setConverter(checked)} />
             <span>Tag as converter</span>
           </label>
           <div>
-            <Button
+            <Button variant="outline"
               onClick={async () => {
                 if (!routine) return;
                 setError(null);
@@ -366,7 +372,7 @@ function ExportStarter() {
           {error && <Notice tone="error">{error}</Notice>}
           {result && (
             <Notice title={result.path ? `Saved ${result.path}` : "Not saved"}>
-              {result.removed.length > 0 && <p className="ui-small">Taken out: {result.removed.join("; ")}</p>}
+              {result.removed.length > 0 && <p className="text-sm">Taken out: {result.removed.join("; ")}</p>}
             </Notice>
           )}
         </>
@@ -382,15 +388,14 @@ function RoutineBuilder() {
   const [error, setError] = useState<string | null>(null);
   return (
     <Section title="Routine builder">
-      <p className="ui-small ui-muted">
+      <p className="text-sm text-muted-foreground">
         Paste a routine in the model&apos;s format: {"{"} name, app, inputs, outputs, settings, iterate, actions (Figma) or script {"}"}. Validate, then save it to the library.
         Saving and running use no AI.
       </p>
-      <textarea className="ui-input ui-code h-72" value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} aria-label="Routine JSON" />
+      <Textarea className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre h-72" value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} aria-label="Routine JSON" />
       <div className="flex gap-2">
-        <Button onClick={async () => setValidation(await doppel().devValidateRoutine(json))}>Validate</Button>
+        <Button variant="outline" onClick={async () => setValidation(await doppel().devValidateRoutine(json))}>Validate</Button>
         <Button
-          variant="primary"
           onClick={async () => {
             setError(null);
             try {
@@ -407,7 +412,7 @@ function RoutineBuilder() {
       {validation?.parseError && <Notice tone="error">{validation.parseError}</Notice>}
       {validation && !validation.parseError && (
         <Notice tone={validation.validation.ok ? "info" : "error"} title={validation.validation.ok ? "Valid" : `${validation.validation.errors.length} problems`}>
-          <ul className="ui-small">
+          <ul className="text-sm">
             {validation.validation.errors.map((e, i) => (
               <li key={i}>
                 <code>{e.path}</code> [{e.code}] {e.message}
@@ -425,18 +430,18 @@ function LastCreation() {
   const [t, setT] = useState<CreationTranscript | null | undefined>(undefined);
   const load = async () => setT(await doppel().devLastCreationTranscript());
   return (
-    <Section title="Last creation: the AI's answers" aside={<Button size="small" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
-      <p className="ui-small ui-muted">The latest creation (its plan and every routine), turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
-      {t === null && <p className="ui-small">No creation since Doppl started.</p>}
+    <Section title="Last creation: the AI's answers" aside={<Button variant="outline" size="sm" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
+      <p className="text-sm text-muted-foreground">The latest creation (its plan and every routine), turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
+      {t === null && <p className="text-sm">No creation since Doppl started.</p>}
       {t && (
-        <div className="flex flex-col gap-2">
-          <p className="ui-small">
+        <div className="flex flex-col gap-3">
+          <p className="text-sm">
             {t.at.slice(0, 19).replace("T", " ")} · “{t.request.slice(0, 120)}{t.request.length > 120 ? "…" : ""}”
           </p>
           {t.entries.map((e, i) => (
-            <div key={i} className="flex flex-col gap-1">
-              <div className="ui-label">{e.role === "ai" ? `AI answer` : i === 0 ? "Doppl: the task" : "Doppl's reply"}</div>
-              <pre className="ui-code max-h-72 whitespace-pre-wrap p-2">{e.text}</pre>
+            <div key={i} className="flex flex-col gap-1.5">
+              <div className="text-sm font-medium">{e.role === "ai" ? `AI answer` : i === 0 ? "Doppl: the task" : "Doppl's reply"}</div>
+              <pre className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre max-h-72 whitespace-pre-wrap p-3">{e.text}</pre>
             </div>
           ))}
         </div>
@@ -456,8 +461,8 @@ function ConnectionLog() {
     <Section
       title="Connection log"
       aside={
-        <Button
-          size="small"
+        <Button variant="outline"
+          size="sm"
           onClick={async () => {
             await doppel().clearConnectionLog();
             setEntries([]);
@@ -467,8 +472,8 @@ function ConnectionLog() {
         </Button>
       }
     >
-      <p className="ui-small ui-muted">AppleScript and plugin traffic: metadata only, never file contents.</p>
-      <pre className="ui-code max-h-80 p-2">
+      <p className="text-sm text-muted-foreground">AppleScript and plugin traffic: metadata only, never file contents.</p>
+      <pre className="overflow-auto rounded-lg border bg-muted font-mono text-xs/relaxed whitespace-pre max-h-80 p-3">
         {entries
           .slice()
           .reverse()
@@ -481,7 +486,7 @@ function ConnectionLog() {
 
 function TestResults({ results }: { results: HelperTestResult[] }) {
   return (
-    <ul className="ui-small flex flex-col gap-0.5">
+    <ul className="text-sm flex flex-col gap-1">
       {results.map((r, i) => (
         <li key={i}>
           {r.skipped ? "SKIP" : r.passed ? "PASS" : "FAIL"} {r.helper} v{r.version} · {r.test}
@@ -514,11 +519,11 @@ function BuildingBlocks() {
   };
   return (
     <Section title="Building blocks">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="ui-label">Library</span>
-          <Button
-            size="small"
+          <span className="text-sm font-medium">Library</span>
+          <Button variant="outline"
+            size="sm"
             disabled={busy === "tests"}
             onClick={async () => {
               setBusy("tests");
@@ -528,92 +533,97 @@ function BuildingBlocks() {
             {busy === "tests" ? "Running tests…" : "Run all tests in the apps"}
           </Button>
         </div>
-        <table className="ui-table ui-small">
-          <tbody>
+        <Table className="text-sm">
+          <TableBody>
             {(library ?? []).map((b) => (
-              <tr key={b.id}>
-                <td className="py-1 pr-3">{b.call}</td>
-                <td className="ui-muted py-1 pr-3">
+              <TableRow key={b.id}>
+                <TableCell className="py-1.5 pr-3">{b.call}</TableCell>
+                <TableCell className="text-muted-foreground py-1.5 pr-3">
                   {b.id} v{b.version}
                   {b.versions.length > 1 ? ` (versions ${b.versions.join(", ")})` : ""}
-                </td>
-                <td className="ui-muted py-1 pr-3">{b.set}</td>
-                <td className="ui-muted py-1 pr-3">{b.source === "promoted" ? "yours" : "built-in"}</td>
-                <td className="ui-muted py-1">{b.tests} test(s)</td>
-              </tr>
+                </TableCell>
+                <TableCell className="text-muted-foreground py-1.5 pr-3">{b.set}</TableCell>
+                <TableCell className="text-muted-foreground py-1.5 pr-3">{b.source === "promoted" ? "yours" : "built-in"}</TableCell>
+                <TableCell className="text-muted-foreground py-1.5">{b.tests} test(s)</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
         {tests && <TestResults results={tests} />}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="ui-label">Candidates (custom code from saved routines, best first)</span>
-        <label className="ui-choice">
-          <input
-            type="checkbox"
+      <div className="flex flex-col gap-3">
+        <span className="text-sm font-medium">Candidates (custom code from saved routines, best first)</span>
+        <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+          <Checkbox className="mt-0.5"
             checked={!!settings?.autoPromoteBlocks}
-            onChange={async (e) => setSettings(await doppel().saveSettings({ autoPromoteBlocks: e.target.checked }))}
+            onCheckedChange={async (checked) => setSettings(await doppel().saveSettings({ autoPromoteBlocks: checked }))}
           />
           <span>Promote automatically: used successfully in 2+ routines, 5+ items, no "This isn't right" or refine changes, tests pass (off by default; uses AI only when a routine is saved)</span>
         </label>
         {note && <Notice>{note}</Notice>}
-        {(candidates ?? []).length === 0 && <p className="ui-small ui-muted">None yet. Steps written as custom code show up here after a routine is saved.</p>}
+        {(candidates ?? []).length === 0 && <p className="text-sm text-muted-foreground">None yet. Steps written as custom code show up here after a routine is saved.</p>}
         {(candidates ?? []).map((c) => (
-          <div key={c.id} className="ui-card flex flex-col gap-2 p-3" data-selected={c.status === "promoted"}>
-            <div className="ui-small">
-              <strong>score {c.score}</strong> · {c.app} · {c.status} · written in {new Set(c.occurrences.map((o) => o.routineId)).size} routine(s)
-            </div>
-            <ul className="ui-small ui-muted flex flex-col">
-              {c.occurrences.map((o, i) => (
-                <li key={i}>
-                  “{o.step}” in {o.routineName} v{o.version} · trial {o.trial.ok}/{o.trial.items}
-                </li>
-              ))}
-            </ul>
-            <div className="ui-small ui-muted">
-              {c.evidence.successfulItems} successful items · {c.evidence.inputKeys.length} distinct inputs · checks {c.evidence.qcPassed}/{c.evidence.qcChecked} · OK {c.evidence.markedOk} · not right {c.evidence.notRight} · refine changes {c.evidence.refineTouches}
-            </div>
-            <details>
-              <summary className="ui-small ui-link">Code</summary>
-              <pre className="ui-small overflow-x-auto whitespace-pre-wrap">{c.code}</pre>
-            </details>
-            {c.draft && (
-              <div className="flex flex-col gap-1">
-                <div className="ui-small">
-                  Generalized: <strong>{c.draft.def.call}</strong> ({c.draft.def.id} v{c.draft.def.version}) · {c.draft.def.summary}
-                </div>
-                {c.draft.lint.length > 0 && <Notice tone="warning">{c.draft.lint.join(" · ")}</Notice>}
-                {c.draft.tests.length > 0 && <TestResults results={c.draft.tests} />}
-                <details>
-                  <summary className="ui-small ui-link">Block code and docs</summary>
-                  <pre className="ui-small overflow-x-auto whitespace-pre-wrap">{`${c.draft.def.doc}\n\n${c.draft.def.code}`}</pre>
-                </details>
+          <Card key={c.id} data-selected={c.status === "promoted"} size="sm" className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
+            <CardContent className="flex flex-col gap-3">
+              <div className="text-sm">
+                <strong>score {c.score}</strong> · {c.app} · {c.status} · written in {new Set(c.occurrences.map((o) => o.routineId)).size} routine(s)
               </div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {c.status !== "promoted" && c.status !== "dismissed" && (
-                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().generalizeBlockCandidate(c.id))}>
-                  {busy === c.id ? "Working…" : c.draft ? "Generalize again" : "Generalize (1 AI call)"}
-                </Button>
+              <ul className="text-sm text-muted-foreground flex flex-col">
+                {c.occurrences.map((o, i) => (
+                  <li key={i}>
+                    “{o.step}” in {o.routineName} v{o.version} · trial {o.trial.ok}/{o.trial.items}
+                  </li>
+                ))}
+              </ul>
+              <div className="text-sm text-muted-foreground">
+                {c.evidence.successfulItems} successful items · {c.evidence.inputKeys.length} distinct inputs · checks {c.evidence.qcPassed}/{c.evidence.qcChecked} · OK {c.evidence.markedOk} · not right {c.evidence.notRight} · refine changes {c.evidence.refineTouches}
+              </div>
+              <Collapsible>
+                <CollapsibleTrigger className="text-sm text-primary underline-offset-4 hover:underline">Code</CollapsibleTrigger>
+                <CollapsibleContent>
+                  <pre className="text-sm overflow-x-auto whitespace-pre-wrap">{c.code}</pre>
+                </CollapsibleContent>
+              </Collapsible>
+              {c.draft && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="text-sm">
+                    Generalized: <strong>{c.draft.def.call}</strong> ({c.draft.def.id} v{c.draft.def.version}) · {c.draft.def.summary}
+                  </div>
+                  {c.draft.lint.length > 0 && <Notice tone="warning">{c.draft.lint.join(" · ")}</Notice>}
+                  {c.draft.tests.length > 0 && <TestResults results={c.draft.tests} />}
+                  <Collapsible>
+                    <CollapsibleTrigger className="text-sm text-primary underline-offset-4 hover:underline">Block code and docs</CollapsibleTrigger>
+                    <CollapsibleContent>
+                    <pre className="text-sm overflow-x-auto whitespace-pre-wrap">{`${c.draft.def.doc}\n\n${c.draft.def.code}`}</pre>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </div>
               )}
-              {c.status === "generalized" && (
-                <Button size="small" variant="primary" disabled={!!busy} onClick={() => act(c.id, () => doppel().approveBlockCandidate(c.id))}>
-                  Approve into my library
-                </Button>
-              )}
-              {c.status === "promoted" && (
-                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().exportBlockCandidate(c.id))}>
-                  Export as built-in…
-                </Button>
-              )}
-              {c.status !== "dismissed" && c.status !== "promoted" && (
-                <Button size="small" disabled={!!busy} onClick={() => act(c.id, () => doppel().dismissBlockCandidate(c.id))}>
-                  Dismiss
-                </Button>
-              )}
-            </div>
-          </div>
+              <div className="flex flex-wrap gap-2">
+                {c.status !== "promoted" && c.status !== "dismissed" && (
+                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => act(c.id, () => doppel().generalizeBlockCandidate(c.id))}>
+                    {busy === c.id ? "Working…" : c.draft ? "Generalize again" : "Generalize (1 AI call)"}
+                  </Button>
+                )}
+                {c.status === "generalized" && (
+                  <Button size="sm" disabled={!!busy} onClick={() => act(c.id, () => doppel().approveBlockCandidate(c.id))}>
+                    Approve into my library
+                  </Button>
+                )}
+                {c.status === "promoted" && (
+                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => act(c.id, () => doppel().exportBlockCandidate(c.id))}>
+                    Export as built-in…
+                  </Button>
+                )}
+                {c.status !== "dismissed" && c.status !== "promoted" && (
+                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => act(c.id, () => doppel().dismissBlockCandidate(c.id))}>
+                    Dismiss
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         ))}
       </div>
     </Section>
@@ -622,7 +632,7 @@ function BuildingBlocks() {
 
 export default function DevPage() {
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
       <PageHeader title="Dev panel" subtitle="Hidden tools for building and checking routines. Cmd+Shift+D." />
       <FigmaRunner />
       <PhotoshopRunner />

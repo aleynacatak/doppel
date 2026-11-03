@@ -7,12 +7,12 @@ import { AppsPicker } from "@/components/newTask/AppsPicker";
 import { ExamplePrompts } from "@/components/newTask/ExamplePrompts";
 import { ReferencePicker } from "@/components/newTask/ReferencePicker";
 import { RequestInput } from "@/components/newTask/RequestInput";
-import { Button } from "@/components/ui/Button";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
 
 export default function NewTaskPage() {
   const router = useRouter();
@@ -55,7 +55,7 @@ export default function NewTaskPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <PageHeader title={copy.newTask.title} subtitle={copy.newTask.subtitle} />
       <RequestInput value={request} onChange={setRequest} />
       <ExamplePrompts
@@ -68,7 +68,7 @@ export default function NewTaskPage() {
       <AppsPicker value={picked} onChange={setPicked} />
       {error && <Notice tone="error">{error}</Notice>}
       <div>
-        <Button variant="primary" onClick={create} disabled={!request.trim() || picked.length === 0 || starting}>
+        <Button onClick={create} disabled={!request.trim() || picked.length === 0 || starting}>
           {starting ? copy.newTask.creating : picked.length > 1 ? copy.newTask.planFlow : copy.newTask.create}
         </Button>
       </div>
