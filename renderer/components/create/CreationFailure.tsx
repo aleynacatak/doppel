@@ -1,9 +1,10 @@
 import type { Creation } from "@core/types";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { Button, ButtonLink } from "../ui/Button";
-import { Details } from "../ui/Details";
-import { Notice } from "../ui/Notice";
+import { Details } from "../common/Details";
+import { Notice } from "../common/Notice";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 /** What went wrong, in plain language, with the action that helps (from the error's `action`). */
 export function CreationFailure({
@@ -31,15 +32,15 @@ export function CreationFailure({
         title={copy.create.notATaskTitle}
         actions={
           <>
-            <Button variant="primary" onClick={onChangeRequest}>
+            <Button onClick={onChangeRequest}>
               {copy.create.changeRequest}
             </Button>
-            <Button onClick={onDiscard}>{copy.common.discard}</Button>
+            <Button variant="outline" onClick={onDiscard}>{copy.common.discard}</Button>
           </>
         }
       >
         <p>{error.message}</p>
-        <p className="ui-small ui-muted">{copy.create.notATaskHint}</p>
+        <p className="text-sm text-muted-foreground">{copy.create.notATaskHint}</p>
       </Notice>
     );
   }
@@ -51,43 +52,43 @@ export function CreationFailure({
         <>
           {error?.kind === "app-not-connected" && <ButtonLink href="/connect">{copy.common.connectApps}</ButtonLink>}
           {error?.kind === "needs-flow" && (
-            <ButtonLink href="/" variant="primary">
+            <ButtonLink href="/" variant="default">
               {copy.refine.planFlow}
             </ButtonLink>
           )}
           {error?.kind === "plugin-not-connected" && creation.task.documentId && (
-            <Button onClick={() => doppel().openDocument(creation.task.appId, creation.task.documentId!)}>{copy.connect.figma.openInFigma}</Button>
+            <Button variant="outline" onClick={() => doppel().openDocument(creation.task.appId, creation.task.documentId!)}>{copy.connect.figma.openInFigma}</Button>
           )}
           {settingsAction && (
-            <ButtonLink href="/settings" variant="primary">
+            <ButtonLink href="/settings" variant="default">
               {copy.create.actions[action]}
             </ButtonLink>
           )}
           {creation.canContinue && (
-            <Button variant="primary" onClick={onContinue}>
+            <Button onClick={onContinue}>
               {copy.create.continue}
             </Button>
           )}
           {action === "start-over" ? (
-            <Button variant={creation.canContinue ? "secondary" : "primary"} onClick={onStartOver}>
+            <Button variant={creation.canContinue ? "outline" : "default"} onClick={onStartOver}>
               {copy.create.actions["start-over"]}
             </Button>
           ) : (
-            <Button variant={settingsAction || creation.canContinue ? "secondary" : "primary"} onClick={onRetry}>
+            <Button variant={settingsAction || creation.canContinue ? "outline" : "default"} onClick={onRetry}>
               {creation.canContinue ? copy.create.startOver : copy.common.tryAgain}
             </Button>
           )}
-          <Button onClick={onDiscard}>{copy.common.discard}</Button>
+          <Button variant="outline" onClick={onDiscard}>{copy.common.discard}</Button>
         </>
       }
     >
       <p>{error?.message}</p>
-      {creation.mode === "refine" && <p className="ui-small">{copy.refine.failedNote}</p>}
+      {creation.mode === "refine" && <p className="text-sm">{copy.refine.failedNote}</p>}
       <Details text={error?.detail} />
       {creation.canContinue ? (
-        <p className="ui-small ui-muted">{copy.create.continueHint}</p>
+        <p className="text-sm text-muted-foreground">{copy.create.continueHint}</p>
       ) : (
-        creation.aiCalls > 0 && action !== "start-over" && <p className="ui-small ui-muted">{copy.create.retryHint}</p>
+        creation.aiCalls > 0 && action !== "start-over" && <p className="text-sm text-muted-foreground">{copy.create.retryHint}</p>
       )}
     </Notice>
   );

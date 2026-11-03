@@ -4,6 +4,7 @@ import { filePreviews } from "../adapters/previews";
 import { blocks } from "../core/blocks/registry";
 import { runHelperTests } from "../core/blocks/testRunner";
 import type { Services } from "../core/config";
+import { appIcons } from "../core/services/appIcons";
 import { connectionLog } from "../core/services/connectionLog";
 import { pickerStart, rememberPick } from "../core/services/lastFolder";
 import { errorMessage } from "../core/util";
@@ -25,6 +26,7 @@ export function registerIpc(s: Services) {
   const handlers: Handlers = {
     // Apps
     listApps: () => s.apps.list(),
+    getAppIcons: () => appIcons(),
     checkApp: (appId) => s.apps.checkApp(appId),
     listOpenDocuments: (appId) => s.registry.get(appId).listOpenDocuments(),
     inspectDocument: (appId, docId) => s.registry.get(appId).inspectDocument(docId),
@@ -127,6 +129,7 @@ export function registerIpc(s: Services) {
     },
 
     // AI access
+    getAiAccessSummary: () => s.access.summary(),
     getAiAccess: () => s.access.describe(),
     setAiProvider: (provider) => s.access.setProvider(provider),
     saveAccessCode: (code) => s.access.saveAccessCode(code),

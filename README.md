@@ -3,7 +3,7 @@
 Doppl learns your design routines and runs them in your own apps. Describe a task once; Meta's models turn it into a reusable routine you can rerun with no AI calls. One routine can work across several apps: for example, labels made in Figma from a spreadsheet, then put on mockups in Photoshop.
 
 This repo holds:
-- the desktop app (wireframe styling);
+- the desktop app (shadcn/ui, on the theme preset `b7BrAOFkW`);
 - the Doppl Figma plugin ([`figma-plugin/`](figma-plugin/));
 - [`worker/`](worker/README.md), the Cloudflare Worker that gives testers demo access to the AI.
 
@@ -23,7 +23,7 @@ There is no mock data and there are no sample routines: every app connection, AI
 
 1. Download `Doppl-<version>-arm64.dmg` and drag Doppl to Applications.
 2. The first time, right-click Doppl → **Open** (the app isn't notarized). If macOS only offers "Move to Trash", go to System Settings → Privacy & Security and click **Open Anyway**.
-3. If macOS asks for your password so Doppl can use "Doppl Safe Storage", type your Mac password and click **Always Allow**.
+3. If macOS asks for your password so Doppl can use "Doppl Safe Storage", type your Mac password and click **Always Allow**. This can happen after you install a new version, the first time Doppl needs a saved code, key or token.
 4. **Connect apps.**
    - **InDesign, Photoshop:** open them; Doppl connects on its own. The first time, macOS asks whether Doppl may control each app; click **OK**.
    - **Figma:** see [Figma setup](#figma-setup) below (about 3 minutes, once).
@@ -262,8 +262,8 @@ Data lives in `~/Library/Application Support/Doppl/`:
 
 ## Restyling
 
-The UI is deliberately wireframe-grade:
-- Visual styling lives only in `renderer/app/globals.css` (`.ui-*` classes and CSS variables).
-- Components use Tailwind for layout only.
+The UI uses [shadcn/ui](https://ui.shadcn.com) with the theme preset `b7BrAOFkW`, and nothing styled beyond it for now.
+- `renderer/components/ui/` holds the shadcn components (style `base-maia`, built on Base UI; settings in `renderer/components.json`). The font is Inter, packaged with the app so nothing is fetched from Google.
+- `renderer/components/common/` holds Doppl's small wrappers around them, such as notices, tags, fields and page headers.
+- The theme is CSS variables in `renderer/app/globals.css`, which also holds the flow canvas's own `.ui-flow*` styles. Everything else uses Tailwind.
 - Strings are in `renderer/copy.ts`.
-- No component library, no theme.

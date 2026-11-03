@@ -4,8 +4,8 @@ import { OutputCard } from "../results/OutputCard";
 import { OutputGrid } from "../results/OutputGrid";
 import { ContractView } from "../routine/ContractView";
 import { StepsList } from "../routine/StepsList";
-import { Section } from "../ui/Section";
-import { Tag } from "../ui/Tag";
+import { Section } from "../common/Section";
+import { Tag } from "../common/Tag";
 import { SaveRoutineForm } from "./SaveRoutineForm";
 
 export function CreationResult({
@@ -19,9 +19,9 @@ export function CreationResult({
 }) {
   const draft = creation.draft!;
   return (
-    <div className="flex flex-col gap-8">
-      <Section title={copy.create.resultTitle}>
-        <p className="ui-muted">{copy.create.resultHintStaged(creation.outputs.length)}</p>
+    <div className="flex flex-col gap-6">
+      <Section plain title={copy.create.resultTitle}>
+        <p className="text-muted-foreground">{copy.create.resultHintStaged(creation.outputs.length)}</p>
         <OutputGrid>
           {creation.outputs.map((o) => (
             <OutputCard key={o.id} output={o} />
@@ -30,9 +30,9 @@ export function CreationResult({
       </Section>
 
       <Section title={copy.create.proposedTitle} aside={draft.experimental ? <Tag>{copy.common.experimental}</Tag> : undefined}>
-        <p className="ui-muted">{draft.description}</p>
-        <div className="flex flex-col gap-2">
-          <div className="ui-h3">{copy.create.stepsTitle}</div>
+        <p className="text-muted-foreground">{draft.description}</p>
+        <div className="flex flex-col gap-3">
+          <div className="text-sm font-medium">{copy.create.stepsTitle}</div>
           <StepsList steps={draft.steps} />
         </div>
         <ContractView routine={draft} />

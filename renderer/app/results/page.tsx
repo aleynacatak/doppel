@@ -6,19 +6,21 @@ import { Suspense, useState } from "react";
 import { FixNotice } from "@/components/results/FixNotice";
 import { OutputCard } from "@/components/results/OutputCard";
 import { OutputGrid } from "@/components/results/OutputGrid";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { Details } from "@/components/ui/Details";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading, Spinner } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
-import { Segmented } from "@/components/ui/Segmented";
-import { Tag } from "@/components/ui/Tag";
+import { AppTag } from "@/components/common/AppLogo";
+import { Details } from "@/components/common/Details";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Loading, Spinner } from "@/components/common/Progress";
+import { Section } from "@/components/common/Section";
+import { Segmented } from "@/components/common/Segmented";
+import { Tag } from "@/components/common/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { appLabel, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { useAsync, useRun } from "@/lib/hooks";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 type Filter = "all" | "flagged" | "passed";
 
@@ -52,38 +54,40 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
   const repairable = node.kind === "routine" && !!onRepair && (failedItems.length === 0 || failedItems.some((i) => !i.cause || i.cause === "routine"));
   return (
     <Section
+      // Output cards stand on their own, so they aren't put in another card.
+      plain={mine.length > 0 && node.kind !== "output"}
       title={
         <span id={`node-${node.nodeId}`} className="flex flex-wrap items-center gap-2">
-          {node.appId && <Tag tone="strong">{appLabel(node.appId)}</Tag>}
+          {node.appId && <AppTag appId={node.appId} />}
           {node.kind === "output" ? `${copy.flow.saveToFolder} · ${node.name}` : node.kind === "input" ? `${copy.flow.inputNode} · ${node.name}` : node.name}
         </span>
       }
       aside={<Tag>{copy.run.stageStatus[node.status]}</Tag>}
     >
-      {node.documentName && node.kind === "routine" && <p className="ui-small ui-muted">{copy.results.stageOn(node.documentName)}</p>}
-      {node.kind === "output" && node.status === "done" && node.documentName && <p className="ui-small">{copy.results.savedTo(node.done, node.documentName)}</p>}
-      {node.note && <p className="ui-small ui-muted">{node.note}</p>}
+      {node.documentName && node.kind === "routine" && <p className="text-sm text-muted-foreground">{copy.results.stageOn(node.documentName)}</p>}
+      {node.kind === "output" && node.status === "done" && node.documentName && <p className="text-sm">{copy.results.savedTo(node.done, node.documentName)}</p>}
+      {node.note && <p className="text-sm text-muted-foreground">{node.note}</p>}
       {node.error && (
-        <Notice tone="warning" actions={repairable ? <Button size="small" onClick={onRepair}>{copy.results.repair}</Button> : undefined}>
+        <Notice tone="warning" actions={repairable ? <Button variant="outline" size="sm" onClick={onRepair}>{copy.results.repair}</Button> : undefined}>
           {node.error}
           <Details text={node.errorDetail} />
         </Notice>
       )}
-      {node.kind === "routine" && node.total > 1 && <p className="ui-small ui-muted">{copy.run.stageProgress(node.done, node.total, node.failed)}</p>}
+      {node.kind === "routine" && node.total > 1 && <p className="text-sm text-muted-foreground">{copy.run.stageProgress(node.done, node.total, node.failed)}</p>}
       {failedItems.length > 0 && node.kind !== "routine" && (
-        <ul className="ui-small flex flex-col gap-0.5">
+        <ul className="text-sm flex flex-col gap-1">
           {failedItems.map((i) => (
             <li key={i.key}>{i.error}</li>
           ))}
         </ul>
       )}
       {node.kind === "output" ? (
-        <ul className="ui-small flex flex-col gap-1">
+        <ul className="text-sm flex flex-col gap-1.5">
           {mine.map((o) => (
             <li key={o.id} className="flex items-center justify-between gap-3">
               <span className="truncate">{o.label}</span>
               {o.filePath && (
-                <Button size="small" onClick={() => doppel().revealOutput(run.id, o.id)}>
+                <Button variant="outline" size="sm" onClick={() => doppel().revealOutput(run.id, o.id)}>
                   {copy.results.showInFinder}
                 </Button>
               )}
@@ -91,13 +95,13 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
           ))}
         </ul>
       ) : mine.length === 0 ? (
-        node.kind === "routine" && <p className="ui-small ui-muted">{copy.results.noneMatch}</p>
+        node.kind === "routine" && <p className="text-sm text-muted-foreground">{copy.results.noneMatch}</p>
       ) : (
         <OutputGrid>{mine.map(card)}</OutputGrid>
       )}
       {repairable && failedItems.length > 0 && !node.error && (
         <div>
-          <Button size="small" onClick={onRepair}>
+          <Button variant="outline" size="sm" onClick={onRepair}>
             {copy.results.repair}
           </Button>
         </div>
@@ -182,7 +186,7 @@ function ResultsScreen() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <PageHeader
         back={{ href: back, label: isFlow ? copy.results.backToFlow : copy.results.backToRoutine }}
         title={copy.results.title(run.name)}
@@ -191,7 +195,7 @@ function ResultsScreen() {
         actions={<ButtonLink href={again}>{copy.results.runAgain}</ButtonLink>}
       />
       {run.mocked && <Notice>{copy.results.simulated}</Notice>}
-      <p className="ui-h2">{copy.results.itemsSummary(summary)}</p>
+      <p className="text-base font-semibold">{copy.results.itemsSummary(summary)}</p>
       <FixNotice run={run} />
       {run.status === "failed" && (run.error || run.errorDetail) && (
         <Notice tone="error" title={run.error ?? copy.results.failedTitle}>
@@ -199,7 +203,7 @@ function ResultsScreen() {
         </Notice>
       )}
       {run.status === "running" && (
-        <div className="ui-muted flex items-center gap-2">
+        <div className="text-muted-foreground flex items-center gap-2">
           <Spinner /> {run.phase ?? copy.results.running}
         </div>
       )}
@@ -209,11 +213,11 @@ function ResultsScreen() {
           title={copy.results.partialTitle(failedCount)}
           actions={
             filesOnly ? (
-              <ButtonLink href={again} variant="primary">
+              <ButtonLink href={again} variant="default">
                 {copy.results.runWithOtherFiles}
               </ButtonLink>
             ) : (
-              <Button variant="primary" onClick={retry}>
+              <Button onClick={retry}>
                 {copy.results.retryFailedItems}
               </Button>
             )
@@ -240,7 +244,7 @@ function ResultsScreen() {
         .map((node) => (
           <NodeSection key={node.nodeId} run={run} node={node} shown={shown} card={card} onRepair={repairNode(node.nodeId)} />
         ))}
-      {run.workDir && <p className="ui-small ui-muted">{copy.results.runFolder(run.workDir)}</p>}
+      {run.workDir && <p className="text-sm text-muted-foreground">{copy.results.runFolder(run.workDir)}</p>}
     </div>
   );
 }

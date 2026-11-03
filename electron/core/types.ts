@@ -1214,6 +1214,8 @@ export interface PickFileOptions {
 export interface DoppelApi {
   // Apps
   listApps(): Promise<App[]>;
+  /** Logos of the installed apps as data URLs, by app id. */
+  getAppIcons(): Promise<Record<string, string>>;
   checkApp(appId: AppId): Promise<App>;
   listOpenDocuments(appId: AppId): Promise<DocumentRef[]>;
   inspectDocument(appId: AppId, docId: string): Promise<DocumentSummary>;
@@ -1329,6 +1331,8 @@ export interface DoppelApi {
   saveSettings(patch: Partial<Settings>): Promise<Settings>;
 
   // AI access (Settings → AI access)
+  /** Opening the app: what is saved, without reading the Keychain. */
+  getAiAccessSummary(): Promise<AiAccess>;
   getAiAccess(): Promise<AiAccess>;
   setAiProvider(provider: AiProvider): Promise<AiAccess>;
   /** Checks the code with the demo Worker; saves it (encrypted) only if it works. */

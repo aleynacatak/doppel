@@ -4,8 +4,10 @@ import type { InputValue, PortDef } from "@core/types";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { fileName } from "@/lib/format";
-import { Button } from "../ui/Button";
-import { Field } from "../ui/Field";
+import { Field } from "../common/Field";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const DATA_EXTENSIONS = ["csv", "tsv", "txt", "json", "xlsx"];
 
@@ -34,7 +36,7 @@ export function InputValueField({ port, value, onChange, id }: { port: PortDef; 
   };
   const shown = describeValue(value);
   const chosen = (
-    <span className={shown ? "truncate" : "ui-muted"} title={Array.isArray(value) ? value.join("\n") : typeof value === "string" ? value : undefined}>
+    <span className={shown ? "truncate" : "text-muted-foreground"} title={Array.isArray(value) ? value.join("\n") : typeof value === "string" ? value : undefined}>
       {port.type === "fileList" && typeof value === "string" && value ? copy.run.folderChosen(fileName(value)) : (shown ?? copy.run.notChosen)}
     </span>
   );
@@ -44,7 +46,7 @@ export function InputValueField({ port, value, onChange, id }: { port: PortDef; 
     case "rows":
       input = (
         <div className="flex items-center gap-3">
-          <Button onClick={() => pickFile(DATA_EXTENSIONS)}>{shown ? copy.run.change : copy.run.choose}</Button>
+          <Button variant="outline" onClick={() => pickFile(DATA_EXTENSIONS)}>{shown ? copy.run.change : copy.run.choose}</Button>
           {chosen}
         </div>
       );
@@ -52,7 +54,7 @@ export function InputValueField({ port, value, onChange, id }: { port: PortDef; 
     case "file":
       input = (
         <div className="flex items-center gap-3">
-          <Button onClick={() => pickFile(port.extensions)}>{shown ? copy.run.change : copy.run.choose}</Button>
+          <Button variant="outline" onClick={() => pickFile(port.extensions)}>{shown ? copy.run.change : copy.run.choose}</Button>
           {chosen}
         </div>
       );
@@ -60,8 +62,8 @@ export function InputValueField({ port, value, onChange, id }: { port: PortDef; 
     case "fileList":
       input = (
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={pickFiles}>{copy.run.chooseFiles}</Button>
-          <Button onClick={pickFolder}>{copy.run.chooseFolder}</Button>
+          <Button variant="outline" onClick={pickFiles}>{copy.run.chooseFiles}</Button>
+          <Button variant="outline" onClick={pickFolder}>{copy.run.chooseFolder}</Button>
           {chosen}
         </div>
       );
@@ -69,25 +71,25 @@ export function InputValueField({ port, value, onChange, id }: { port: PortDef; 
     case "folder":
       input = (
         <div className="flex items-center gap-3">
-          <Button onClick={pickFolder}>{shown ? copy.run.change : copy.run.choose}</Button>
+          <Button variant="outline" onClick={pickFolder}>{shown ? copy.run.change : copy.run.choose}</Button>
           {chosen}
         </div>
       );
       break;
     case "boolean":
       return (
-        <label className="ui-choice">
-          <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
+        <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+          <Checkbox className="mt-0.5" checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
           <span>{port.label}</span>
         </label>
       );
     case "number":
       input = (
-        <input id={id} type="number" className="ui-input max-w-40" value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />
+        <Input id={id} type="number" className="max-w-40" value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />
       );
       break;
     default:
-      input = <input id={id} className="ui-input max-w-md" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
+      input = <Input id={id} className="max-w-md" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
   }
   const hint = [port.description, port.extensions?.length ? port.extensions.map((e) => e.toUpperCase()).join(", ") : null, port.type === "rows" && port.columns?.length ? `Columns: ${port.columns.join(", ")}` : null]
     .filter(Boolean)

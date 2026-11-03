@@ -11,15 +11,20 @@ import { FlowInspector } from "@/components/flow/FlowInspector";
 import { FlowListView } from "@/components/flow/FlowListView";
 import { type AddChoice, AddNodeMenu, LibraryPanel } from "@/components/flow/LibraryPanel";
 import { type PortView, newId } from "@/components/flow/flowView";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { Loading } from "@/components/ui/Progress";
-import { Segmented } from "@/components/ui/Segmented";
-import { Tag } from "@/components/ui/Tag";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { Loading } from "@/components/common/Progress";
+import { Segmented } from "@/components/common/Segmented";
+import { Tag } from "@/components/common/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { IconArrowLeft } from "@tabler/icons-react";
+import { useConfirm } from "@/components/common/ConfirmDialog";
 
 const INPUT_LABELS: Record<PortType, { key: string; label: string }> = {
   rows: { key: "data", label: "Data file" },
@@ -53,6 +58,7 @@ function freeSpot(nodes: FlowNode[], kind: FlowNode["kind"]): { x: number; y: nu
 function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Routine[]; starters: Routine[] } }) {
   const router = useRouter();
   const params = useSearchParams();
+  const [confirm, confirmDialog] = useConfirm();
   const apps = useShell((s) => s.apps);
   const [flow, setFlowState] = useState<Flow>(initial);
   const [dirty, setDirty] = useState(false);
@@ -240,7 +246,7 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
   };
 
   const del = async () => {
-    if (!window.confirm(copy.flow.confirmDelete)) return;
+    if (!(await confirm({ title: copy.flow.delete, body: copy.flow.confirmDelete, action: copy.flow.delete, destructive: true }))) return;
     await doppel().deleteFlow(flow.id);
     router.push("/routines?tab=flows");
   };
@@ -250,14 +256,16 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
   const routineCount = flow.nodes.filter((n) => n.kind === "routine").length;
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col gap-3">
+    <div className="flex h-[calc(100vh-4rem)] flex-col gap-4">
+      {confirmDialog}
       <div className="flex flex-wrap items-center gap-3">
-        <Link href="/routines?tab=flows" className="ui-small ui-muted ui-link">
-          ← {copy.nav.library}
-        </Link>
-        <input className="ui-input ui-h2 w-72" aria-label={copy.flow.nameLabel} value={flow.name} onChange={(e) => setFlow({ ...flow, name: e.target.value })} />
+        <ButtonLink href="/routines?tab=flows" variant="ghost" size="sm" className="text-muted-foreground">
+          <IconArrowLeft />
+          {copy.nav.library}
+        </ButtonLink>
+        <Input className="text-base font-semibold w-72" aria-label={copy.flow.nameLabel} value={flow.name} onChange={(e) => setFlow({ ...flow, name: e.target.value })} />
         <Tag>{copy.common.version(flow.version)}</Tag>
-        <span className="ui-small ui-muted">{saving ? copy.flow.saving : dirty ? copy.flow.unsaved : copy.flow.saved}</span>
+        <span className="text-sm text-muted-foreground">{saving ? copy.flow.saving : dirty ? copy.flow.unsaved : copy.flow.saved}</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Segmented<"canvas" | "list">
             label="View"
@@ -268,17 +276,17 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
               { value: "list", label: copy.flow.viewList },
             ]}
           />
-          <Button onClick={() => void save()} disabled={!dirty || saving}>
+          <Button variant="outline" onClick={() => void save()} disabled={!dirty || saving}>
             {copy.flow.save}
           </Button>
           {issues.length > 0 ? (
-            <Button onClick={() => setShowIssues((s) => !s)} aria-expanded={showIssues}>
+            <Button variant="outline" onClick={() => setShowIssues((s) => !s)} aria-expanded={showIssues}>
               {copy.flow.issuesTitle(issues.length)}
             </Button>
           ) : (
-            ctx && <span className="ui-small ui-muted">{copy.flow.ready}</span>
+            ctx && <span className="text-sm text-muted-foreground">{copy.flow.ready}</span>
           )}
-          <Button variant="primary" onClick={run} disabled={!ctx || issues.length > 0 || saving} title={issues.length ? issues.map((i) => i.message).join("\n") : undefined}>
+          <Button onClick={run} disabled={!ctx || issues.length > 0 || saving} title={issues.length ? issues.map((i) => i.message).join("\n") : undefined}>
             {copy.flow.run}
           </Button>
           <Button variant="ghost" onClick={del}>
@@ -288,16 +296,16 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
       </div>
       {error && <Notice tone="error">{error}</Notice>}
       {notice && (
-        <Notice actions={<Button size="small" onClick={() => setNotice(null)}>{copy.common.close}</Button>}>{notice}</Notice>
+        <Notice actions={<Button variant="outline" size="sm" onClick={() => setNotice(null)}>{copy.common.close}</Button>}>{notice}</Notice>
       )}
       {showIssues && issues.length > 0 && (
         <Notice tone="warning" title={copy.flow.runBlocked}>
-          <ul className="ui-small flex flex-col gap-0.5">
+          <ul className="text-sm flex flex-col gap-1">
             {issues.map((i, n) => (
               <li key={n}>
-                <button type="button" className="ui-link text-left" onClick={() => (i.nodeId ? setSelection({ kind: "node", id: i.nodeId }) : i.edgeId ? setSelection({ kind: "edge", id: i.edgeId }) : undefined)}>
+                <Button variant="link" className="h-auto p-0 text-left" onClick={() => (i.nodeId ? setSelection({ kind: "node", id: i.nodeId }) : i.edgeId ? setSelection({ kind: "edge", id: i.edgeId }) : undefined)}>
                   {i.message}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -352,16 +360,18 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
               overlay={
                 empty ? (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="ui-card pointer-events-auto flex max-w-sm flex-col items-center gap-3 p-6 text-center">
-                      <div className="ui-h2">{copy.flow.emptyTitle}</div>
-                      <p className="ui-small ui-muted">{copy.flow.emptyBody}</p>
-                      <div className="flex flex-wrap justify-center gap-2">
-                        <Button variant="primary" onClick={() => addNode(nodeFor({ kind: "input", type: "rows" }, { x: 0, y: 0 })!)}>
+                    <Card className="pointer-events-auto max-w-sm text-center">
+                      <CardHeader>
+                        <CardTitle>{copy.flow.emptyTitle}</CardTitle>
+                        <CardDescription>{copy.flow.emptyBody}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex flex-wrap justify-center gap-2">
+                        <Button onClick={() => addNode(nodeFor({ kind: "input", type: "rows" }, { x: 0, y: 0 })!)}>
                           {copy.flow.emptyStart}
                         </Button>
                         <ButtonLink href="/">{copy.flow.emptyRequest}</ButtonLink>
-                      </div>
-                    </div>
+                      </CardContent>
+                    </Card>
                   </div>
                 ) : null
               }
@@ -385,7 +395,7 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
             onInsertConverter={insertConverter}
             onRemove={remove}
           />
-          <p className="ui-small ui-muted pt-4">
+          <p className="text-sm text-muted-foreground pt-4">
             {copy.library.flowNodes(routineCount)} · {copy.routine.cost(flow.createdWithAiCalls)}
           </p>
         </aside>

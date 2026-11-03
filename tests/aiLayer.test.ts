@@ -323,7 +323,7 @@ describe("AI access: routes, keys and spend per provider", () => {
     await settings.load();
     await settings.save({ aiProvider: provider });
     const store = { ...secrets };
-    const secretStore = { get: async (n: string) => store[n] ?? null, set: async (n: string, v: string | null) => void (v === null ? delete store[n] : (store[n] = v)), available: async () => true };
+    const secretStore = { has: async (n: string) => n in store, get: async (n: string) => store[n] ?? null, set: async (n: string, v: string | null) => void (v === null ? delete store[n] : (store[n] = v)), available: async () => true };
     const sent: string[] = [];
     const fetchImpl: FetchLike = async (url) => {
       sent.push(url);
@@ -332,6 +332,31 @@ describe("AI access: routes, keys and spend per provider", () => {
     const a = new AiAccessService({ settings, secrets: secretStore as never, workerUrl: "https://worker.example", registryData: data, fetch: fetchImpl });
     return { a, settings, sent, store };
   }
+
+  it("opens without touching the Keychain: the summary only asks what's saved", async () => {
+    const { a } = await access("doppl-demo", { accessCode: "DOPPL-1" });
+    const secrets = (a as unknown as { deps: { secrets: Record<string, unknown> } }).deps.secrets;
+    const locked = () => {
+      throw new Error("read the Keychain");
+    };
+    secrets.get = locked;
+    secrets.available = locked;
+    const summary = await a.summary();
+    expect(summary.accessCode).toEqual({ saved: true, hint: null });
+    expect(summary.ownKey).toEqual({ saved: false, hint: null });
+  });
+
+  it("doesn't ask whether encryption works until something is saved", async () => {
+    const { a } = await access("doppl-demo", {});
+    const secrets = (a as unknown as { deps: { secrets: Record<string, unknown> } }).deps.secrets;
+    let asked = 0;
+    secrets.available = async () => (asked++, false);
+    expect((await a.describe()).encryptionAvailable).toBe(true);
+    expect(asked).toBe(0);
+    await (secrets.set as (n: string, v: string) => Promise<void>)("metaApiKey", "k");
+    expect((await a.describe()).encryptionAvailable).toBe(false);
+    expect(asked).toBe(1);
+  });
 
   it("sends Meta's models to the demo Worker or to Meta with the own key, and custom models to their endpoint", async () => {
     const demo = await access("doppl-demo", { accessCode: "DOPPL-1" });

@@ -4,8 +4,12 @@ import type { Flow, InputValue, MatchPreview, MatchRule, PortDef } from "@core/t
 import { useEffect, useState } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { Field } from "../ui/Field";
-import { Spinner } from "../ui/Progress";
+import { Field } from "../common/Field";
+import { Spinner } from "../common/Progress";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /** The two choices a designer sees: by name (Doppl finds how), or in order. */
 type Choice = "name" | "index";
@@ -26,14 +30,14 @@ function ColumnSelect({ value, columns, onChange, label, id }: { value: string; 
   return (
     <Field label={label} htmlFor={id}>
       {columns.length ? (
-        <select id={id} className="ui-select max-w-xs" value={value} onChange={(e) => onChange(e.target.value)}>
-          {!columns.includes(value) && <option value={value}>{value || "—"}</option>}
+        <NativeSelect id={id} className="w-full max-w-xs" value={value} onChange={(e) => onChange(e.target.value)}>
+          {!columns.includes(value) && <NativeSelectOption value={value}>{value || "—"}</NativeSelectOption>}
           {columns.map((c) => (
-            <option key={c}>{c}</option>
+            <NativeSelectOption key={c}>{c}</NativeSelectOption>
           ))}
-        </select>
+        </NativeSelect>
       ) : (
-        <input id={id} className="ui-input max-w-xs" value={value} onChange={(e) => onChange(e.target.value)} />
+        <Input id={id} className="max-w-xs" value={value} onChange={(e) => onChange(e.target.value)} />
       )}
     </Field>
   );
@@ -86,11 +90,11 @@ export function MatchRuleEditor({
   const otherColumns = (iterPort.type === "rows" && joinedPort.type === "rows" ? joinedPort.columns : []) ?? [];
   const current = rule ?? preview?.rule ?? undefined;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <Field label={copy.match.rule} htmlFor={`rule-${edgeId}`}>
-        <select
+        <NativeSelect
           id={`rule-${edgeId}`}
-          className="ui-select max-w-xs"
+          className="w-full max-w-xs"
           value={choiceOf(current)}
           onChange={async (e) => {
             const optional = current?.optional ? { optional: true } : {};
@@ -103,17 +107,17 @@ export function MatchRuleEditor({
             onChange(suggested && suggested.by !== "index" ? { ...suggested, ...optional } : byName(iterPort, joinedPort, rowsColumns, otherColumns, current?.optional));
           }}
         >
-          {!current && <option value="">—</option>}
-          <option value="name">{copy.match.choices.name}</option>
-          <option value="index">{copy.match.choices.index}</option>
-        </select>
+          {!current && <NativeSelectOption value="">—</NativeSelectOption>}
+          <NativeSelectOption value="name">{copy.match.choices.name}</NativeSelectOption>
+          <NativeSelectOption value="index">{copy.match.choices.index}</NativeSelectOption>
+        </NativeSelect>
       </Field>
       {current?.by === "fileNameEqualsColumn" && (
         <ColumnSelect id={`col-${edgeId}`} label={copy.match.column} value={current.column} columns={rowsColumns} onChange={(column) => onChange({ ...current, column, loose: true })} />
       )}
       {current && (
-        <label className="ui-choice">
-          <input type="checkbox" checked={!!current.optional} onChange={(e) => onChange({ ...current, optional: e.target.checked || undefined })} />
+        <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+          <Checkbox className="mt-0.5" checked={!!current.optional} onCheckedChange={(checked) => onChange({ ...current, optional: checked || undefined })} />
           <span>{copy.match.optional}</span>
         </label>
       )}
@@ -123,31 +127,31 @@ export function MatchRuleEditor({
           <ColumnSelect id={`right-${edgeId}`} label={copy.match.rightColumn} value={current.rightColumn} columns={joinedPort.columns ?? []} onChange={(rightColumn) => onChange({ ...current, rightColumn })} />
         </>
       )}
-      <div className="flex flex-col gap-1">
-        <div className="ui-label flex items-center gap-2">
+      <div className="flex flex-col gap-1.5">
+        <div className="text-sm font-medium flex items-center gap-2">
           {copy.match.preview} {loading && <Spinner />}
         </div>
         {preview?.note ? (
-          <p className="ui-small ui-muted">{preview.note}</p>
+          <p className="text-sm text-muted-foreground">{preview.note}</p>
         ) : preview ? (
           <>
-            <table className="ui-table ui-small">
-              <tbody>
+            <Table className="text-sm">
+              <TableBody>
                 {preview.pairs.map((p, i) => (
-                  <tr key={i}>
-                    <td className="py-1 pr-2">{p.item}</td>
-                    <td className="py-1 pr-2 ui-muted">→</td>
-                    <td className="py-1" title={p.problem}>
-                      {p.match ?? <span className="ui-muted">{copy.match.noMatch}</span>}
-                    </td>
-                  </tr>
+                  <TableRow key={i}>
+                    <TableCell className="py-1.5 pr-2">{p.item}</TableCell>
+                    <TableCell className="py-1.5 pr-2 text-muted-foreground">→</TableCell>
+                    <TableCell className="py-1.5" title={p.problem}>
+                      {p.match ?? <span className="text-muted-foreground">{copy.match.noMatch}</span>}
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-            <p className="ui-small ui-muted">{copy.match.previewCount(preview.total, preview.unmatched)}</p>
+              </TableBody>
+            </Table>
+            <p className="text-sm text-muted-foreground">{copy.match.previewCount(preview.total, preview.unmatched)}</p>
             {/* Nothing pairs: say why here, not only on hover. */}
             {preview.total > 0 && preview.unmatched === preview.total && preview.pairs[0]?.problem && (
-              <p className="ui-small">
+              <p className="text-sm">
                 {copy.match.why} {preview.pairs[0].problem}
               </p>
             )}

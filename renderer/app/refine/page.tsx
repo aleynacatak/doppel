@@ -5,19 +5,21 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { QcChecks } from "@/components/results/QcChecks";
 import { RoutineBadges } from "@/components/routine/ContractView";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { Details } from "@/components/ui/Details";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Field } from "@/components/ui/Field";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Preview } from "@/components/ui/Preview";
-import { Loading } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
-import { Tag } from "@/components/ui/Tag";
+import { Details } from "@/components/common/Details";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Preview } from "@/components/common/Preview";
+import { Loading } from "@/components/common/Progress";
+import { Section } from "@/components/common/Section";
+import { Tag } from "@/components/common/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { fileName } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const MAX_TEST_ITEMS = 3;
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "heic"];
@@ -53,91 +55,97 @@ function RefineForm({ setup, flowLink, initialRequest = "" }: { setup: RefineSet
   };
 
   return (
-    <div className="flex flex-col gap-8">
-      <Field label={copy.refine.requestLabel} htmlFor="refine-request" hint={copy.refine.requestHint}>
-        <textarea
-          id="refine-request"
-          className="ui-input ui-textarea h-32"
-          placeholder={copy.refine.requestPlaceholder}
-          value={request}
-          onChange={(e) => setRequest(e.target.value)}
-        />
-      </Field>
+    <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="flex min-w-0 flex-col gap-6">
+        <Section title={copy.refine.requestLabel}>
+          <Textarea
+            id="refine-request"
+            className="h-32"
+            aria-label={copy.refine.requestLabel}
+            placeholder={copy.refine.requestPlaceholder}
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">{copy.refine.requestHint}</p>
+        </Section>
 
-      <Section title={copy.refine.attachmentsTitle}>
-        {problem && (
-          <div className="ui-card flex flex-col gap-2 p-3 sm:flex-row" data-selected>
-            <div className="sm:w-56">
-              <Preview preview={problem.preview} status={problem.preview ? undefined : copy.common.noPreview} />
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <Tag tone="strong">{copy.refine.problemTag}</Tag>
-                <span className="ui-h3">{problem.label}</span>
+        <Section title={copy.refine.attachmentsTitle}>
+          {problem && (
+            <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row">
+              <div className="sm:w-56">
+                <Preview preview={problem.preview} status={problem.preview ? undefined : copy.common.noPreview} />
               </div>
-              {problem.itemLabel && <span className="ui-small ui-muted">{copy.refine.fromItem(problem.itemLabel)}</span>}
-              {problem.input && problem.input !== problem.itemLabel && <span className="ui-small ui-muted truncate">{copy.refine.input(problem.input)}</span>}
-              {problem.error && <span className="ui-small">{problem.error}</span>}
-              <Details text={problem.errorDetail} />
-              {problem.qc && <QcChecks checks={problem.qc.checks} />}
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Tag tone="strong">{copy.refine.problemTag}</Tag>
+                  <span className="text-sm font-medium">{problem.label}</span>
+                </div>
+                {problem.itemLabel && <span className="text-sm text-muted-foreground">{copy.refine.fromItem(problem.itemLabel)}</span>}
+                {problem.input && problem.input !== problem.itemLabel && <span className="text-sm text-muted-foreground truncate">{copy.refine.input(problem.input)}</span>}
+                {problem.error && <span className="text-sm">{problem.error}</span>}
+                <Details text={problem.errorDetail} />
+                {problem.qc && <QcChecks checks={problem.qc.checks} />}
+              </div>
             </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline"
+              onClick={async () => {
+                const files = await doppel().pickFiles({ extensions: IMAGE_EXTENSIONS, multiple: true });
+                if (files.length) setImages((list) => [...new Set([...list, ...files])].slice(0, 3));
+              }}
+              disabled={images.length >= 3}
+            >
+              {copy.refine.addImages}
+            </Button>
+            <span className="text-sm text-muted-foreground">{copy.refine.imagesHint}</span>
           </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={async () => {
-              const files = await doppel().pickFiles({ extensions: IMAGE_EXTENSIONS, multiple: true });
-              if (files.length) setImages((list) => [...new Set([...list, ...files])].slice(0, 3));
-            }}
-            disabled={images.length >= 3}
-          >
-            {copy.refine.addImages}
-          </Button>
-          <span className="ui-small ui-muted">{copy.refine.imagesHint}</span>
-        </div>
-        {images.length > 0 && (
-          <ul className="flex flex-col gap-1">
-            {images.map((f) => (
-              <li key={f} className="ui-small flex items-center gap-3">
-                <span className="truncate">{fileName(f)}</span>
-                <button type="button" className="ui-link" onClick={() => setImages((list) => list.filter((x) => x !== f))}>
-                  {copy.newTask.remove}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      <Section title={copy.refine.testItemsTitle}>
-        {setup.items.length === 0 ? (
-          <p className="ui-small ui-muted">{copy.refine.noItems}</p>
-        ) : (
-          <>
-            <p className="ui-small ui-muted">{copy.refine.testItemsHint(setup.itemsSource ?? "")}</p>
-            <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-              {setup.items.map((i) => (
-                <li key={i.key}>
-                  <label className="ui-choice" data-disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS}>
-                    <input type="checkbox" checked={items.includes(i.key)} disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS} onChange={() => toggle(i.key)} />
-                    <span>
-                      {i.label}
-                      {problem?.itemKey === i.key && <span className="ui-small ui-muted"> · {copy.refine.problemTag.toLowerCase()}</span>}
-                    </span>
-                  </label>
+          {images.length > 0 && (
+            <ul className="flex flex-col gap-1.5">
+              {images.map((f) => (
+                <li key={f} className="text-sm flex items-center gap-3">
+                  <span className="truncate">{fileName(f)}</span>
+                  <Button variant="link" className="h-auto p-0" onClick={() => setImages((list) => list.filter((x) => x !== f))}>
+                    {copy.newTask.remove}
+                  </Button>
                 </li>
               ))}
             </ul>
-          </>
-        )}
-      </Section>
+          )}
+        </Section>
+      </div>
 
-      {error && <Notice tone="error">{error}</Notice>}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={start} disabled={!request.trim() || starting}>
-          {starting ? copy.newTask.creating : copy.refine.start}
-        </Button>
-        <span className="ui-small ui-muted">{copy.refine.costHint}</span>
+      <div className="flex min-w-0 flex-col gap-6">
+        <Section title={copy.refine.testItemsTitle}>
+          {setup.items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{copy.refine.noItems}</p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">{copy.refine.testItemsHint(setup.itemsSource ?? "")}</p>
+              <ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto">
+                {setup.items.map((i) => (
+                  <li key={i.key}>
+                    <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground" data-disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS}>
+                      <Checkbox className="mt-0.5" checked={items.includes(i.key)} disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS} onCheckedChange={() => toggle(i.key)} />
+                      <span>
+                        {i.label}
+                        {problem?.itemKey === i.key && <span className="text-sm text-muted-foreground"> · {copy.refine.problemTag.toLowerCase()}</span>}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+
+        {error && <Notice tone="error">{error}</Notice>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={start} disabled={!request.trim() || starting}>
+            {starting ? copy.newTask.creating : copy.refine.start}
+          </Button>
+          <span className="text-sm text-muted-foreground">{copy.refine.costHint}</span>
+        </div>
       </div>
     </div>
   );
@@ -170,7 +178,7 @@ function RefineScreen() {
     [`routine=${id}`, runId && outputId ? `run=${runId}&output=${outputId}` : "", flowId && nodeId ? `flow=${flowId}&node=${nodeId}` : ""].filter(Boolean).join("&");
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-8">
       <PageHeader
         back={back}
         title={copy.refine.title(routine.name)}
@@ -187,7 +195,6 @@ function RefineScreen() {
           title={copy.refine.starterTitle}
           actions={
             <Button
-              variant="primary"
               onClick={async () => {
                 const dup = await doppel().duplicateRoutine(routine.id);
                 router.replace(`/refine?${query(dup.id)}`);

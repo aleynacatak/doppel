@@ -5,11 +5,13 @@ interface ShellState {
   ready: boolean;
   bridgeMissing: boolean;
   apps: App[];
+  appIcons: Record<string, string>;
   settings: Settings | null;
   aiAccess: AiAccess | null;
   setBoot: (data: { settings: Settings; aiAccess: AiAccess }) => void;
   setBridgeMissing: () => void;
   setApps: (apps: App[]) => void;
+  setAppIcons: (appIcons: Record<string, string>) => void;
   setSettings: (settings: Settings) => void;
   setAiAccess: (aiAccess: AiAccess) => void;
   /** A request to change on New task (Doppl declined it as it was), taken by the page when it opens. */
@@ -21,11 +23,13 @@ export const useShell = create<ShellState>((set) => ({
   ready: false,
   bridgeMissing: false,
   apps: [],
+  appIcons: {},
   settings: null,
   aiAccess: null,
   setBoot: ({ settings, aiAccess }) => set({ settings, aiAccess, ready: true }),
   setBridgeMissing: () => set({ bridgeMissing: true, ready: true }),
   setApps: (apps) => set({ apps }),
+  setAppIcons: (appIcons) => set({ appIcons }),
   setSettings: (settings) => set({ settings }),
   setAiAccess: (aiAccess) => set({ aiAccess }),
   draftTask: null,

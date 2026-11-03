@@ -3,6 +3,7 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from "@xyflow/react";
 import { copy } from "@/copy";
 import { edgeCarries, issuesFor, useFlowView } from "./flowView";
+import { Button } from "@/components/ui/button";
 
 /**
  * An edge with what it carries ("PNG files"; during a run, "6 PNG"). Incompatible edges, and edges whose port a new
@@ -45,25 +46,25 @@ export function PortEdge(props: EdgeProps) {
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
         >
           {label && (
-            <span className="ui-small whitespace-nowrap">
+            <span className="text-xs whitespace-nowrap">
               {label}
-              {edge?.match && v.mode === "edit" && !needsMatch && <span className="ui-muted"> · {copy.match.short(edge.match)}</span>}
+              {edge?.match && v.mode === "edit" && !needsMatch && <span className="text-muted-foreground"> · {copy.match.short(edge.match)}</span>}
             </span>
           )}
           {v.mode === "edit" && incompatible && (
-            <button type="button" className="ui-chip ui-small whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
+            <Button variant="outline" size="sm" className="whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
               {copy.flow.chipFix}
-            </button>
+            </Button>
           )}
           {v.mode === "edit" && lost && (
-            <button type="button" className="ui-chip ui-small whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
+            <Button variant="outline" size="sm" className="whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
               {copy.flow.chipReconnect}
-            </button>
+            </Button>
           )}
           {v.mode === "edit" && needsMatch && !incompatible && (
-            <button type="button" className="ui-chip ui-small whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
+            <Button variant="outline" size="sm" className="whitespace-nowrap" onClick={() => v.onSelectEdge?.(props.id)}>
               {copy.flow.chipMatch}
-            </button>
+            </Button>
           )}
         </div>
       </EdgeLabelRenderer>

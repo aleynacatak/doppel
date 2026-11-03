@@ -6,10 +6,11 @@ import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { useShell } from "@/lib/store";
 import { FlowCanvas } from "../flow/FlowCanvas";
-import { AiCallCounter } from "../ui/AiCallCounter";
-import { Button } from "../ui/Button";
-import { Spinner } from "../ui/Progress";
+import { AiCallCounter } from "../common/AiCallCounter";
+import { Spinner } from "../common/Progress";
 import { NodeProgressList } from "./NodeProgressList";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 /** Live progress of a run: phase, the flow canvas in run mode (flows), progress per node and item, cancel. */
 export function RunProgress({ run, flow, onCancel }: { run: Run; flow?: Flow | null; onCancel: () => void }) {
@@ -20,16 +21,18 @@ export function RunProgress({ run, flow, onCancel }: { run: Run; flow?: Flow | n
     doppel().getFlowContext(flow).then(setCtx).catch(() => undefined);
   }, [flow]);
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <Spinner />
           <span>{run.phase ?? copy.run.progressTitle}</span>
         </div>
-        <Button onClick={onCancel}>{copy.run.cancelRun}</Button>
+        <Button variant="outline" onClick={onCancel}>{copy.run.cancelRun}</Button>
       </div>
-      <AiCallCounter count={run.aiCalls} label={copy.run.aiCounterLabel} hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
-      {run.mocked && <p className="ui-small ui-muted">{copy.results.simulated}</p>}
+      <div className="max-w-md">
+        <AiCallCounter count={run.aiCalls} label={copy.run.aiCounterLabel} hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
+      </div>
+      {run.mocked && <p className="text-sm text-muted-foreground">{copy.results.simulated}</p>}
       {flow && (
         <FlowCanvas
           className="h-[480px]"
@@ -41,7 +44,7 @@ export function RunProgress({ run, flow, onCancel }: { run: Run; flow?: Flow | n
           updates={{}}
           selection={null}
           onSelect={() => undefined}
-          overlay={<div className="ui-card ui-small absolute right-3 top-3 px-2 py-1">{copy.flow.aiCalls(run.aiCalls)}</div>}
+          overlay={<Badge variant="secondary" className="absolute right-3 top-3">{copy.flow.aiCalls(run.aiCalls)}</Badge>}
         />
       )}
       <NodeProgressList nodes={run.nodes} />

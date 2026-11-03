@@ -28,6 +28,11 @@ export class SecretStore {
     }
   }
 
+  /** Whether a secret is saved. Reads only the file, so macOS never asks. */
+  async has(name: SecretName): Promise<boolean> {
+    return !!(await this.readAll())[name];
+  }
+
   async get(name: SecretName): Promise<string | null> {
     const encrypted = (await this.readAll())[name];
     if (!encrypted || !(await this.available())) return null;

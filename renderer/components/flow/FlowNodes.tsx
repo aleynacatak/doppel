@@ -8,9 +8,11 @@ import { useEffect } from "react";
 import { copy } from "@/copy";
 import { appLabel, fileName } from "@/lib/format";
 import { describeValue } from "../run/InputValueField";
-import { ProgressBar, Spinner } from "../ui/Progress";
-import { Tag } from "../ui/Tag";
+import { ProgressBar, Spinner } from "../common/Progress";
+import { AppTag } from "../common/AppLogo";
+import { Tag } from "../common/Tag";
 import { type PortView, fitOf, issuesFor, nodePorts, routineAt, useFlowView } from "./flowView";
+import { Button } from "@/components/ui/button";
 
 type Kind<K extends FlowNode["kind"]> = Extract<FlowNode, { kind: K }>;
 
@@ -31,9 +33,9 @@ function PortRow({ node, view, side }: { node: FlowNode; view: PortView; side: "
         data-fit={fit ?? undefined}
         isConnectable={v.mode === "edit"}
       />
-      <span className="ui-small leading-tight">
+      <span className="text-xs leading-tight">
         {view.port.label}
-        {side === "target" && !view.port.required && <span className="ui-muted"> · {copy.ports.optional}</span>}
+        {side === "target" && !view.port.required && <span className="text-muted-foreground"> · {copy.ports.optional}</span>}
       </span>
       <span className="ui-flow-port-type leading-tight">{short(describeSpec(view.spec))}</span>
     </div>
@@ -45,15 +47,15 @@ function RunFooter({ progress, runId }: { progress: NodeProgress | undefined; ru
   return (
     <div className="flex flex-col gap-1">
       {progress.total > 0 && <ProgressBar value={(progress.done + progress.failed) / progress.total} label={progress.name} />}
-      <div className="ui-small flex items-center justify-between gap-2">
-        <span className="ui-muted flex items-center gap-1">
+      <div className="text-xs flex items-center justify-between gap-2">
+        <span className="text-muted-foreground flex items-center gap-1">
           {progress.status === "running" && <Spinner />}
           {copy.run.stageStatus[progress.status]}
           {progress.total > 0 && ` · ${progress.done + progress.failed}/${progress.total}`}
         </span>
         {progress.failed > 0 &&
           (runId ? (
-            <Link href={`/results?run=${runId}#node-${progress.nodeId}`} className="ui-link nodrag">
+            <Link href={`/results?run=${runId}#node-${progress.nodeId}`} className="text-primary underline-offset-4 hover:underline nodrag">
               {copy.flow.failures(progress.failed)}
             </Link>
           ) : (
@@ -91,18 +93,18 @@ export function RoutineNodeView({ id, selected }: NodeProps) {
   return (
     <div className="ui-flow-node w-64" data-selected={selected} data-invalid={issues.length > 0} data-active={v.mode === "run" && progress?.status === "running"}>
       <div className="flex items-center gap-2 px-3 pt-2">
-        {routine && <Tag tone="strong">{appLabel(routine.appId)}</Tag>}
-        <span className="ui-h3 min-w-0 flex-1 truncate" title={routine?.name}>
+        {routine && <AppTag appId={routine.appId} />}
+        <span className="text-sm font-medium min-w-0 flex-1 truncate" title={routine?.name}>
           {routine?.name ?? copy.common.notFound}
         </span>
-        <span className="ui-small ui-muted">{copy.flow.version(node.routineVersion)}</span>
-        {app && <span className="ui-dot" data-on={app.status === "connected"} title={app.status === "connected" ? copy.flow.appDot.connected : copy.flow.appDot.off} />}
+        <span className="text-xs text-muted-foreground">{copy.flow.version(node.routineVersion)}</span>
+        {app && <span className="inline-block size-2 shrink-0 rounded-full border border-primary data-[on=true]:bg-primary" data-on={app.status === "connected"} title={app.status === "connected" ? copy.flow.appDot.connected : copy.flow.appDot.off} />}
       </div>
       {latest && v.mode === "edit" && (
         <div className="px-3 pt-1">
-          <button type="button" className="ui-chip ui-small nodrag" onClick={() => v.onUpdateNode?.(id)}>
+          <Button variant="outline" size="sm" className="nodrag" onClick={() => v.onUpdateNode?.(id)}>
             {copy.flow.updateAvailable(latest)} · {copy.flow.update}
-          </button>
+          </Button>
         </div>
       )}
       <div className="grid grid-cols-2 gap-x-2 py-2">
@@ -117,18 +119,18 @@ export function RoutineNodeView({ id, selected }: NodeProps) {
           ))}
         </div>
       </div>
-      <div className="ui-divider flex flex-col gap-1 px-3 py-2">
-        {routine?.iterate && <span className="ui-small ui-muted">{copy.flow.perItem(routine.inputs.find((p) => p.key === routine.iterate!.input)?.label ?? routine.iterate.input)}</span>}
-        {docPort && routine && <span className="ui-small ui-muted">{copy.routine.documentPort(appLabel(routine.appId))}</span>}
-        {settings && <span className="ui-small ui-muted line-clamp-2">{settings}</span>}
+      <div className="border-t flex flex-col gap-1 px-3 py-2">
+        {routine?.iterate && <span className="text-xs text-muted-foreground">{copy.flow.perItem(routine.inputs.find((p) => p.key === routine.iterate!.input)?.label ?? routine.iterate.input)}</span>}
+        {docPort && routine && <span className="text-xs text-muted-foreground">{copy.routine.documentPort(appLabel(routine.appId))}</span>}
+        {settings && <span className="text-xs text-muted-foreground line-clamp-2">{settings}</span>}
         {v.mode === "run" ? (
           <RunFooter progress={progress} runId={v.run?.status !== "running" ? v.run?.id : undefined} />
         ) : progress ? (
-          <span className="ui-small ui-muted">{copy.flow.lastRun(progress.done, progress.failed, flagged)}</span>
+          <span className="text-xs text-muted-foreground">{copy.flow.lastRun(progress.done, progress.failed, flagged)}</span>
         ) : (
-          <span className="ui-small ui-muted">{copy.flow.neverRun}</span>
+          <span className="text-xs text-muted-foreground">{copy.flow.neverRun}</span>
         )}
-        {issues[0] && v.mode === "edit" && <span className="ui-small">{issues[0].message}</span>}
+        {issues[0] && v.mode === "edit" && <span className="text-xs">{issues[0].message}</span>}
       </div>
     </div>
   );
@@ -144,20 +146,20 @@ export function InputNodeView({ id, selected }: NodeProps) {
   const issues = issuesFor(v.ctx, { nodeId: id });
   return (
     <div className="ui-flow-node w-56" data-selected={selected} data-invalid={issues.length > 0} data-kind="input">
-      <div className="ui-label px-3 pt-2">{copy.flow.inputNode}</div>
+      <div className="text-xs font-medium text-muted-foreground px-3 pt-2">{copy.flow.inputNode}</div>
       <div className="py-2">
         <PortRow node={node} view={view} side="source" />
       </div>
-      <div className="ui-divider flex flex-col gap-1 px-3 py-2">
+      <div className="border-t flex flex-col gap-1 px-3 py-2">
         {v.mode === "edit" && v.onPickInput ? (
-          <button type="button" className="ui-chip ui-small nodrag self-start" onClick={() => v.onPickInput?.(id)}>
+          <Button variant="outline" size="sm" className="nodrag self-start" onClick={() => v.onPickInput?.(id)}>
             {describeValue(picked as InputValue) ?? copy.run.choose}
-          </button>
+          </Button>
         ) : (
-          <span className="ui-small ui-muted truncate">{describeValue(picked as InputValue) ?? copy.run.notChosen}</span>
+          <span className="text-xs text-muted-foreground truncate">{describeValue(picked as InputValue) ?? copy.run.notChosen}</span>
         )}
-        {progress?.failed ? <span className="ui-small">{copy.flow.failures(progress.failed)}</span> : null}
-        {progress?.status === "failed" && progress.error && <span className="ui-small">{progress.error}</span>}
+        {progress?.failed ? <span className="text-xs">{copy.flow.failures(progress.failed)}</span> : null}
+        {progress?.status === "failed" && progress.error && <span className="text-xs">{progress.error}</span>}
       </div>
     </div>
   );
@@ -172,19 +174,19 @@ export function OutputNodeView({ id, selected }: NodeProps) {
   const issues = issuesFor(v.ctx, { nodeId: id });
   return (
     <div className="ui-flow-node w-56" data-selected={selected} data-invalid={issues.length > 0} data-kind="output">
-      <div className="ui-label px-3 pt-2">{copy.flow.saveToFolder}</div>
+      <div className="text-xs font-medium text-muted-foreground px-3 pt-2">{copy.flow.saveToFolder}</div>
       <div className="py-2">
         <PortRow node={node} view={{ ...view, port: { ...view.port, required: true } }} side="target" />
       </div>
       {(progress || issues[0]) && (
-        <div className="ui-divider flex flex-col gap-1 px-3 py-2">
+        <div className="border-t flex flex-col gap-1 px-3 py-2">
           {progress?.status === "done" && (
-            <span className="ui-small" title={progress.documentName}>
+            <span className="text-xs" title={progress.documentName}>
               {copy.results.savedTo(progress.done, fileName(progress.documentName ?? ""))}
             </span>
           )}
-          {progress?.note && <span className="ui-small ui-muted">{progress.note}</span>}
-          {issues[0] && v.mode === "edit" && <span className="ui-small">{issues[0].message}</span>}
+          {progress?.note && <span className="text-xs text-muted-foreground">{progress.note}</span>}
+          {issues[0] && v.mode === "edit" && <span className="text-xs">{issues[0].message}</span>}
         </div>
       )}
     </div>

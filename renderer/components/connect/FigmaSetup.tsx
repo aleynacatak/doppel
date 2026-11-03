@@ -6,8 +6,9 @@ import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { formatRelative } from "@/lib/format";
 import { useShell } from "@/lib/store";
-import { Button } from "../ui/Button";
-import { Spinner } from "../ui/Progress";
+import { Spinner } from "../common/Progress";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /** Connect apps → Figma: the Doppl plugin (open files, pairing code), and optionally files by link. */
 export function FigmaSetup() {
@@ -50,33 +51,33 @@ export function FigmaSetup() {
   const f = copy.connect.figma;
   const linked = new Set(setup.sessions.map((x) => x.documentId));
   return (
-    <div className="flex flex-col gap-5">
-      <section className="flex flex-col gap-2">
-        <div className="ui-h3">{f.pluginTitle}</div>
-        <p className="ui-small">{f.pluginHelp}</p>
-        <ol className="ui-small list-decimal pl-5">
+    <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
+      <section className="flex flex-col gap-3">
+        <div className="text-sm font-medium">{f.pluginTitle}</div>
+        <p className="text-sm">{f.pluginHelp}</p>
+        <ol className="text-sm list-decimal pl-5">
           {f.pluginSteps.map((s) => (
             <li key={s}>{s}</li>
           ))}
         </ol>
         <div className="flex flex-wrap items-center gap-3">
-          <Button size="small" onClick={() => doppel().showFigmaPlugin()}>
+          <Button variant="outline" size="sm" onClick={() => doppel().showFigmaPlugin()}>
             {f.showPluginFiles}
           </Button>
-          <span className="ui-small">
+          <span className="text-sm">
             {f.pairingCode}: <strong className="select-all">{setup.pairingCode}</strong>
           </span>
-          <span className="ui-small ui-muted">{f.port(setup.port)}</span>
+          <span className="text-sm text-muted-foreground">{f.port(setup.port)}</span>
         </div>
-        <p className="ui-small ui-muted">{f.pluginKeepOpen}</p>
-        <div className="ui-label mt-1">{f.sessionsTitle}</div>
+        <p className="text-sm text-muted-foreground">{f.pluginKeepOpen}</p>
+        <div className="text-sm font-medium mt-1">{f.sessionsTitle}</div>
         {setup.sessions.length === 0 ? (
-          <p className="ui-small ui-muted">{f.noSessions}</p>
+          <p className="text-sm text-muted-foreground">{f.noSessions}</p>
         ) : (
-          <ul className="flex flex-col gap-1">
+          <ul className="flex flex-col gap-1.5">
             {setup.sessions.map((x) => (
               <li key={x.id} className="flex items-center gap-2">
-                <span className="ui-dot" data-on aria-hidden />
+                <span className="inline-block size-2 shrink-0 rounded-full border border-primary data-[on=true]:bg-primary" data-on aria-hidden />
                 <span className="min-w-0 truncate">{f.session(x.fileName, x.pageName, x.pluginVersion)}</span>
               </li>
             ))}
@@ -84,24 +85,23 @@ export function FigmaSetup() {
         )}
       </section>
 
-      <section className="flex flex-col gap-2">
-        <div className="ui-h3">{f.linksTitle}</div>
-        <p className="ui-small ui-muted">{f.linksHelp}</p>
-        <div className="ui-label">{f.tokenTitle}</div>
+      <section className="flex flex-col gap-3">
+        <div className="text-sm font-medium">{f.linksTitle}</div>
+        <p className="text-sm text-muted-foreground">{f.linksHelp}</p>
+        <div className="text-sm font-medium">{f.tokenTitle}</div>
         {setup.token.saved ? (
           <div className="flex flex-wrap items-center gap-3">
             <span>{f.tokenSaved(setup.token.hint ?? "")}</span>
-            <Button size="small" variant="ghost" onClick={async () => setSetup(await doppel().clearFigmaToken())}>
+            <Button size="sm" variant="ghost" onClick={async () => setSetup(await doppel().clearFigmaToken())}>
               {f.removeToken}
             </Button>
           </div>
         ) : (
           <>
-            <p className="ui-small ui-muted">{f.tokenHelp}</p>
+            <p className="text-sm text-muted-foreground">{f.tokenHelp}</p>
             <div className="flex gap-2">
-              <input
+              <Input
                 type="password"
-                className="ui-input"
                 aria-label={f.tokenTitle}
                 placeholder={f.tokenPlaceholder}
                 value={token}
@@ -109,36 +109,36 @@ export function FigmaSetup() {
                 onChange={(e) => setToken(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && token.trim() && saveToken()}
               />
-              <Button onClick={saveToken} disabled={!token.trim() || busy !== null}>
+              <Button variant="outline" onClick={saveToken} disabled={!token.trim() || busy !== null}>
                 {busy === "token" ? <Spinner /> : f.checkToken}
               </Button>
             </div>
           </>
         )}
         {error?.where === "token" && (
-          <p className="ui-small" role="alert">
+          <p className="text-sm" role="alert">
             {error.message}
           </p>
         )}
 
-        <div className="ui-label mt-2">{f.filesTitle}</div>
-        <p className="ui-small ui-muted">{f.filesHelp}</p>
+        <div className="text-sm font-medium mt-2">{f.filesTitle}</div>
+        <p className="text-sm text-muted-foreground">{f.filesHelp}</p>
         {setup.files.length === 0 ? (
-          <p className="ui-small ui-muted">{f.noFiles}</p>
+          <p className="text-sm text-muted-foreground">{f.noFiles}</p>
         ) : (
-          <ul className="flex flex-col gap-1">
+          <ul className="flex flex-col gap-1.5">
             {setup.files.map((file) => (
               <li key={file.key} className="flex flex-wrap items-center gap-2">
-                <span className="ui-dot" data-on={linked.has(`figma:${file.key}`)} aria-hidden />
+                <span className="inline-block size-2 shrink-0 rounded-full border border-primary data-[on=true]:bg-primary" data-on={linked.has(`figma:${file.key}`)} aria-hidden />
                 <span className="min-w-0 flex-1 truncate" title={file.url}>
                   {file.name}
-                  {linked.has(`figma:${file.key}`) && <span className="ui-small ui-muted"> · {f.pluginOpen}</span>}
-                  {file.lastModified && <span className="ui-small ui-muted"> · edited {formatRelative(file.lastModified)}</span>}
+                  {linked.has(`figma:${file.key}`) && <span className="text-sm text-muted-foreground"> · {f.pluginOpen}</span>}
+                  {file.lastModified && <span className="text-sm text-muted-foreground"> · edited {formatRelative(file.lastModified)}</span>}
                 </span>
-                <Button size="small" variant="ghost" onClick={() => doppel().openDocument("figma", `figma:${file.key}`)}>
+                <Button size="sm" variant="ghost" onClick={() => doppel().openDocument("figma", `figma:${file.key}`)}>
                   {f.openInFigma}
                 </Button>
-                <Button size="small" variant="ghost" onClick={async () => setSetup(await doppel().removeFigmaFile(file.key))}>
+                <Button size="sm" variant="ghost" onClick={async () => setSetup(await doppel().removeFigmaFile(file.key))}>
                   {f.removeFile}
                 </Button>
               </li>
@@ -146,8 +146,7 @@ export function FigmaSetup() {
           </ul>
         )}
         <div className="flex gap-2">
-          <input
-            className="ui-input"
+          <Input
             aria-label={f.filesTitle}
             placeholder={f.linkPlaceholder}
             value={link}
@@ -155,12 +154,12 @@ export function FigmaSetup() {
             onChange={(e) => setLink(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && link.trim() && addLink()}
           />
-          <Button onClick={addLink} disabled={!setup.token.saved || !link.trim() || busy !== null}>
+          <Button variant="outline" onClick={addLink} disabled={!setup.token.saved || !link.trim() || busy !== null}>
             {busy === "link" ? f.adding : f.addLink}
           </Button>
         </div>
         {error?.where === "link" && (
-          <p className="ui-small" role="alert">
+          <p className="text-sm" role="alert">
             {error.message}
           </p>
         )}

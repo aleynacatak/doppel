@@ -4,9 +4,10 @@ import type { Run, RunFix } from "@core/types";
 import { useState } from "react";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { Button, ButtonLink } from "../ui/Button";
-import { Notice } from "../ui/Notice";
-import { Spinner } from "../ui/Progress";
+import { Notice } from "../common/Notice";
+import { Spinner } from "../common/Progress";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
 
 /**
  * Doppl's fix after a run (items failed because of the routine), which waits for the designer: offered (fix it or
@@ -41,9 +42,9 @@ export function FixNotice({ run }: { run: Run }) {
   };
   const restoreButton = (fix: Pick<RunFix, "routineId" | "flowId" | "nodeId">, version: number) =>
     restored === version ? (
-      <span className="ui-small">{copy.results.fix.restored(version)}</span>
+      <span className="text-sm">{copy.results.fix.restored(version)}</span>
     ) : (
-      <Button onClick={() => restore(fix, version)}>{copy.results.fix.restore(version)}</Button>
+      <Button variant="outline" onClick={() => restore(fix, version)}>{copy.results.fix.restore(version)}</Button>
     );
 
   if (run.autoFixOf) {
@@ -60,7 +61,7 @@ export function FixNotice({ run }: { run: Run }) {
         }
       >
         {copy.results.fix.rerunBody(fix?.toVersion ?? run.version)}
-        {error && <p className="ui-small">{error}</p>}
+        {error && <p className="text-sm">{error}</p>}
       </Notice>
     );
   }
@@ -72,17 +73,17 @@ export function FixNotice({ run }: { run: Run }) {
         title={copy.results.fix.offerTitle}
         actions={
           <>
-            <Button variant="primary" disabled={busy} onClick={() => answer("fix")}>
+            <Button disabled={busy} onClick={() => answer("fix")}>
               {copy.results.fix.offer}
             </Button>
-            <Button disabled={busy} onClick={() => answer("dismiss")}>
+            <Button variant="outline" disabled={busy} onClick={() => answer("dismiss")}>
               {copy.results.fix.noThanks}
             </Button>
           </>
         }
       >
         {copy.results.fix.offerBody(fix.maxCalls ?? 5)}
-        {error && <p className="ui-small">{error}</p>}
+        {error && <p className="text-sm">{error}</p>}
       </Notice>
     );
   }
@@ -92,18 +93,18 @@ export function FixNotice({ run }: { run: Run }) {
         title={copy.results.fix.readyTitle}
         actions={
           <>
-            <Button variant="primary" disabled={busy} onClick={() => answer("keep")}>
+            <Button disabled={busy} onClick={() => answer("keep")}>
               {copy.results.fix.keep}
             </Button>
-            <Button disabled={busy} onClick={() => answer("dismiss")}>
+            <Button variant="outline" disabled={busy} onClick={() => answer("dismiss")}>
               {copy.results.fix.discard}
             </Button>
           </>
         }
       >
         {fix.summary && <p>{fix.summary}</p>}
-        <p className="ui-small">{copy.results.fix.readyBody(fix.aiCalls ?? 0)}</p>
-        {error && <p className="ui-small">{error}</p>}
+        <p className="text-sm">{copy.results.fix.readyBody(fix.aiCalls ?? 0)}</p>
+        {error && <p className="text-sm">{error}</p>}
       </Notice>
     );
   }
@@ -123,7 +124,7 @@ export function FixNotice({ run }: { run: Run }) {
         actions={
           <>
             {fix.rerunId && (
-              <ButtonLink href={`/results?run=${fix.rerunId}`} variant="primary">
+              <ButtonLink href={`/results?run=${fix.rerunId}`} variant="default">
                 {copy.results.fix.newResults}
               </ButtonLink>
             )}
@@ -132,7 +133,7 @@ export function FixNotice({ run }: { run: Run }) {
         }
       >
         {[fix.summary, copy.results.fix.details(fix.toVersion ?? fix.fromVersion + 1, fix.aiCalls ?? 0)].filter(Boolean).join(" · ")}
-        {error && <p className="ui-small">{error}</p>}
+        {error && <p className="text-sm">{error}</p>}
       </Notice>
     );
   }
@@ -143,11 +144,11 @@ export function FixNotice({ run }: { run: Run }) {
         actions={
           <>
             {fix.creationId && (
-              <ButtonLink href={`/create?task=${fix.creationId}`} variant="primary">
+              <ButtonLink href={`/create?task=${fix.creationId}`} variant="default">
                 {copy.results.fix.review}
               </ButtonLink>
             )}
-            <Button disabled={busy} onClick={() => answer("dismiss")}>
+            <Button variant="outline" disabled={busy} onClick={() => answer("dismiss")}>
               {copy.results.fix.discard}
             </Button>
           </>

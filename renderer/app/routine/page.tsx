@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ContractView, RoutineBadges } from "@/components/routine/ContractView";
+import { ContractSections, RoutineBadges } from "@/components/routine/ContractView";
 import { CostLine } from "@/components/routine/CostLine";
 import { RoutineDetails } from "@/components/routine/RoutineDetails";
 import { RoutineUsageList } from "@/components/routine/RoutineUsageList";
@@ -10,20 +10,23 @@ import { RunHistory } from "@/components/routine/RunHistory";
 import { ScriptViewer } from "@/components/routine/ScriptViewer";
 import { StepsList } from "@/components/routine/StepsList";
 import { VersionHistory } from "@/components/routine/VersionHistory";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Notice } from "@/components/ui/Notice";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading } from "@/components/ui/Progress";
-import { Section } from "@/components/ui/Section";
-import { Tag } from "@/components/ui/Tag";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Notice } from "@/components/common/Notice";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Loading } from "@/components/common/Progress";
+import { Section } from "@/components/common/Section";
+import { Tag } from "@/components/common/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
 import { appLabel } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/common/ButtonLink";
+import { useConfirm } from "@/components/common/ConfirmDialog";
 
 function RoutineScreen() {
+  const [confirm, confirmDialog] = useConfirm();
   const params = useSearchParams();
   const router = useRouter();
   const id = params.get("id");
@@ -46,7 +49,7 @@ function RoutineScreen() {
   const readOnly = !!version && version !== latest.version && !!viewed;
   const routine = readOnly ? viewed! : latest;
   const restore = async (v: number) => {
-    if (!window.confirm(copy.versions.restoreConfirm(v))) return;
+    if (!(await confirm({ title: copy.versions.restore, body: copy.versions.restoreConfirm(v), action: copy.versions.restore }))) return;
     setError(null);
     try {
       const restored = await doppel().restoreRoutineVersion(latest.id, v);
@@ -70,8 +73,9 @@ function RoutineScreen() {
     }
   };
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
+      {confirmDialog}
+      <div className="flex flex-col gap-4">
         <PageHeader
           back={{ href: "/routines", label: copy.nav.library }}
           title={routine.name}
@@ -85,19 +89,19 @@ function RoutineScreen() {
           subtitle={routine.description}
           actions={
             <>
-              <Button onClick={() => setShowBody((s) => !s)} aria-expanded={showBody}>
+              <Button variant="outline" onClick={() => setShowBody((s) => !s)} aria-expanded={showBody}>
                 {routine.kind === "actions" ? (showBody ? copy.routine.hideActions : copy.routine.viewActions) : showBody ? copy.routine.hideScript : copy.routine.viewScript}
               </Button>
               {readOnly ? (
                 <>
-                  {!starter && <Button onClick={() => restore(routine.version)}>{copy.versions.restore}</Button>}
+                  {!starter && <Button variant="outline" onClick={() => restore(routine.version)}>{copy.versions.restore}</Button>}
                   <ButtonLink href={`/routine?id=${latest.id}`}>{copy.versions.backToCurrent}</ButtonLink>
                 </>
               ) : (
                 <>
-                  {starter && <Button onClick={duplicate}>{copy.routine.duplicate}</Button>}
+                  {starter && <Button variant="outline" onClick={duplicate}>{copy.routine.duplicate}</Button>}
                   <ButtonLink href={`/refine?routine=${routine.id}`}>{starter ? copy.refine.duplicateAndRefine : copy.refine.button}</ButtonLink>
-                  <ButtonLink href={`/run?routine=${routine.id}`} variant="primary">
+                  <ButtonLink href={`/run?routine=${routine.id}`} variant="default">
                     {copy.routine.run}
                   </ButtonLink>
                 </>
@@ -110,7 +114,7 @@ function RoutineScreen() {
           <Notice
             title={copy.blocks.improved}
             actions={
-              <Button
+              <Button variant="outline"
                 disabled={updating}
                 onClick={async () => {
                   setUpdating(true);
@@ -151,9 +155,9 @@ function RoutineScreen() {
         {error && <Notice tone="error">{error}</Notice>}
         {routine.portabilityIssues?.length ? <Notice tone="warning">{copy.routine.portabilityWarning}</Notice> : null}
         {!starter && <CostLine aiCalls={routine.createdWithAiCalls} />}
-        {routine.duplicatedFrom && <p className="ui-small ui-muted">{copy.routine.copiedFrom(routine.duplicatedFrom.name, routine.duplicatedFrom.version)}</p>}
+        {routine.duplicatedFrom && <p className="text-sm text-muted-foreground">{copy.routine.copiedFrom(routine.duplicatedFrom.name, routine.duplicatedFrom.version)}</p>}
         {routine.appVersion && (
-          <p className="ui-small ui-muted">{copy.routine.environment(app?.name ?? appLabel(routine.appId), routine.appVersion, routine.requiredFonts)}</p>
+          <p className="text-sm text-muted-foreground">{copy.routine.environment(app?.name ?? appLabel(routine.appId), routine.appVersion, routine.requiredFonts)}</p>
         )}
       </div>
 
@@ -166,34 +170,40 @@ function RoutineScreen() {
         </Section>
       )}
 
-      <Section title={copy.routine.stepsTitle}>
-        <StepsList steps={routine.steps} />
-      </Section>
+      <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-6">
+          <Section title={copy.routine.stepsTitle}>
+            <StepsList steps={routine.steps} />
+          </Section>
 
-      <ContractView routine={routine} />
+          {!starter && !readOnly && (
+            <Section title={copy.usage.title}>
+              <RoutineUsageList routineId={routine.id} />
+            </Section>
+          )}
 
-      {!starter && !readOnly && (
-        <Section title={copy.usage.title}>
-          <RoutineUsageList routineId={routine.id} />
-        </Section>
-      )}
+          {!starter && !readOnly && (
+            <Section title={copy.routine.historyTitle}>
+              <RunHistory runs={routine.runs} />
+            </Section>
+          )}
+        </div>
 
-      {!starter && !readOnly && (
-        <Section title={copy.routine.historyTitle}>
-          <RunHistory runs={routine.runs} />
-        </Section>
-      )}
+        <div className="flex min-w-0 flex-col gap-6">
+          <ContractSections routine={routine} />
 
-      <Section title={copy.routine.versionsTitle}>
-        <VersionHistory routineId={latest.id} versions={latest.versions} current={latest.version} viewing={readOnly ? routine.version : undefined} onRestore={starter ? undefined : restore} />
-      </Section>
+          <Section title={copy.routine.versionsTitle}>
+            <VersionHistory routineId={latest.id} versions={latest.versions} current={latest.version} viewing={readOnly ? routine.version : undefined} onRestore={starter ? undefined : restore} />
+          </Section>
 
-      {!starter && (
-        <Section title={copy.details.title}>
-          <div className="ui-label">{copy.details.madeWith}</div>
-          <RoutineDetails routine={routine} />
-        </Section>
-      )}
+          {!starter && (
+            <Section title={copy.details.title}>
+              <div className="text-sm font-medium">{copy.details.madeWith}</div>
+              <RoutineDetails routine={routine} />
+            </Section>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

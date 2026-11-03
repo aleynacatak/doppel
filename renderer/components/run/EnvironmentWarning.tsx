@@ -1,7 +1,7 @@
 import type { EnvironmentCheck } from "@core/types";
 import { copy } from "@/copy";
-import { Button } from "../ui/Button";
-import { Notice } from "../ui/Notice";
+import { Notice } from "../common/Notice";
+import { Button } from "@/components/ui/button";
 
 export function EnvironmentWarning({
   env,
@@ -20,14 +20,14 @@ export function EnvironmentWarning({
       title={copy.run.envTitle}
       actions={
         <>
-          <Button onClick={onRunAnyway}>{copy.run.runAnyway}</Button>
-          <Button variant="primary" onClick={onRepair}>
+          <Button variant="outline" onClick={onRunAnyway}>{copy.run.runAnyway}</Button>
+          <Button onClick={onRepair}>
             {copy.run.repairWithAi}
           </Button>
         </>
       }
     >
-      <ul className="flex flex-col gap-0.5">
+      <ul className="flex flex-col gap-1">
         {env.versionMismatch && env.currentVersion && <li>{copy.run.envVersion(appName, env.routineVersion, env.currentVersion)}</li>}
         {env.missingFonts.map((f) => (
           <li key={f}>{copy.run.envFont(f)}</li>
