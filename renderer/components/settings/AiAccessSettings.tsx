@@ -10,7 +10,6 @@ import { Field } from "../common/Field";
 import { Notice } from "../common/Notice";
 import { Tag } from "../common/Tag";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
@@ -32,26 +31,24 @@ function Option({
   children?: ReactNode;
 }) {
   return (
-    <Card data-selected={checked} size="sm" className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
-      <CardContent className="flex flex-col gap-4">
-        <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground" data-disabled={disabled}>
-          <RadioGroupItem className="mt-0.5" value={value} disabled={disabled} />
-          <span className="flex flex-col">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">{label}</span>
-              {tag}
-            </span>
-            <span className="text-sm text-muted-foreground">{hint}</span>
+    <div className="flex flex-col gap-4 border-t py-4 first:border-t-0 first:pt-0 last:pb-0">
+      <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground" data-disabled={disabled}>
+        <RadioGroupItem className="mt-0.5" value={value} disabled={disabled} />
+        <span className="flex flex-col">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{label}</span>
+            {tag}
           </span>
-        </label>
-        {/* Arrow keys in a text field here move its cursor, not the choice of option. */}
-        {checked && children && (
-          <div className="flex flex-col gap-4 pl-6" onKeyDown={(e) => e.stopPropagation()}>
-            {children}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          <span className="text-sm text-muted-foreground">{hint}</span>
+        </span>
+      </label>
+      {/* Arrow keys in a text field here move its cursor, not the choice of option. */}
+      {checked && children && (
+        <div className="flex flex-col gap-4 pl-6" onKeyDown={(e) => e.stopPropagation()}>
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -121,7 +118,7 @@ export function AiAccessSettings() {
       <p className="text-muted-foreground">{copy.settings.aiSubtitle}</p>
       {!aiAccess.encryptionAvailable && <Notice tone="warning">{copy.settings.noEncryption}</Notice>}
 
-      <RadioGroup className="flex flex-col gap-3" aria-label={copy.settings.aiTitle} value={aiAccess.provider} onValueChange={(next) => choose(next as AiProvider)}>
+      <RadioGroup className="flex flex-col gap-0" aria-label={copy.settings.aiTitle} value={aiAccess.provider} onValueChange={(next) => choose(next as AiProvider)}>
         <Option
           checked={aiAccess.provider === "doppl-demo"}
           label={copy.settings.options.demo.label}

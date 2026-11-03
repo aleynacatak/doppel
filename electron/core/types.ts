@@ -1214,6 +1214,8 @@ export interface PickFileOptions {
 export interface DoppelApi {
   // Apps
   listApps(): Promise<App[]>;
+  /** Logos of the installed apps as data URLs, by app id. */
+  getAppIcons(): Promise<Record<string, string>>;
   checkApp(appId: AppId): Promise<App>;
   listOpenDocuments(appId: AppId): Promise<DocumentRef[]>;
   inspectDocument(appId: AppId, docId: string): Promise<DocumentSummary>;

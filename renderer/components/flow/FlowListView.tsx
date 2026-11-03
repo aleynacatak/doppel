@@ -3,7 +3,7 @@
 import type { Flow, FlowContext, Run } from "@core/types";
 import { topoOrder } from "@shared/flowGraph";
 import { copy } from "@/copy";
-import { appLabel } from "@/lib/format";
+import { AppTag } from "../common/AppLogo";
 import { Tag } from "../common/Tag";
 import { edgeCarries, issuesFor, nodeName, routineAt } from "./flowView";
 import { Item } from "@/components/ui/item";
@@ -43,7 +43,7 @@ export function FlowListView({
               <Item render={<button type="button" />} variant="outline" className="flex-col items-start gap-1.5 text-left data-[selected=true]:border-primary" data-selected={selectedId === id || issues.length > 0} onClick={() => onSelect?.(id)}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-muted-foreground">{copy.flow.listStep(i + 1)}</span>
-                  {routine ? <Tag tone="strong">{appLabel(routine.appId)}</Tag> : <Tag>{node.kind === "input" ? copy.flow.inputNode : copy.flow.saveToFolder}</Tag>}
+                  {routine ? <AppTag appId={routine.appId} /> : <Tag>{node.kind === "input" ? copy.flow.inputNode : copy.flow.saveToFolder}</Tag>}
                   <span className="text-sm font-medium">{nodeName(node, ctx)}</span>
                   {node.kind === "routine" && <span className="text-sm text-muted-foreground">{copy.flow.version(node.routineVersion)}</span>}
                   {progress && <span className="text-sm text-muted-foreground">· {copy.run.stageStatus[progress.status]}</span>}

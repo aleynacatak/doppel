@@ -13,6 +13,7 @@ export const copy = {
     library: "Library",
     settings: "Settings",
     apps: "Apps",
+    viewApps: "View",
   },
 
   appStatus: {
@@ -526,10 +527,11 @@ export const copy = {
     emptyBody: "Describe a task once and Doppl turns it into a routine you can rerun with no AI calls.",
     emptyAction: "Create your first routine",
     noMatch: "No routines match your search.",
+    noFlowMatch: "No flows match your search.",
     lastRun: "Last run",
     never: "Never",
     runs: (n: number) => plural(n, "run"),
-    table: { name: "Name", app: "App", lastRun: "Last run", runs: "Runs" },
+    table: { name: "Name", app: "App", apps: "Apps", routines: "Routines", lastRun: "Last run", runs: "Runs" },
     flowNodes: (n: number) => plural(n, "routine"),
   },
 

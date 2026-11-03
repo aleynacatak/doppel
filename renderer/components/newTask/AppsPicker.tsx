@@ -8,10 +8,12 @@ import { defaultDocument } from "@/lib/documents";
 import { appLabel } from "@/lib/format";
 import { useOpenDocuments } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
+import { AppLogo } from "../common/AppLogo";
 import { Notice } from "../common/Notice";
+import { Spinner } from "../common/Progress";
+import { Section } from "../common/Section";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Card } from "@/components/ui/card";
 
 /** Value of the "No document" option (an explicit choice, unlike an empty value). */
 const NONE = "__none__";
@@ -78,36 +80,35 @@ export function AppsPicker({ value, onChange }: { value: TaskApp[]; onChange: (a
   const figmaWithoutFile = value.some((a) => a.appId === "figma" && !a.documentId) && apps.find((a) => a.id === "figma")?.status === "connected";
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-sm font-medium">{copy.newTask.appsLabel}</div>
+    <Section title={copy.newTask.appsLabel}>
       <p className="text-sm text-muted-foreground">{copy.newTask.appsHint}</p>
-      <Card className="gap-0 py-0">
-        <ul className="flex flex-col">
-          {apps.map((a) => {
-            const picked = value.find((v) => v.appId === a.id);
-            return (
-              <li key={a.id} className="border-t flex flex-wrap items-center gap-3 px-4 py-3 first:border-t-0">
-                <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground w-56">
-                  <Checkbox className="mt-0.5" checked={!!picked} onCheckedChange={() => toggle(a.id)} />
-                  <span>
-                    {appLabel(a.id)} <span className="text-sm text-muted-foreground">— {copy.appStatus[a.status]}</span>
-                  </span>
-                </label>
-                {picked && (
-                  <DocumentSelect
-                    appId={a.id}
-                    documentId={picked.documentId}
-                    noDocument={!!picked.noDocument}
-                    onChange={(id, none) => setDoc(a.id, id, none)}
-                  />
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-      {value.length === 0 && <p className="text-sm">{copy.newTask.pickOneApp}</p>}
+      {apps.length === 0 && <Spinner />}
+      <ul className="flex flex-col">
+        {apps.map((a) => {
+          const picked = value.find((v) => v.appId === a.id);
+          return (
+            <li key={a.id} className="border-t flex flex-wrap items-center gap-3 py-3 first:border-t-0 first:pt-0 last:pb-0">
+              <label className="flex items-center gap-2 data-[disabled=true]:text-muted-foreground">
+                <Checkbox checked={!!picked} onCheckedChange={() => toggle(a.id)} />
+                <AppLogo appId={a.id} />
+                <span>
+                  {appLabel(a.id)} <span className="text-sm text-muted-foreground">— {copy.appStatus[a.status]}</span>
+                </span>
+              </label>
+              {picked && (
+                <DocumentSelect
+                  appId={a.id}
+                  documentId={picked.documentId}
+                  noDocument={!!picked.noDocument}
+                  onChange={(id, none) => setDoc(a.id, id, none)}
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {apps.length > 0 && value.length === 0 && <p className="text-sm">{copy.newTask.pickOneApp}</p>}
       {figmaWithoutFile && <Notice>{copy.newTask.addFigmaFile}</Notice>}
-    </div>
+    </Section>
   );
 }

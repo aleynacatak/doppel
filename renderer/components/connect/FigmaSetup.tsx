@@ -51,7 +51,7 @@ export function FigmaSetup() {
   const f = copy.connect.figma;
   const linked = new Set(setup.sessions.map((x) => x.documentId));
   return (
-    <div className="flex flex-col gap-6">
+    <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
       <section className="flex flex-col gap-3">
         <div className="text-sm font-medium">{f.pluginTitle}</div>
         <p className="text-sm">{f.pluginHelp}</p>

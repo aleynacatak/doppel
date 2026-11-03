@@ -12,6 +12,7 @@ import { useAsync } from "@/lib/hooks";
 import { InputValueField } from "../run/InputValueField";
 import { ParamField } from "../run/ParamField";
 import { Field } from "../common/Field";
+import { AppTag } from "../common/AppLogo";
 import { Tag } from "../common/Tag";
 import { MatchRuleEditor } from "./MatchRuleEditor";
 import { edgeCarries, issuesFor, nodeName, routineAt } from "./flowView";
@@ -92,7 +93,7 @@ function RoutineNodeInspector({ node, ...p }: Props & { node: Extract<FlowNode, 
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <Tag tone="strong">{appLabel(routine.appId)}</Tag>
+          <AppTag appId={routine.appId} />
           {routine.starter && <Tag tone="quiet">{copy.routine.madeByDoppl}</Tag>}
         </div>
         <div className="text-base font-semibold">{routine.name}</div>

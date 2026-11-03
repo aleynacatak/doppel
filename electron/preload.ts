@@ -7,6 +7,7 @@ import type { ApiMethods, IpcResult } from "./ipc/api";
 // complain if a method of DoppelApi is missing.
 const METHODS: Record<keyof ApiMethods, true> = {
   listApps: true,
+  getAppIcons: true,
   checkApp: true,
   listOpenDocuments: true,
   inspectDocument: true,

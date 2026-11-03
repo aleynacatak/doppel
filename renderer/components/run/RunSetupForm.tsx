@@ -12,6 +12,7 @@ import { useAiReviewAvailable, useShell } from "@/lib/store";
 import { MatchRuleEditor } from "../flow/MatchRuleEditor";
 import { PreflightReport } from "./PreflightReport";
 import { AiCallCounter } from "../common/AiCallCounter";
+import { AppTag } from "../common/AppLogo";
 import { Notice } from "../common/Notice";
 import { Spinner } from "../common/Progress";
 import { Section } from "../common/Section";
@@ -23,7 +24,6 @@ import { QcModePicker } from "./QcModePicker";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Card, CardContent } from "@/components/ui/card";
 
 const DEFAULT_QC: QcOptions = { minPpiPrint: 300, minPpiWeb: 150 };
 const isEmpty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
@@ -145,7 +145,7 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
   };
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-6">
       {setup.issues.length > 0 && (
         <Notice tone="error" title={copy.run.blockedBy}>
           <ul className="text-sm flex flex-col gap-1">
@@ -164,18 +164,18 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
         />
       )}
 
-      <Section title={copy.run.readinessTitle}>
-        {!readiness && loading ? (
-          <Spinner />
-        ) : (
-          <ul className="flex flex-col gap-4">
-            {readiness?.map((r) => (
-              <li key={r.appId}>
-                <Card data-selected={r.ok} size="sm" className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
-                  <CardContent className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-6">
+          <Section title={copy.run.readinessTitle}>
+            {!readiness && loading ? (
+              <Spinner />
+            ) : (
+              <ul className="flex flex-col">
+                {readiness?.map((r) => (
+                  <li key={r.appId} className="flex flex-col gap-3 border-t py-4 first:border-t-0 first:pt-0 last:pb-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <Tag tone="strong">{appLabel(r.appId)}</Tag>
+                        <AppTag appId={r.appId} />
                         <span className="text-sm text-muted-foreground">{copy.run.readinessStages(r.uses)}</span>
                       </div>
                       <Tag tone={r.ok ? "filled" : "default"}>{r.ok ? copy.run.readinessOk : copy.appStatus[r.status]}</Tag>
@@ -200,155 +200,158 @@ export function RunSetupForm({ setup, keepPicks = false }: { setup: RunSetup; ke
                     )}
                     {!r.ok && r.message && <p className="text-sm">{r.message}</p>}
                     {r.appId === "photoshop" && <p className="text-sm text-muted-foreground">{copy.run.photoshopSafety}</p>}
-                  </CardContent>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
 
-      {inputNodes.length > 0 && (
-        <Section title={copy.run.inputsTitle}>
-          <div className="flex flex-col gap-6">
-            {inputNodes.map((n) => (
-              <InputValueField key={n.id} id={`in-${n.id}`} port={n.port} value={inputs[n.id]} onChange={(v) => setInputs((x) => ({ ...x, [n.id]: v }))} />
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {joins.length > 0 && routine && (
-        <Section title={copy.run.joinsTitle}>
-          {joins.map((e) => {
-            const iterPort = routine.inputs.find((p) => p.key === routine.iterate!.input)!;
-            const port = routine.inputs.find((p) => p.key === e.to.port)!;
-            return (
-              <div key={e.id} className="flex flex-col gap-3">
-                <p className="text-sm text-muted-foreground">{copy.flow.joinHint(routine.name, iterPort.label)}</p>
-                <MatchRuleEditor
-                  flow={{ ...flow, edges: flow.edges.map((x) => (x.id === e.id ? { ...x, match: matches[port.key] ?? x.match } : x)) }}
-                  edgeId={e.id}
-                  rule={matches[port.key] ?? e.match}
-                  onChange={(rule) => setMatches((m) => ({ ...m, [port.key]: rule }))}
-                  iterPort={iterPort}
-                  joinedPort={port}
-                  inputs={inputs}
-                />
+          {inputNodes.length > 0 && (
+            <Section title={copy.run.inputsTitle}>
+              <div className="flex flex-col gap-6">
+                {inputNodes.map((n) => (
+                  <InputValueField key={n.id} id={`in-${n.id}`} port={n.port} value={inputs[n.id]} onChange={(v) => setInputs((x) => ({ ...x, [n.id]: v }))} />
+                ))}
               </div>
-            );
-          })}
-        </Section>
-      )}
+            </Section>
+          )}
 
-      {picked && (
-        <Section title={copy.run.preflightTitle}>
-          <PreflightReport
-            // Other files picked: a new check, with nothing skipped or suggested yet.
-            key={JSON.stringify(inputs)}
-            report={preflight ?? null}
-            loading={checking}
-            canPickPartners
-            onPickPartner={(issue, file) =>
-              setMatches((m) => {
-                // Routine runs pair per input; flow runs per connection.
-                const edge = flow.edges.find((e) => e.to.nodeId === issue.nodeId && e.to.port === issue.port);
-                const key = routine ? issue.port : edge?.id;
-                const rule = key ? (m[key] ?? (routine ? routine.matches?.[issue.port] : undefined) ?? edge?.match) : undefined;
-                return key && rule ? { ...m, [key]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
-              })
-            }
-            aiCalls={aiCalls}
-            onPickColumn={(issue, column) => {
-              setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }));
-              setAiColumns((c) => ({ ...c, [issue.inputNodeId]: Object.fromEntries(Object.entries(c[issue.inputNodeId] ?? {}).filter(([k]) => k !== issue.column)) }));
-            }}
-            onSuggestPartners={(ids) => doppel().suggestPartners(target, { inputs, matches, columns }, ids)}
-          />
-        </Section>
-      )}
+          {joins.length > 0 && routine && (
+            <Section title={copy.run.joinsTitle}>
+              {joins.map((e) => {
+                const iterPort = routine.inputs.find((p) => p.key === routine.iterate!.input)!;
+                const port = routine.inputs.find((p) => p.key === e.to.port)!;
+                return (
+                  <div key={e.id} className="flex flex-col gap-3">
+                    <p className="text-sm text-muted-foreground">{copy.flow.joinHint(routine.name, iterPort.label)}</p>
+                    <MatchRuleEditor
+                      flow={{ ...flow, edges: flow.edges.map((x) => (x.id === e.id ? { ...x, match: matches[port.key] ?? x.match } : x)) }}
+                      edgeId={e.id}
+                      rule={matches[port.key] ?? e.match}
+                      onChange={(rule) => setMatches((m) => ({ ...m, [port.key]: rule }))}
+                      iterPort={iterPort}
+                      joinedPort={port}
+                      inputs={inputs}
+                    />
+                  </div>
+                );
+              })}
+            </Section>
+          )}
 
-      {setup.settings.length > 0 && routine && (
-        <Section title={copy.run.settingsTitle}>
-          <div className="flex flex-col gap-6">
-            {setup.settings.map((s) => (
-              <ParamField key={s.key} routineId={routine.id} documentId={readiness?.find((r) => r.appId === routine.appId)?.documentId} param={s} value={settings[s.key]} onChange={(v) => setSetting(s.key, v)} />
-            ))}
-          </div>
-        </Section>
-      )}
+          {picked && (
+            <Section title={copy.run.preflightTitle}>
+              <PreflightReport
+                // Other files picked: a new check, with nothing skipped or suggested yet.
+                key={JSON.stringify(inputs)}
+                report={preflight ?? null}
+                loading={checking}
+                canPickPartners
+                onPickPartner={(issue, file) =>
+                  setMatches((m) => {
+                    // Routine runs pair per input; flow runs per connection.
+                    const edge = flow.edges.find((e) => e.to.nodeId === issue.nodeId && e.to.port === issue.port);
+                    const key = routine ? issue.port : edge?.id;
+                    const rule = key ? (m[key] ?? (routine ? routine.matches?.[issue.port] : undefined) ?? edge?.match) : undefined;
+                    return key && rule ? { ...m, [key]: { ...rule, pairs: { ...(rule.pairs ?? {}), [issue.key]: file } } } : m;
+                  })
+                }
+                aiCalls={aiCalls}
+                onPickColumn={(issue, column) => {
+                  setColumns((c) => ({ ...c, [issue.inputNodeId]: { ...(c[issue.inputNodeId] ?? {}), [issue.column]: column } }));
+                  setAiColumns((c) => ({ ...c, [issue.inputNodeId]: Object.fromEntries(Object.entries(c[issue.inputNodeId] ?? {}).filter(([k]) => k !== issue.column)) }));
+                }}
+                onSuggestPartners={(ids) => doppel().suggestPartners(target, { inputs, matches, columns }, ids)}
+              />
+            </Section>
+          )}
 
-      {outputNodes.length > 0 && (
-        <Section title={copy.run.outputsTitle}>
-          <p className="text-sm text-muted-foreground">{target.kind === "flow" ? copy.run.outputsHintFlow : copy.run.outputsHint}</p>
-          <div className="flex flex-col gap-4">
-            {outputNodes.map((n) => (
-              <div key={n.id} className="flex flex-wrap items-center gap-3">
-                <span className="w-48">{n.port.label}</span>
-                <Button variant="outline"
-                  onClick={async () => {
-                    const folder = await doppel().pickFolder();
-                    if (folder) setFolders((f) => ({ ...f, [n.id]: folder }));
-                  }}
-                >
-                  {folders[n.id] ? copy.run.change : copy.run.choose}
-                </Button>
-                <span className={folders[n.id] ? "truncate" : "text-muted-foreground"} title={folders[n.id]}>
-                  {folders[n.id] ? fileName(folders[n.id]) : copy.run.notChosen}
-                </span>
-                {folders[n.id] && sameFolderAs(folders[n.id]) && <span className="text-sm w-full">⚠ {copy.run.sameFolder(sameFolderAs(folders[n.id])!)}</span>}
-                {folders[n.id] && target.kind === "routine" && (
-                  <Button variant="link" className="h-auto p-0 text-sm" onClick={() => setFolders((f) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== n.id)))}>
-                    {copy.run.clear}
-                  </Button>
-                )}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-6">
+          {setup.settings.length > 0 && routine && (
+            <Section title={copy.run.settingsTitle}>
+              <div className="flex flex-col gap-6">
+                {setup.settings.map((s) => (
+                  <ParamField key={s.key} routineId={routine.id} documentId={readiness?.find((r) => r.appId === routine.appId)?.documentId} param={s} value={settings[s.key]} onChange={(v) => setSetting(s.key, v)} />
+                ))}
               </div>
-            ))}
+            </Section>
+          )}
+
+          {outputNodes.length > 0 && (
+            <Section title={copy.run.outputsTitle}>
+              <p className="text-sm text-muted-foreground">{target.kind === "flow" ? copy.run.outputsHintFlow : copy.run.outputsHint}</p>
+              <div className="flex flex-col gap-4">
+                {outputNodes.map((n) => (
+                  <div key={n.id} className="flex flex-wrap items-center gap-3">
+                    <span className="w-48">{n.port.label}</span>
+                    <Button variant="outline"
+                      onClick={async () => {
+                        const folder = await doppel().pickFolder();
+                        if (folder) setFolders((f) => ({ ...f, [n.id]: folder }));
+                      }}
+                    >
+                      {folders[n.id] ? copy.run.change : copy.run.choose}
+                    </Button>
+                    <span className={folders[n.id] ? "truncate" : "text-muted-foreground"} title={folders[n.id]}>
+                      {folders[n.id] ? fileName(folders[n.id]) : copy.run.notChosen}
+                    </span>
+                    {folders[n.id] && sameFolderAs(folders[n.id]) && <span className="text-sm w-full">⚠ {copy.run.sameFolder(sameFolderAs(folders[n.id])!)}</span>}
+                    {folders[n.id] && target.kind === "routine" && (
+                      <Button variant="link" className="h-auto p-0 text-sm" onClick={() => setFolders((f) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== n.id)))}>
+                        {copy.run.clear}
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {canChooseTarget && (
+            <Section title={copy.run.targetTitle}>
+              <RadioGroup className="flex flex-col gap-3" aria-label={copy.run.targetTitle} value={target2} onValueChange={(next) => setTarget2(next as typeof target2)}>
+                <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+                  <RadioGroupItem className="mt-0.5" value="copy" />
+                  <span>
+                    {appIds.has("figma") ? copy.run.figmaOnCopy : copy.run.onCopy}
+                    <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnCopyHint() : copy.run.onCopyHint()}</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
+                  <RadioGroupItem className="mt-0.5" value="original" />
+                  <span>
+                    {appIds.has("figma") ? copy.run.figmaOnOriginal : copy.run.onOriginal}
+                    <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnOriginalHint : copy.run.onOriginalHint}</span>
+                  </span>
+                </label>
+              </RadioGroup>
+            </Section>
+          )}
+
+          <Section title={copy.run.qcTitle}>
+            <QcModePicker
+              mode={qcMode}
+              onModeChange={setQcMode}
+              options={qcOptions}
+              onOptionsChange={setQcOptions}
+              showResolution={appIds.has("indesign")}
+              aiReviewAvailable={aiReviewAvailable}
+            />
+          </Section>
+
+          {error && <Notice tone="error">{error}</Notice>}
+          {missing.length > 0 && <p className="text-sm text-muted-foreground">{`Pick ${missing.map((m) => `“${m}”`).join(", ")} first.`}</p>}
+
+          <div className="flex flex-wrap items-center gap-4">
+            <Button onClick={start} disabled={blocked || starting}>
+              {starting ? copy.run.starting : copy.run.runButton}
+            </Button>
+            <div className="min-w-64 flex-1">
+              <AiCallCounter count={0} label={copy.run.aiCounterLabel} hint={qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
+            </div>
           </div>
-        </Section>
-      )}
-
-      {canChooseTarget && (
-        <Section title={copy.run.targetTitle}>
-          <RadioGroup className="flex flex-col gap-3" aria-label={copy.run.targetTitle} value={target2} onValueChange={(next) => setTarget2(next as typeof target2)}>
-            <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
-              <RadioGroupItem className="mt-0.5" value="copy" />
-              <span>
-                {appIds.has("figma") ? copy.run.figmaOnCopy : copy.run.onCopy}
-                <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnCopyHint() : copy.run.onCopyHint()}</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground">
-              <RadioGroupItem className="mt-0.5" value="original" />
-              <span>
-                {appIds.has("figma") ? copy.run.figmaOnOriginal : copy.run.onOriginal}
-                <span className="text-sm text-muted-foreground block">{appIds.has("figma") ? copy.run.figmaOnOriginalHint : copy.run.onOriginalHint}</span>
-              </span>
-            </label>
-          </RadioGroup>
-        </Section>
-      )}
-
-      <Section title={copy.run.qcTitle}>
-        <QcModePicker
-          mode={qcMode}
-          onModeChange={setQcMode}
-          options={qcOptions}
-          onOptionsChange={setQcOptions}
-          showResolution={appIds.has("indesign")}
-          aiReviewAvailable={aiReviewAvailable}
-        />
-      </Section>
-
-      {error && <Notice tone="error">{error}</Notice>}
-      {missing.length > 0 && <p className="text-sm text-muted-foreground">{`Pick ${missing.map((m) => `“${m}”`).join(", ")} first.`}</p>}
-
-      <div className="flex flex-wrap items-center gap-4">
-        <Button onClick={start} disabled={blocked || starting}>
-          {starting ? copy.run.starting : copy.run.runButton}
-        </Button>
-        <div className="w-72">
-          <AiCallCounter count={0} label={copy.run.aiCounterLabel} hint={qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
         </div>
       </div>
     </div>

@@ -12,7 +12,7 @@ import { AppSidebar } from "./Sidebar";
 
 /** Sidebar + content. Loads apps/settings once and keeps app status live. */
 export function AppShell({ children }: { children: ReactNode }) {
-  const { ready, bridgeMissing, settings, setBoot, setBridgeMissing, setApps } = useShell();
+  const { ready, bridgeMissing, settings, setBoot, setBridgeMissing, setApps, setAppIcons } = useShell();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -25,9 +25,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     // Subscribe first, so a status change that lands while loading isn't lost.
     const unsubscribe = api.onAppStatusChange(setApps);
     api.listApps().then(setApps);
+    api.getAppIcons().then(setAppIcons).catch(() => undefined);
     Promise.all([api.getSettings(), api.getAiAccessSummary()]).then(([settings, aiAccess]) => setBoot({ settings, aiAccess }));
     return unsubscribe;
-  }, [setBoot, setBridgeMissing, setApps]);
+  }, [setBoot, setBridgeMissing, setApps, setAppIcons]);
 
   // Hidden dev panel: Cmd+Shift+D.
   useEffect(() => {
@@ -46,13 +47,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (settings && !settings.onboarded && pathname !== "/connect") router.replace("/connect");
   }, [settings, pathname, router]);
 
-  // The flow editor uses the whole window.
+  // The flow editor uses the whole window. Other pages fill it up to 1600px, with columns set by their width.
   const wide = pathname === "/flow";
   return (
     <SidebarProvider className="h-svh">
       <AppSidebar />
       <SidebarInset className="min-w-0 overflow-y-auto">
-        <div className={wide ? "px-6 py-6" : "mx-auto w-full max-w-5xl px-8 py-10"}>
+        <div className={wide ? "px-6 py-6" : "@container mx-auto w-full max-w-400 px-8 py-10"}>
           {!ready ? (
             <Loading />
           ) : bridgeMissing ? (

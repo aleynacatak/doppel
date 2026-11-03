@@ -104,7 +104,7 @@ function FigmaRunner() {
     setBusy(false);
   };
   return (
-    <Section title="Figma action runner">
+    <Section plain title="Figma action runner">
       <p className="text-sm text-muted-foreground">Runs on the current page of the file (one undo step in Figma). Placeholders: {"{{item.<field>}}"} from the sample item.</p>
       {docs.length === 0 ? <p className="text-sm">Start the Doppl plugin in a Figma file.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} />}
       <Field label="Action list (JSON)" htmlFor="dev-actions">
@@ -141,7 +141,7 @@ function PhotoshopRunner() {
     setBusy(false);
   };
   return (
-    <Section title="Photoshop script runner">
+    <Section plain title="Photoshop script runner">
       <p className="text-sm text-muted-foreground">Runs on a working copy of the document (never saved; closed afterwards). The helper library is loaded: openDocument, findLayer, replaceSmartObject, setTextLayer, setLayerVisible, exportImage, saveCopy, closeWithoutSaving.</p>
       {ps?.status !== "connected" ? <p className="text-sm">Photoshop isn't connected.</p> : <DocumentPicker docs={docs} value={doc} onChange={setDoc} allowNone />}
       <Field label="Script (function body: doc, params, ctx)" htmlFor="dev-script">
@@ -162,7 +162,7 @@ function BarcodeTester() {
   const [value, setValue] = useState("400638133393");
   const [result, setResult] = useState<{ ok: boolean; value?: string; svg?: string; error?: string } | null>(null);
   return (
-    <Section title="Barcode tester">
+    <Section plain title="Barcode tester">
       <div className="flex flex-wrap items-center gap-2">
         <NativeSelect className="w-full max-w-40" value={type} onChange={(e) => setType(e.target.value)}>
           {["ean13", "ean8", "upca", "code128"].map((t) => (
@@ -217,7 +217,7 @@ function FlowLab() {
     }
   };
   return (
-    <Section title="Flow runner">
+    <Section plain title="Flow runner">
       <p className="text-sm text-muted-foreground">
         Runs a flow without AI. Simulated apps write placeholder files for each output, so handoffs, joins, partial failure and cancel can be tried without InDesign,
         Photoshop or Figma. Inputs nothing is picked for get three sample rows or files. Real apps use the values picked last time.
@@ -334,7 +334,7 @@ function ExportStarter() {
   const [error, setError] = useState<string | null>(null);
   const routine: Routine | undefined = routines.find((r) => r.id === id) ?? routines[0];
   return (
-    <Section title="Export as starter">
+    <Section plain title="Export as starter">
       <p className="text-sm text-muted-foreground">
         Writes one of your routines in the starter format (run history, request notes and locations on this Mac taken out; inputs and outputs checked). Put the
         file into resources/starters/ to ship it as “Made by Doppl”. A converter has one input and one output and is offered for incompatible connections.
@@ -387,7 +387,7 @@ function RoutineBuilder() {
   const [validation, setValidation] = useState<{ validation: ValidationResult; parseError?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
-    <Section title="Routine builder">
+    <Section plain title="Routine builder">
       <p className="text-sm text-muted-foreground">
         Paste a routine in the model&apos;s format: {"{"} name, app, inputs, outputs, settings, iterate, actions (Figma) or script {"}"}. Validate, then save it to the library.
         Saving and running use no AI.
@@ -430,7 +430,7 @@ function LastCreation() {
   const [t, setT] = useState<CreationTranscript | null | undefined>(undefined);
   const load = async () => setT(await doppel().devLastCreationTranscript());
   return (
-    <Section title="Last creation: the AI's answers" aside={<Button variant="outline" size="sm" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
+    <Section plain title="Last creation: the AI's answers" aside={<Button variant="outline" size="sm" onClick={load}>{t === undefined ? "Show" : "Refresh"}</Button>}>
       <p className="text-sm text-muted-foreground">The latest creation (its plan and every routine), turn by turn: what the AI answered and what Doppl replied. Kept in memory only.</p>
       {t === null && <p className="text-sm">No creation since Doppl started.</p>}
       {t && (
@@ -458,7 +458,7 @@ function ConnectionLog() {
     return api.onConnectionLog((e) => setEntries((list) => [...list.slice(-299), e]));
   }, []);
   return (
-    <Section
+    <Section plain
       title="Connection log"
       aside={
         <Button variant="outline"
@@ -518,7 +518,7 @@ function BuildingBlocks() {
     }
   };
   return (
-    <Section title="Building blocks">
+    <Section plain title="Building blocks">
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">Library</span>

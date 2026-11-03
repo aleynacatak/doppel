@@ -2,9 +2,9 @@
 
 import type { Routine } from "@core/types";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { type ReactNode, Suspense, useState } from "react";
 import { type LibraryView, LibraryToolbar } from "@/components/library/LibraryToolbar";
-import { FlowCard, RoutineCard, RoutineTable } from "@/components/library/RoutineCard";
+import { FlowCard, FlowTable, RoutineCard, RoutineTable } from "@/components/library/RoutineCard";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Notice } from "@/components/common/Notice";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -18,19 +18,22 @@ import { useAsync } from "@/lib/hooks";
 import { useShell } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/common/ButtonLink";
+import { Card, CardContent } from "@/components/ui/card";
 
 type Tab = "routines" | "flows";
 
-function RoutineList({ routines, view }: { routines: Routine[]; view: LibraryView }) {
+function Listing({ view, cards, table }: { view: LibraryView; cards: ReactNode; table: ReactNode }) {
   return view === "grid" ? (
-    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
-      {routines.map((r) => (
-        <RoutineCard key={r.id} routine={r} />
-      ))}
-    </div>
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-6">{cards}</div>
   ) : (
-    <RoutineTable routines={routines} />
+    <Card>
+      <CardContent>{table}</CardContent>
+    </Card>
   );
+}
+
+function RoutineList({ routines, view }: { routines: Routine[]; view: LibraryView }) {
+  return <Listing view={view} cards={routines.map((r) => <RoutineCard key={r.id} routine={r} />)} table={<RoutineTable routines={routines} />} />;
 }
 
 function LibraryScreen() {
@@ -90,26 +93,35 @@ function LibraryScreen() {
         />
       ) : (
         <>
-          <div>
-            <Segmented<Tab>
-              label="Library"
-              value={tab}
-              onChange={setTab}
-              options={[
-                { value: "routines", label: copy.library.tabs.routines },
-                { value: "flows", label: copy.library.tabs.flows },
-              ]}
-            />
-          </div>
-          <LibraryToolbar query={query} onQuery={setQuery} appFilter={appFilter} onAppFilter={setAppFilter} view={view} onView={setView} apps={apps} />
+          <LibraryToolbar
+            tabs={
+              <Segmented<Tab>
+                label="Library"
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { value: "routines", label: copy.library.tabs.routines },
+                  { value: "flows", label: copy.library.tabs.flows },
+                ]}
+              />
+            }
+            searchLabel={tab === "flows" ? copy.library.searchFlows : copy.library.search}
+            query={query}
+            onQuery={setQuery}
+            appFilter={appFilter}
+            onAppFilter={setAppFilter}
+            view={view}
+            onView={setView}
+            apps={apps}
+          />
           {tab === "routines" ? (
             <div className="flex flex-col gap-10">
-              <Section title={copy.library.myRoutines}>
+              <Section plain title={copy.library.myRoutines}>
                 {mine.length ? <RoutineList routines={mine} view={view} /> : <p className="text-muted-foreground">{data?.mine.length ? copy.library.noMatch : copy.library.noMyRoutines}</p>}
               </Section>
               {/* No section when this version has no starter routines. */}
               {!!data?.starters.length && (
-                <Section title={copy.library.starterRoutines}>
+                <Section plain title={copy.library.starterRoutines}>
                   {starters.length ? <RoutineList routines={starters} view={view} /> : <p className="text-muted-foreground">{copy.library.noMatch}</p>}
                 </Section>
               )}
@@ -128,13 +140,9 @@ function LibraryScreen() {
               }
             />
           ) : flows.length === 0 ? (
-            <p className="text-muted-foreground">{copy.library.noMatch}</p>
+            <p className="text-muted-foreground">{copy.library.noFlowMatch}</p>
           ) : (
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
-              {flows.map((f) => (
-                <FlowCard key={f.id} flow={f} />
-              ))}
-            </div>
+            <Listing view={view} cards={flows.map((f) => <FlowCard key={f.id} flow={f} />)} table={<FlowTable flows={flows} />} />
           )}
         </>
       )}

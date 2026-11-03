@@ -2,6 +2,8 @@ import type { AppId, MatchRule, PortDef, SettingDef } from "@core/types";
 import { describeSpec, inputSpec, outputSpec } from "@shared/ports";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
+import { AppTag } from "../common/AppLogo";
+import { Section } from "../common/Section";
 import { Tag } from "../common/Tag";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
@@ -61,36 +63,63 @@ export function SettingsTable({ settings }: { settings: SettingDef[] }) {
   );
 }
 
-/** A routine's I/O contract: inputs, what it iterates over, outputs, settings. */
-export function ContractView({
-  routine,
-  compact = false,
-}: {
-  routine: { appId: AppId; inputs: PortDef[]; outputs: PortDef[]; settings?: SettingDef[]; iterate?: { input: string }; matches?: Record<string, MatchRule> };
-  compact?: boolean;
-}) {
+type Contract = { appId: AppId; inputs: PortDef[]; outputs: PortDef[]; settings?: SettingDef[]; iterate?: { input: string }; matches?: Record<string, MatchRule> };
+
+function ContractInputs({ routine }: { routine: Contract }) {
   const iterPort = routine.iterate ? routine.inputs.find((p) => p.key === routine.iterate!.input) : undefined;
   const describeInput = (p: PortDef) => (p.type === "document" ? copy.routine.documentPort(appLabel(routine.appId)) : describeSpec(inputSpec(p, routine.appId)));
   return (
-    <div className={`grid grid-cols-1 gap-6 ${compact ? "" : "lg:grid-cols-2"}`}>
+    <>
+      <PortTable ports={routine.inputs} describe={describeInput} empty={copy.routine.noInputs} />
+      <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
+        {iterPort ? copy.routine.iterates(iterPort.label) : copy.routine.runsOnce}
+      </p>
+      {Object.entries(routine.matches ?? {}).map(([key, rule]) => {
+        const port = routine.inputs.find((p) => p.key === key);
+        return port ? (
+          <p key={key} className="text-sm text-muted-foreground">
+            {copy.routine.pairs(port.label, copy.match.describe(rule))}
+          </p>
+        ) : null;
+      })}
+    </>
+  );
+}
+
+function ContractOutputs({ routine }: { routine: Contract }) {
+  return <PortTable ports={routine.outputs} describe={(p) => describeSpec(outputSpec(p, !!routine.iterate, routine.appId))} empty={copy.routine.noOutputs} />;
+}
+
+/** The contract as one card each for inputs, outputs and settings: the routine's own page. */
+export function ContractSections({ routine }: { routine: Contract }) {
+  return (
+    <>
+      <Section title={copy.routine.inputsTitle}>
+        <ContractInputs routine={routine} />
+      </Section>
+      <Section title={copy.routine.outputsTitle}>
+        <ContractOutputs routine={routine} />
+      </Section>
+      {routine.settings && (
+        <Section title={copy.routine.settingsTitle}>
+          <SettingsTable settings={routine.settings} />
+        </Section>
+      )}
+    </>
+  );
+}
+
+/** A routine's I/O contract: inputs, what it iterates over, outputs, settings. */
+export function ContractView({ routine }: { routine: Contract }) {
+  return (
+    <div className="grid grid-cols-1 gap-6 @3xl:grid-cols-2">
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium">{copy.routine.inputsTitle}</div>
-        <PortTable ports={routine.inputs} describe={describeInput} empty={copy.routine.noInputs} />
-        <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
-          {iterPort ? copy.routine.iterates(iterPort.label) : copy.routine.runsOnce}
-        </p>
-        {Object.entries(routine.matches ?? {}).map(([key, rule]) => {
-          const port = routine.inputs.find((p) => p.key === key);
-          return port ? (
-            <p key={key} className="text-sm text-muted-foreground">
-              {copy.routine.pairs(port.label, copy.match.describe(rule))}
-            </p>
-          ) : null;
-        })}
+        <ContractInputs routine={routine} />
       </div>
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium">{copy.routine.outputsTitle}</div>
-        <PortTable ports={routine.outputs} describe={(p) => describeSpec(outputSpec(p, !!routine.iterate, routine.appId))} empty={copy.routine.noOutputs} />
+        <ContractOutputs routine={routine} />
         {routine.settings && (
           <>
             <div className="text-sm font-medium pt-2">{copy.routine.settingsTitle}</div>
@@ -106,7 +135,7 @@ export function ContractView({
 export function RoutineBadges({ appId, starter }: { appId: AppId; starter?: boolean }) {
   return (
     <>
-      <Tag tone="strong">{appLabel(appId)}</Tag>
+      <AppTag appId={appId} />
       {starter && <Tag tone="quiet">{copy.routine.madeByDoppl}</Tag>}
     </>
   );

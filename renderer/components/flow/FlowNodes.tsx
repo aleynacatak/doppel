@@ -9,6 +9,7 @@ import { copy } from "@/copy";
 import { appLabel, fileName } from "@/lib/format";
 import { describeValue } from "../run/InputValueField";
 import { ProgressBar, Spinner } from "../common/Progress";
+import { AppTag } from "../common/AppLogo";
 import { Tag } from "../common/Tag";
 import { type PortView, fitOf, issuesFor, nodePorts, routineAt, useFlowView } from "./flowView";
 import { Button } from "@/components/ui/button";
@@ -92,7 +93,7 @@ export function RoutineNodeView({ id, selected }: NodeProps) {
   return (
     <div className="ui-flow-node w-64" data-selected={selected} data-invalid={issues.length > 0} data-active={v.mode === "run" && progress?.status === "running"}>
       <div className="flex items-center gap-2 px-3 pt-2">
-        {routine && <Tag tone="strong">{appLabel(routine.appId)}</Tag>}
+        {routine && <AppTag appId={routine.appId} />}
         <span className="text-sm font-medium min-w-0 flex-1 truncate" title={routine?.name}>
           {routine?.name ?? copy.common.notFound}
         </span>

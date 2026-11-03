@@ -8,7 +8,6 @@ import { Field } from "../common/Field";
 import { Notice } from "../common/Notice";
 import { Tag } from "../common/Tag";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -106,39 +105,36 @@ export function AiModelsSettings() {
         </div>
         <p className="text-sm text-muted-foreground">{copy.aiModels.endpointsHint}</p>
         {info.customEndpoints.map((c) => (
-          <Card key={c.id} size="sm">
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{c.displayName}</span>
-                <span className="text-sm text-muted-foreground">
-                  {c.baseUrl} · {c.model}
-                </span>
-                {c.key.saved && <Tag tone="quiet">{copy.aiModels.keySaved(c.key.hint ?? "")}</Tag>}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    const res = await doppel().testAiEndpoint(c.id);
-                    setTested((t) => ({ ...t, [c.id]: res.ok ? copy.aiModels.testOk(res.value) : res.error.message }));
-                  }}
-                >
-                  {copy.aiModels.test}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setDraft({ ...c, key: undefined })}>
-                  {copy.aiModels.edit}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => run(() => doppel().removeAiEndpoint(c.id))}>
-                  {copy.aiModels.remove}
-                </Button>
-                {tested[c.id] && <span className="text-sm">{tested[c.id]}</span>}
-              </div>
-            </CardContent>
-          </Card>
+          <div key={c.id} className="flex flex-col gap-3 border-t pt-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">{c.displayName}</span>
+              <span className="text-sm text-muted-foreground">
+                {c.baseUrl} · {c.model}
+              </span>
+              {c.key.saved && <Tag tone="quiet">{copy.aiModels.keySaved(c.key.hint ?? "")}</Tag>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const res = await doppel().testAiEndpoint(c.id);
+                  setTested((t) => ({ ...t, [c.id]: res.ok ? copy.aiModels.testOk(res.value) : res.error.message }));
+                }}
+              >
+                {copy.aiModels.test}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setDraft({ ...c, key: undefined })}>
+                {copy.aiModels.edit}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => run(() => doppel().removeAiEndpoint(c.id))}>
+                {copy.aiModels.remove}
+              </Button>
+              {tested[c.id] && <span className="text-sm">{tested[c.id]}</span>}
+            </div>
+          </div>
         ))}
         {draft ? (
-          <Card size="sm">
-            <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 border-t pt-4">
               <Field label={copy.aiModels.nameLabel} htmlFor="ep-name">
                 <Input id="ep-name" value={draft.displayName} onChange={(e) => setDraft({ ...draft, displayName: e.target.value })} placeholder="OpenRouter" />
               </Field>
@@ -171,8 +167,7 @@ export function AiModelsSettings() {
                 </Button>
                 <Button variant="outline" onClick={() => setDraft(null)}>{copy.common.cancel}</Button>
               </div>
-            </CardContent>
-          </Card>
+          </div>
         ) : (
           <div>
             <Button variant="outline" onClick={() => setDraft({ ...EMPTY_ENDPOINT })}>{copy.aiModels.add}</Button>

@@ -1,4 +1,5 @@
 import type { App } from "@core/types";
+import type { ReactNode } from "react";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
 import { Segmented } from "../common/Segmented";
@@ -8,6 +9,8 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 export type LibraryView = "grid" | "list";
 
 export function LibraryToolbar({
+  tabs,
+  searchLabel,
   query,
   onQuery,
   appFilter,
@@ -16,6 +19,8 @@ export function LibraryToolbar({
   onView,
   apps,
 }: {
+  tabs: ReactNode;
+  searchLabel: string;
   query: string;
   onQuery: (q: string) => void;
   appFilter: string;
@@ -25,12 +30,13 @@ export function LibraryToolbar({
   apps: App[];
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex items-center gap-3">
+      {tabs}
       <Input
         type="search"
-        className="max-w-xs"
-        placeholder={copy.library.search}
-        aria-label={copy.library.search}
+        className="min-w-0 max-w-xs flex-1"
+        placeholder={searchLabel}
+        aria-label={searchLabel}
         value={query}
         onChange={(e) => onQuery(e.target.value)}
       />

@@ -19,8 +19,8 @@ export function CreationResult({
 }) {
   const draft = creation.draft!;
   return (
-    <div className="flex flex-col gap-10">
-      <Section title={copy.create.resultTitle}>
+    <div className="flex flex-col gap-6">
+      <Section plain title={copy.create.resultTitle}>
         <p className="text-muted-foreground">{copy.create.resultHintStaged(creation.outputs.length)}</p>
         <OutputGrid>
           {creation.outputs.map((o) => (

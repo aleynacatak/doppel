@@ -7,7 +7,6 @@ import { doppel } from "@/lib/doppel";
 import { Spinner } from "../common/Progress";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Card, CardContent } from "@/components/ui/card";
 
 type Partner = Extract<PreflightIssue, { kind: "partner" }>;
 
@@ -127,37 +126,33 @@ export function PreflightReport({
         </div>
       )}
       {needs.length > 0 && (
-        <ul className="flex flex-col gap-3">
+        <ul className="flex flex-col">
           {needs.map((i) => (
-            <li key={i.id}>
-              <Card size="sm">
-                <CardContent className="flex flex-col gap-3">
-                  <span>⚠ {i.text}</span>
-                  {i.kind === "partner" && open.includes(i) && <span className="text-sm">{copy.run.preflight.suggestion(suggested![i.id])}</span>}
-                  {i.kind === "column" && (
-                    <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseColumn} onChange={(e) => e.target.value && onPickColumn(i, e.target.value)}>
-                      <NativeSelectOption value="">{copy.run.preflight.chooseColumn}</NativeSelectOption>
+            <li key={i.id} className="flex flex-col gap-3 border-t py-4 first:border-t-0 first:pt-0 last:pb-0">
+              <span>⚠ {i.text}</span>
+              {i.kind === "partner" && open.includes(i) && <span className="text-sm">{copy.run.preflight.suggestion(suggested![i.id])}</span>}
+              {i.kind === "column" && (
+                <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseColumn} onChange={(e) => e.target.value && onPickColumn(i, e.target.value)}>
+                  <NativeSelectOption value="">{copy.run.preflight.chooseColumn}</NativeSelectOption>
+                  {i.candidates.map((c) => (
+                    <NativeSelectOption key={c}>{c}</NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              )}
+              {i.kind === "partner" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {canPickPartners && i.candidates.length > 0 && (
+                    <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseFile} onChange={(e) => e.target.value && onPickPartner(i, e.target.value)}>
+                      <NativeSelectOption value="">{copy.run.preflight.chooseFile}</NativeSelectOption>
                       {i.candidates.map((c) => (
                         <NativeSelectOption key={c}>{c}</NativeSelectOption>
                       ))}
                     </NativeSelect>
                   )}
-                  {i.kind === "partner" && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {canPickPartners && i.candidates.length > 0 && (
-                        <NativeSelect className="w-full max-w-xs" value="" aria-label={copy.run.preflight.chooseFile} onChange={(e) => e.target.value && onPickPartner(i, e.target.value)}>
-                          <NativeSelectOption value="">{copy.run.preflight.chooseFile}</NativeSelectOption>
-                          {i.candidates.map((c) => (
-                            <NativeSelectOption key={c}>{c}</NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                      )}
-                      <Button variant="outline" onClick={() => setSkipped((s) => new Set(s).add(i.id))}>{copy.run.preflight.skip}</Button>
-                    </div>
-                  )}
-                  {i.kind === "partner" && canPickPartners && i.files && <CandidatePictures issue={i} onPick={(file) => onPickPartner(i, file)} />}
-                </CardContent>
-              </Card>
+                  <Button variant="outline" onClick={() => setSkipped((s) => new Set(s).add(i.id))}>{copy.run.preflight.skip}</Button>
+                </div>
+              )}
+              {i.kind === "partner" && canPickPartners && i.files && <CandidatePictures issue={i} onPick={(file) => onPickPartner(i, file)} />}
             </li>
           ))}
         </ul>

@@ -6,6 +6,7 @@ import { Suspense, useState } from "react";
 import { FixNotice } from "@/components/results/FixNotice";
 import { OutputCard } from "@/components/results/OutputCard";
 import { OutputGrid } from "@/components/results/OutputGrid";
+import { AppTag } from "@/components/common/AppLogo";
 import { Details } from "@/components/common/Details";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Notice } from "@/components/common/Notice";
@@ -16,7 +17,7 @@ import { Segmented } from "@/components/common/Segmented";
 import { Tag } from "@/components/common/Tag";
 import { copy } from "@/copy";
 import { doppel } from "@/lib/doppel";
-import { appLabel, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { useAsync, useRun } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/common/ButtonLink";
@@ -53,9 +54,11 @@ function NodeSection({ run, node, shown, card, onRepair }: { run: Run; node: Nod
   const repairable = node.kind === "routine" && !!onRepair && (failedItems.length === 0 || failedItems.some((i) => !i.cause || i.cause === "routine"));
   return (
     <Section
+      // Output cards stand on their own, so they aren't put in another card.
+      plain={mine.length > 0 && node.kind !== "output"}
       title={
         <span id={`node-${node.nodeId}`} className="flex flex-wrap items-center gap-2">
-          {node.appId && <Tag tone="strong">{appLabel(node.appId)}</Tag>}
+          {node.appId && <AppTag appId={node.appId} />}
           {node.kind === "output" ? `${copy.flow.saveToFolder} · ${node.name}` : node.kind === "input" ? `${copy.flow.inputNode} · ${node.name}` : node.name}
         </span>
       }

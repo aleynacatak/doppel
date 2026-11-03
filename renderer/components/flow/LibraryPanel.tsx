@@ -5,6 +5,7 @@ import { type DragEvent, useEffect, useRef } from "react";
 import { acceptedByOutput, compatible, inputSpec, type PortSpec } from "@shared/ports";
 import { copy } from "@/copy";
 import { appLabel } from "@/lib/format";
+import { AppTag } from "../common/AppLogo";
 import { Tag } from "../common/Tag";
 import { DRAG_TYPE, type DragItem } from "./FlowCanvas";
 import { IconPlus } from "@tabler/icons-react";
@@ -46,7 +47,7 @@ export function LibraryPanel({ mine, starters, onAdd }: { mine: Routine[]; start
       <span className="flex flex-col">
         <span className="text-sm truncate">{r.name}</span>
         <span className="flex gap-1">
-          <Tag>{appLabel(r.appId)}</Tag>
+          <AppTag appId={r.appId} tone="default" />
           {r.starter && <Tag tone="quiet">{copy.routine.madeByDoppl}</Tag>}
         </span>
       </span>

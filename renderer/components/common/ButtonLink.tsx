@@ -1,4 +1,5 @@
 import type { VariantProps } from "class-variance-authority";
+import { cn } from "cn";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,7 +13,7 @@ export function ButtonLink({
   children,
 }: VariantProps<typeof buttonVariants> & { href: string; className?: string; children: ReactNode }) {
   return (
-    <Link href={href} className={buttonVariants({ variant, size, className })}>
+    <Link href={href} className={cn(buttonVariants({ variant, size, className }))}>
       {children}
     </Link>
   );

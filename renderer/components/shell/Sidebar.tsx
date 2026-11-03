@@ -8,7 +8,6 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -16,7 +15,10 @@ import {
 } from "@/components/ui/sidebar";
 import { copy } from "@/copy";
 import { useShell } from "@/lib/store";
-import { AppStatusChip } from "./AppStatusChip";
+import { ButtonLink } from "../common/ButtonLink";
+import { Spinner } from "../common/Progress";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AppStatusRow } from "./AppStatusRow";
 
 const NAV = [
   { href: "/", label: copy.nav.newTask, icon: IconPlus, match: ["/", "/create"] },
@@ -53,14 +55,26 @@ export function AppSidebar() {
           </SidebarGroup>
         </nav>
         <SidebarGroup className="mt-auto">
-          <SidebarGroupLabel>{copy.nav.apps}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {apps.map((app) => (
-                <AppStatusChip key={app.id} app={app} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
+          <Card size="sm">
+            <CardHeader className="items-center">
+              <CardTitle>{copy.nav.apps}</CardTitle>
+              <CardAction>
+                <ButtonLink href="/connect" variant="link" size="sm" className="h-auto p-0">
+                  {copy.nav.viewApps}
+                </ButtonLink>
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              {apps.length === 0 && <Spinner />}
+              <ul className="flex flex-col gap-3">
+                {apps.slice(0, 3).map((app) => (
+                  <li key={app.id}>
+                    <AppStatusRow app={app} />
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         </SidebarGroup>
       </SidebarContent>
     </Sidebar>

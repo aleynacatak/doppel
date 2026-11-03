@@ -1,9 +1,8 @@
 import type { NodeProgress } from "@core/types";
 import { copy } from "@/copy";
-import { appLabel } from "@/lib/format";
+import { AppTag } from "../common/AppLogo";
 import { Details } from "../common/Details";
 import { ProgressBar, Spinner } from "../common/Progress";
-import { Tag } from "../common/Tag";
 import { Card, CardContent } from "@/components/ui/card";
 
 const MAX_ITEMS = 40;
@@ -20,7 +19,7 @@ export function NodeProgressList({ nodes }: { nodes: NodeProgress[] }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   {n.status === "running" && <Spinner />}
-                  {n.appId && <Tag tone="strong">{appLabel(n.appId)}</Tag>}
+                  {n.appId && <AppTag appId={n.appId} />}
                   <span className="text-sm font-medium">{n.name}</span>
                 </div>
                 <span className="text-sm text-muted-foreground">{copy.run.stageStatus[n.status]}</span>

@@ -11,6 +11,7 @@ import { Notice } from "../common/Notice";
 import { Section } from "../common/Section";
 import { Tag } from "../common/Tag";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -50,7 +51,7 @@ export function RefineReview({
   const changedSteps = r.steps.filter((s) => s.kind !== "same").length;
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-6">
       <Section title={copy.refine.reviewTitle}>
         <p className="text-base font-semibold">{r.changeSummary}</p>
         <p className="text-sm text-muted-foreground">{copy.refine.asked(r.request)}</p>
@@ -80,14 +81,14 @@ export function RefineReview({
         </ol>
       </Section>
 
-      <Section title={copy.refine.compareTitle}>
+      <Section plain title={copy.refine.compareTitle}>
         {r.items.map((item) => (
           <div key={item.key} className="flex flex-col gap-3">
             <div className="text-sm font-medium">
               {item.label}
               {r.problemLabel && item.label === r.problemLabel && <span className="text-sm text-muted-foreground"> · {copy.refine.problemTag.toLowerCase()}</span>}
             </div>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6 @3xl:grid-cols-2">
               <div className="flex flex-col gap-3">
                 <div className="text-sm font-medium">{copy.refine.before(r.fromVersion)}</div>
                 <Outputs outputs={byItem(r.before, item.key)} empty={copy.refine.noBefore} />
@@ -158,45 +159,47 @@ export function RefineReview({
         </Collapsible>
       </Section>
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              await onSave().finally(() => setBusy(false));
-            }}
-          >
-            {copy.refine.save(creation.nextVersion ?? r.fromVersion + 1)}
-          </Button>
-          <Button variant="outline" onClick={onDiscard} disabled={busy}>
-            {copy.common.discard}
-          </Button>
-        </div>
-        {!r.blockUpdate && (
-        <Field label={copy.refine.tryAgainLabel} htmlFor="refine-again" hint={copy.refine.tryAgainHint}>
+      <Card>
+        <CardContent className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-2">
-            <Input
-              id="refine-again"
-              className="max-w-xl flex-1"
-              value={instruction}
-              placeholder={copy.refine.tryAgainPlaceholder}
-              onChange={(e) => setInstruction(e.target.value)}
-            />
-            <Button variant="outline"
+            <Button
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                await onTryAgain(instruction).finally(() => setBusy(false));
-                setInstruction("");
+                await onSave().finally(() => setBusy(false));
               }}
             >
-              {copy.refine.tryAgain}
+              {copy.refine.save(creation.nextVersion ?? r.fromVersion + 1)}
+            </Button>
+            <Button variant="outline" onClick={onDiscard} disabled={busy}>
+              {copy.common.discard}
             </Button>
           </div>
-        </Field>
-        )}
-      </div>
+          {!r.blockUpdate && (
+          <Field label={copy.refine.tryAgainLabel} htmlFor="refine-again" hint={copy.refine.tryAgainHint}>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                id="refine-again"
+                className="max-w-xl flex-1"
+                value={instruction}
+                placeholder={copy.refine.tryAgainPlaceholder}
+                onChange={(e) => setInstruction(e.target.value)}
+              />
+              <Button variant="outline"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await onTryAgain(instruction).finally(() => setBusy(false));
+                  setInstruction("");
+                }}
+              >
+                {copy.refine.tryAgain}
+              </Button>
+            </div>
+          </Field>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

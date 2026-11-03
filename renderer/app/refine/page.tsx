@@ -7,7 +7,6 @@ import { QcChecks } from "@/components/results/QcChecks";
 import { RoutineBadges } from "@/components/routine/ContractView";
 import { Details } from "@/components/common/Details";
 import { EmptyState } from "@/components/common/EmptyState";
-import { Field } from "@/components/common/Field";
 import { Notice } from "@/components/common/Notice";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Preview } from "@/components/common/Preview";
@@ -19,7 +18,6 @@ import { doppel } from "@/lib/doppel";
 import { fileName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/common/ButtonLink";
-import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -57,21 +55,23 @@ function RefineForm({ setup, flowLink, initialRequest = "" }: { setup: RefineSet
   };
 
   return (
-    <div className="flex flex-col gap-10">
-      <Field label={copy.refine.requestLabel} htmlFor="refine-request" hint={copy.refine.requestHint}>
-        <Textarea
-          id="refine-request"
-          className="h-32"
-          placeholder={copy.refine.requestPlaceholder}
-          value={request}
-          onChange={(e) => setRequest(e.target.value)}
-        />
-      </Field>
+    <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="flex min-w-0 flex-col gap-6">
+        <Section title={copy.refine.requestLabel}>
+          <Textarea
+            id="refine-request"
+            className="h-32"
+            aria-label={copy.refine.requestLabel}
+            placeholder={copy.refine.requestPlaceholder}
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">{copy.refine.requestHint}</p>
+        </Section>
 
-      <Section title={copy.refine.attachmentsTitle}>
-        {problem && (
-          <Card data-selected size="sm" className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
-            <CardContent className="flex flex-col gap-3 sm:flex-row">
+        <Section title={copy.refine.attachmentsTitle}>
+          {problem && (
+            <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row">
               <div className="sm:w-56">
                 <Preview preview={problem.preview} status={problem.preview ? undefined : copy.common.noPreview} />
               </div>
@@ -86,64 +86,66 @@ function RefineForm({ setup, flowLink, initialRequest = "" }: { setup: RefineSet
                 <Details text={problem.errorDetail} />
                 {problem.qc && <QcChecks checks={problem.qc.checks} />}
               </div>
-            </CardContent>
-          </Card>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline"
-            onClick={async () => {
-              const files = await doppel().pickFiles({ extensions: IMAGE_EXTENSIONS, multiple: true });
-              if (files.length) setImages((list) => [...new Set([...list, ...files])].slice(0, 3));
-            }}
-            disabled={images.length >= 3}
-          >
-            {copy.refine.addImages}
-          </Button>
-          <span className="text-sm text-muted-foreground">{copy.refine.imagesHint}</span>
-        </div>
-        {images.length > 0 && (
-          <ul className="flex flex-col gap-1.5">
-            {images.map((f) => (
-              <li key={f} className="text-sm flex items-center gap-3">
-                <span className="truncate">{fileName(f)}</span>
-                <Button variant="link" className="h-auto p-0" onClick={() => setImages((list) => list.filter((x) => x !== f))}>
-                  {copy.newTask.remove}
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      <Section title={copy.refine.testItemsTitle}>
-        {setup.items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{copy.refine.noItems}</p>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground">{copy.refine.testItemsHint(setup.itemsSource ?? "")}</p>
-            <ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto">
-              {setup.items.map((i) => (
-                <li key={i.key}>
-                  <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground" data-disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS}>
-                    <Checkbox className="mt-0.5" checked={items.includes(i.key)} disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS} onCheckedChange={() => toggle(i.key)} />
-                    <span>
-                      {i.label}
-                      {problem?.itemKey === i.key && <span className="text-sm text-muted-foreground"> · {copy.refine.problemTag.toLowerCase()}</span>}
-                    </span>
-                  </label>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline"
+              onClick={async () => {
+                const files = await doppel().pickFiles({ extensions: IMAGE_EXTENSIONS, multiple: true });
+                if (files.length) setImages((list) => [...new Set([...list, ...files])].slice(0, 3));
+              }}
+              disabled={images.length >= 3}
+            >
+              {copy.refine.addImages}
+            </Button>
+            <span className="text-sm text-muted-foreground">{copy.refine.imagesHint}</span>
+          </div>
+          {images.length > 0 && (
+            <ul className="flex flex-col gap-1.5">
+              {images.map((f) => (
+                <li key={f} className="text-sm flex items-center gap-3">
+                  <span className="truncate">{fileName(f)}</span>
+                  <Button variant="link" className="h-auto p-0" onClick={() => setImages((list) => list.filter((x) => x !== f))}>
+                    {copy.newTask.remove}
+                  </Button>
                 </li>
               ))}
             </ul>
-          </>
-        )}
-      </Section>
+          )}
+        </Section>
+      </div>
 
-      {error && <Notice tone="error">{error}</Notice>}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={start} disabled={!request.trim() || starting}>
-          {starting ? copy.newTask.creating : copy.refine.start}
-        </Button>
-        <span className="text-sm text-muted-foreground">{copy.refine.costHint}</span>
+      <div className="flex min-w-0 flex-col gap-6">
+        <Section title={copy.refine.testItemsTitle}>
+          {setup.items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{copy.refine.noItems}</p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">{copy.refine.testItemsHint(setup.itemsSource ?? "")}</p>
+              <ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto">
+                {setup.items.map((i) => (
+                  <li key={i.key}>
+                    <label className="flex items-start gap-2 data-[disabled=true]:text-muted-foreground" data-disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS}>
+                      <Checkbox className="mt-0.5" checked={items.includes(i.key)} disabled={!items.includes(i.key) && items.length >= MAX_TEST_ITEMS} onCheckedChange={() => toggle(i.key)} />
+                      <span>
+                        {i.label}
+                        {problem?.itemKey === i.key && <span className="text-sm text-muted-foreground"> · {copy.refine.problemTag.toLowerCase()}</span>}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+
+        {error && <Notice tone="error">{error}</Notice>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={start} disabled={!request.trim() || starting}>
+            {starting ? copy.newTask.creating : copy.refine.start}
+          </Button>
+          <span className="text-sm text-muted-foreground">{copy.refine.costHint}</span>
+        </div>
       </div>
     </div>
   );
@@ -176,7 +178,7 @@ function RefineScreen() {
     [`routine=${id}`, runId && outputId ? `run=${runId}&output=${outputId}` : "", flowId && nodeId ? `flow=${flowId}&node=${nodeId}` : ""].filter(Boolean).join("&");
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-8">
       <PageHeader
         back={back}
         title={copy.refine.title(routine.name)}

@@ -49,7 +49,7 @@ function RunScreen() {
 
   const back = target.kind === "flow" ? `/flow?id=${target.id}` : `/routine?id=${target.id}`;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-8">
       <PageHeader back={{ href: back, label: setup.name }} title={copy.run.title(setup.name)} />
       {runId ? <RunInProgress target={target} runId={runId} /> : <RunSetupForm key={`${target.kind}:${target.id}`} setup={setup} keepPicks={params.get("picked") === "1"} />}
     </div>

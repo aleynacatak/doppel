@@ -1,8 +1,10 @@
 "use client";
 
 import type { App } from "@core/types";
+import { cn } from "cn";
 import { copy } from "@/copy";
 import { useOpenDocuments } from "@/lib/hooks";
+import { AppLogo } from "../common/AppLogo";
 import { Spinner } from "../common/Progress";
 import { Tag } from "../common/Tag";
 import { FigmaSetup } from "./FigmaSetup";
@@ -52,13 +54,17 @@ function ScriptBridgeBody({ app }: { app: App }) {
 
 export function AppConnectCard({ app }: { app: App }) {
   return (
-    <Card data-selected={app.status === "connected"} className="data-[selected=true]:ring-2 data-[selected=true]:ring-primary">
+    // Figma has the most to set up: it takes the whole row, with its two parts side by side.
+    <Card data-selected={app.status === "connected"} className={cn("data-[selected=true]:ring-2 data-[selected=true]:ring-primary", app.connection === "links-and-plugin" && "@3xl:col-span-2")}>
       <CardContent className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-base font-semibold">{app.name}</div>
-            <div className="text-sm text-muted-foreground">
-              {app.connection === "script-bridge" ? copy.connect.scriptBridge : copy.connect.linksAndPlugin} · {app.scriptLanguage}
+          <div className="flex min-w-0 items-center gap-3">
+            <AppLogo appId={app.id} className="size-10" />
+            <div className="min-w-0">
+              <div className="text-base font-semibold">{app.name}</div>
+              <div className="text-sm text-muted-foreground">
+                {app.connection === "script-bridge" ? copy.connect.scriptBridge : copy.connect.linksAndPlugin} · {app.scriptLanguage}
+              </div>
             </div>
           </div>
           <Tag tone={app.status === "connected" ? "filled" : "default"}>{copy.appStatus[app.status]}</Tag>

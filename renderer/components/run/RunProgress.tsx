@@ -29,7 +29,9 @@ export function RunProgress({ run, flow, onCancel }: { run: Run; flow?: Flow | n
         </div>
         <Button variant="outline" onClick={onCancel}>{copy.run.cancelRun}</Button>
       </div>
-      <AiCallCounter count={run.aiCalls} label={copy.run.aiCounterLabel} hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
+      <div className="max-w-md">
+        <AiCallCounter count={run.aiCalls} label={copy.run.aiCounterLabel} hint={run.qcMode === "auto_ai" ? copy.run.aiCounterReview : copy.run.aiCounterZero} />
+      </div>
       {run.mocked && <p className="text-sm text-muted-foreground">{copy.results.simulated}</p>}
       {flow && (
         <FlowCanvas

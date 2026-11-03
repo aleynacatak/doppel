@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ContractView, RoutineBadges } from "@/components/routine/ContractView";
+import { ContractSections, RoutineBadges } from "@/components/routine/ContractView";
 import { CostLine } from "@/components/routine/CostLine";
 import { RoutineDetails } from "@/components/routine/RoutineDetails";
 import { RoutineUsageList } from "@/components/routine/RoutineUsageList";
@@ -73,7 +73,7 @@ function RoutineScreen() {
     }
   };
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-6">
       {confirmDialog}
       <div className="flex flex-col gap-4">
         <PageHeader
@@ -170,34 +170,40 @@ function RoutineScreen() {
         </Section>
       )}
 
-      <Section title={copy.routine.stepsTitle}>
-        <StepsList steps={routine.steps} />
-      </Section>
+      <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-6">
+          <Section title={copy.routine.stepsTitle}>
+            <StepsList steps={routine.steps} />
+          </Section>
 
-      <ContractView routine={routine} />
+          {!starter && !readOnly && (
+            <Section title={copy.usage.title}>
+              <RoutineUsageList routineId={routine.id} />
+            </Section>
+          )}
 
-      {!starter && !readOnly && (
-        <Section title={copy.usage.title}>
-          <RoutineUsageList routineId={routine.id} />
-        </Section>
-      )}
+          {!starter && !readOnly && (
+            <Section title={copy.routine.historyTitle}>
+              <RunHistory runs={routine.runs} />
+            </Section>
+          )}
+        </div>
 
-      {!starter && !readOnly && (
-        <Section title={copy.routine.historyTitle}>
-          <RunHistory runs={routine.runs} />
-        </Section>
-      )}
+        <div className="flex min-w-0 flex-col gap-6">
+          <ContractSections routine={routine} />
 
-      <Section title={copy.routine.versionsTitle}>
-        <VersionHistory routineId={latest.id} versions={latest.versions} current={latest.version} viewing={readOnly ? routine.version : undefined} onRestore={starter ? undefined : restore} />
-      </Section>
+          <Section title={copy.routine.versionsTitle}>
+            <VersionHistory routineId={latest.id} versions={latest.versions} current={latest.version} viewing={readOnly ? routine.version : undefined} onRestore={starter ? undefined : restore} />
+          </Section>
 
-      {!starter && (
-        <Section title={copy.details.title}>
-          <div className="text-sm font-medium">{copy.details.madeWith}</div>
-          <RoutineDetails routine={routine} />
-        </Section>
-      )}
+          {!starter && (
+            <Section title={copy.details.title}>
+              <div className="text-sm font-medium">{copy.details.madeWith}</div>
+              <RoutineDetails routine={routine} />
+            </Section>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

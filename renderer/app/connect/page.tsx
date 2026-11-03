@@ -22,7 +22,7 @@ export default function ConnectPage() {
   return (
     <div className="flex flex-col gap-8">
       <PageHeader title={copy.connect.title} subtitle={copy.connect.subtitle} />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 @3xl:grid-cols-2">
         {apps.map((app) => (
           <AppConnectCard key={app.id} app={app} />
         ))}
