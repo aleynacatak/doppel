@@ -1,5 +1,5 @@
 import type { Role, UsageRecord } from "../ai/gateway";
-import type { ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
+import type { ExportSample, ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
 import type { ChatMessage, QuotaUpdate } from "./aiTransport";
 
 /** Everything that calls a model (implemented by ModelAiService, through the role router). */
@@ -45,7 +45,7 @@ export interface AiService {
   /** Which model serves a role now (for provenance). */
   modelFor?(role: Role, creationId?: string): string;
   /** Look at a trial run's result (stage "Checking result"). Returns extra checks per output id. */
-  reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>>;
+  reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[]; exportSample?: ExportSample }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>>;
   /** Visual judgement on one output ("Automatic check + AI review" on reruns). */
   reviewOutput(output: RunOutput, ctx: AiCallContext): Promise<QcCheck>;
   /** SAM: is <object> inside <region> in this output's preview? Two segment calls, each counted. */

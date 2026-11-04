@@ -5,7 +5,7 @@ import { PluginNotConnectedError } from "../../adapters/figma/pluginBridge";
 import { BridgeError } from "../../adapters/adobe/bridge";
 import type { DesignAppAdapter, StageItemInput, StageItemResult, StageRunContext, StageSession } from "../../adapters/types";
 import { fileAllowed } from "../../shared/ports";
-import type { AppId, FailureCause, MatchRule, NodeProgress, ParamValue, PortDef, Routine, RuleFinding, RunOutput, Stage, StageItemProgress } from "../types";
+import type { AppId, ExportSample, FailureCause, MatchRule, NodeProgress, ParamValue, PortDef, Routine, RuleFinding, RunOutput, Stage, StageItemProgress } from "../types";
 import { CancelledError, errorMessage } from "../util";
 import { expandValue, PlaceholderError, plain } from "../routines/placeholders";
 import { failureCause, plainError } from "./failures";
@@ -85,6 +85,8 @@ export interface NodeRunResult {
   values: Record<string, PortValue>;
   log: string[];
   cancelled: boolean;
+  /** Set by a creation's trial when it made only some of the exports. */
+  exportSample?: ExportSample;
 }
 
 interface PreparedItem {

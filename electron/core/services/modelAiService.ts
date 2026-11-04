@@ -1,7 +1,7 @@
 import { codeOf } from "../ai/answer";
 import { type AiGateway, type GatewayChatRequest, type Role, isModelImage } from "../ai/gateway";
 import type { ReasoningEffort } from "../ai/registry";
-import type { ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
+import type { ExportSample, ObjectCheckDef, QcCheck, RunOutput, Task } from "../types";
 import { COLUMNS_SCHEMA, COLUMNS_SYSTEM, FILES_SCHEMA, FILES_SYSTEM, REVIEW_SCHEMA, REVIEW_SYSTEM } from "./aiPrompts";
 import type { AiCallContext, AiService, TurnOptions } from "./aiService";
 import { AiError, type ChatMessage, type ContentPart, type SegmentBox } from "./aiTransport";
@@ -119,7 +119,7 @@ export class ModelAiService implements AiService {
     throw new AiError("ai_output_cut", "The AI's code was too long for one reply and got cut off, also when it tried again more briefly.", "retry");
   }
 
-  async reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[] }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
+  async reviewTrial(task: Task, draft: { name: string; description?: string; keyObjects?: string[]; customSteps?: string[]; exportSample?: ExportSample }, outputs: RunOutput[], ctx: AiCallContext): Promise<Record<string, QcCheck[]>> {
     const checks: Record<string, QcCheck[]> = {};
     const add = (id: string, check: QcCheck) => (checks[id] ??= []).push(check);
     // Only outputs with a rendered preview can be looked at.
@@ -130,11 +130,15 @@ export class ModelAiService implements AiService {
     const custom = draft.customSteps?.length
       ? `\nThese steps are custom code written for this routine, not tested building blocks; look closely at what they do to the outputs: ${draft.customSteps.map((s) => `"${s}"`).join("; ")}`
       : "";
+    // Fewer files than the request asks for are on purpose: the trial makes only some of the exports.
+    const sampled = draft.exportSample
+      ? `\nThis trial made only ${draft.exportSample.tried} of the routine's ${draft.exportSample.total} exports, to save time. A real run makes them all, so don't flag missing files.`
+      : "";
     const content: ContentPart[] = [
       {
         type: "text",
         // Doppl never overwrites or deletes the designer's files: the description says what the routine does instead.
-        text: `Request: "${task.request}"\nRoutine: ${draft.name}${draft.description ? ` (${draft.description}) Where it differs from the request, judge by this description: Doppl never overwrites or deletes the designer's files.` : ""}${custom}\nOutputs:\n${withImages
+        text: `Request: "${task.request}"\nRoutine: ${draft.name}${draft.description ? ` (${draft.description}) Where it differs from the request, judge by this description: Doppl never overwrites or deletes the designer's files.` : ""}${custom}${sampled}\nOutputs:\n${withImages
           .map((o) => `- id ${o.id}: ${o.label}${o.qc?.checks.filter((c) => !c.passed).map((c) => ` [rule check: ${c.reason ?? c.label}]`).join("") ?? ""}`)
           .join("\n")}`,
       },

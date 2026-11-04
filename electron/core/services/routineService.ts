@@ -28,6 +28,7 @@ import { checkReadiness } from "../flows/readiness";
 import { edgeIssues, routineOf } from "../flows/validateFlow";
 import { InputValueError, type PortValue, adaptValue, fileList, resolveInput } from "../flows/values";
 import { type RoutineContract, type ValidationSamples, validateRoutine } from "../routines/contract";
+import { sampleExports } from "../routines/trialSample";
 import {
   RoutineFormatError,
   TURN_KEYS,
@@ -1711,6 +1712,9 @@ export class RoutineService {
     await fs.mkdir(workDir, { recursive: true });
     const adapter = this.deps.registry.get(spec.appId);
     const settings: Record<string, ParamValue> = Object.fromEntries(draft.settings.map((s) => [s.key, (s.default ?? (s.type === "boolean" ? false : null)) as ParamValue]));
+    const routine = asRoutine(draft);
+    // A new routine only. A change or a fix has to show the result it was made for, whichever frame that is.
+    const sampled = c.mode === "create" && routine.kind === "actions" ? sampleExports(routine.actions ?? []) : undefined;
     let res: NodeRunResult;
     try {
       res = await new NodeRunner(this.deps.registry).run(
@@ -1718,7 +1722,7 @@ export class RoutineService {
           runId: trialId,
           nodeId: "trial",
           name: draft.name,
-          routine: asRoutine(draft),
+          routine: sampled?.sample ? { ...routine, actions: sampled.actions } : routine,
           inputs,
           joins,
           settings,
@@ -1744,6 +1748,8 @@ export class RoutineService {
     } finally {
       await adapter.endRun?.(trialId).catch(() => undefined);
     }
+    res.exportSample = sampled?.sample;
+    c.trialExports = sampled?.sample;
     // A Figma routine keeps the page its trial started from: later runs start there, whatever page is open.
     const page = res.items.map((i) => (i.data as { source?: FigmaPageRef } | undefined)?.source).find((x) => x?.id);
     if (page) draft.figmaPage = { id: page.id, name: page.name };
@@ -1757,7 +1763,11 @@ export class RoutineService {
 
   /** The trial result as the model sees it: per item, with errors, findings and a few previews. */
   private describeTrial(res: NodeRunResult, label: string): ContentPart[] {
+    const sample = res.exportSample;
     const summary = {
+      ...(sample
+        ? { note: `To save time, this trial made only ${sample.tried} of the ${sample.total} exports: the first and last of each kind. For the others it only checked that the node exists. A real run makes them all, so fewer files here is expected and not something to fix.` }
+        : {}),
       status: res.progress.status,
       error: res.progress.errorDetail ?? res.progress.error,
       items: res.items.map((i) => ({
@@ -2076,7 +2086,7 @@ export class RoutineService {
           reply(this.describeTrial(res, "The trial run on a sample item failed. Fix the routine and propose it again:"));
           continue;
         }
-        this.setStage(state, "run", "done", `${plural(res.outputs.length, "output")} from ${spec.revision ? copyItems(res.progress.total) : "1 sample item"}`);
+        this.setStage(state, "run", "done", res.exportSample ? `${res.exportSample.tried} of ${res.exportSample.total} exports tried` : `${plural(res.outputs.length, "output")} from ${spec.revision ? copyItems(res.progress.total) : "1 sample item"}`);
         if (typeof t.changeSummary === "string") changeSummary = t.changeSummary.trim().slice(0, 300);
         // A change whose results are the same files as the current version's changed nothing: never offered as done.
         if (spec.revision && !state.auto && c.refine && (await sameResults(c.refine.before, c.outputs))) {
@@ -2098,7 +2108,7 @@ export class RoutineService {
           this.setStage(state, "check", "active");
           // Steps written as custom code get a closer look from the reviewer (rule checks already ran on every output).
           const customSteps = draft.steps.filter((s) => s.kind === "custom").map((s) => s.plainLanguage);
-          const extra = await this.deps.ai.reviewTrial(c.task, { ...draft, customSteps }, c.outputs, ai);
+          const extra = await this.deps.ai.reviewTrial(c.task, { ...draft, customSteps, exportSample: res.exportSample }, c.outputs, ai);
           for (const output of c.outputs) mergeChecks(output, extra[output.id]);
           // The results miss part of the request (crop marks, a missing element…): send it back once, while there's room.
           const missed = c.outputs.flatMap((o) => (extra[o.id] ?? []).filter((ch) => ch.level === "visual" && !ch.passed).map((ch) => `${o.label}: ${ch.reason ?? ch.label}`));

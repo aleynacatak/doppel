@@ -223,6 +223,7 @@ export const copy = {
     resultHint: (n: number) => `Doppl ran the routine once on a temporary copy: ${plural(n, "output")}. Your document wasn't changed.`,
     resultHintStaged: (n: number) =>
       `Doppl ran every stage once, on a sample item, in scratch copies (deleted afterwards): ${plural(n, "output")}. Your files weren't changed.`,
+    resultHintSampled: (tried: number, total: number) => `To save time, it tried ${tried} of the ${total} exports. When you run the routine, it makes them all.`,
     proposedTitle: "Proposed routine",
     nameLabel: "Routine name",
     stepsTitle: "Steps",

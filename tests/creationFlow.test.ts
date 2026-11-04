@@ -24,6 +24,10 @@ import type { Creation } from "../electron/core/types";
 
 let dir: string;
 const matchedFiles: string[] = [];
+/** What the fake Figma was asked to run, per item. */
+const figmaActions: Record<string, any>[][] = [];
+/** What the reviewer was told about a sampled trial. */
+let reviewedSample: unknown;
 
 function fakeApp(id: "figma" | "photoshop"): DesignAppAdapter {
   return {
@@ -47,6 +51,7 @@ function fakeApp(id: "figma" | "photoshop"): DesignAppAdapter {
         return { ok: true, outputs: [{ key: `${input.key}-1`, label: path.basename(file), filePath: file }], values: { cutouts: [file] }, findings: [], log: [] };
       }
       const actions = (input.body as { actions: Record<string, any>[] }).actions;
+      figmaActions.push(actions);
       const image = actions.find((a) => a.action === "setImageFill")?.image?.file;
       if (image) matchedFiles.push(path.basename(image));
       const title = (input.item as { title?: string } | null)?.title ?? "card";
@@ -93,6 +98,17 @@ const labelRoutine = {
   actions_O: labelActions,
 };
 
+const exportRoutine = {
+  name: "Export screens",
+  app: "figma",
+  inputs: [{ key: "file", label: "Figma file", type: "document", required: true }],
+  outputs: [{ key: "screens", label: "Screens", type: "fileList", required: true, extensions: ["png"] }],
+  settings: [],
+  steps: ["Exports the screens at 2x"],
+  actions: JSON.stringify(["a", "b", "c", "d", "e"].map((frame) => ({ action: "exportNode", node: frame, format: "PNG", scale: 2, fileName: frame, output: "screens" }))),
+};
+const exportsIn = (actions: Record<string, any>[]) => actions.filter((a) => a.action === "exportNode").map((a) => a.node);
+
 /** A test's own AI answers for routine turns, in place of the scripted ones. */
 let answers: ((messages: ChatMessage[]) => Record<string, unknown>) | null = null;
 
@@ -117,7 +133,10 @@ function scriptedAi(log: string[]): AiService {
       const routine = figmaProposals === 1 ? { ...labelRoutine, iterate: undefined } : labelRoutine;
       return { "action": "propose_routine", "reason": "Fill labels", "routine_x": routine };
     },
-    reviewTrial: async () => ({}),
+    reviewTrial: async (_task, draft) => {
+      reviewedSample = draft.exportSample;
+      return {};
+    },
     reviewOutput: async () => ({ level: "visual", label: "AI visual review", passed: true }),
     checkObjectInRegion: async () => ({ level: "object", label: "x", passed: true }),
   };
@@ -131,6 +150,8 @@ let aiLog: string[];
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "doppl-create-"));
   matchedFiles.length = 0;
+  figmaActions.length = 0;
+  reviewedSample = undefined;
   aiLog = [];
   answers = null;
   const registry = new AdapterRegistry([fakeApp("photoshop"), fakeApp("figma")]);
@@ -185,6 +206,46 @@ describe("creating with the AI", () => {
     const saved = await service.save(c.id, { name: "Product cards" });
     expect(saved.routine).toMatchObject({ name: "Product cards", version: 1, createdWithAiCalls: 2, format: 2 });
     expect((await library.list()).map((r) => r.name)).toEqual(["Product cards"]);
+  });
+
+  it("tries a sample of a long export list, says so to the AI, the reviewer and the designer, and keeps every export", async () => {
+    const seen: string[] = [];
+    answers = (messages) => {
+      seen.push(JSON.stringify(messages));
+      return seen.length === 1 ? { action: "preview_routine", reason: "Try it", routine: exportRoutine } : { action: "propose_routine", reason: "Done", routine: exportRoutine };
+    };
+    const c = await service.create({ request: "Export the screens at 2x", references: [], appId: "figma", apps: [{ appId: "figma" }] });
+    const ready = await until(c.id, (x) => x.status === "ready");
+
+    expect(figmaActions.length).toBeGreaterThan(1);
+    for (const actions of figmaActions) {
+      expect(exportsIn(actions)).toEqual(["a", "e"]);
+      expect(actions.filter((a) => a.action === "inspectNode").map((a) => a.node)).toEqual(["b", "c", "d"]);
+    }
+    expect(seen[1]).toContain("only 2 of the 5 exports");
+    expect(reviewedSample).toEqual({ tried: 2, total: 5 });
+    expect(ready.trialExports).toEqual({ tried: 2, total: 5 });
+    expect(JSON.stringify(ready.stages)).toContain("2 of 5 exports tried");
+
+    expect(exportsIn(ready.draft!.actions!)).toEqual(["a", "b", "c", "d", "e"]);
+    const saved = await service.save(c.id, { name: "Screens" });
+    expect(exportsIn(saved.routine!.actions!)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("tries every export when changing a routine, since the change may be about any of them", async () => {
+    answers = () => ({ action: "propose_routine", reason: "Done", routine: exportRoutine });
+    const c = await service.create({ request: "Export the screens at 2x", references: [], appId: "figma", apps: [{ appId: "figma" }] });
+    await until(c.id, (x) => x.status === "ready");
+    const saved = await service.save(c.id, { name: "Screens" });
+
+    figmaActions.length = 0;
+    answers = () => ({ action: "propose_routine", reason: "Rename", changeSummary: "Renames the files", routine: exportRoutine });
+    const change = await service.refine({ routineId: saved.routine!.id, request: "Name frame c differently", images: [], testItems: [] });
+    for (let i = 0; i < 400 && !figmaActions.length; i++) await new Promise((r) => setTimeout(r, 5));
+    await service.cancel(change.id);
+
+    expect(figmaActions.length).toBeGreaterThan(0);
+    for (const actions of figmaActions) expect(exportsIn(actions)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
   it("says when a request isn't a task instead of inventing a routine, after an answer in the designer's own words", async () => {

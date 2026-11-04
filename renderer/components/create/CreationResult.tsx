@@ -21,7 +21,10 @@ export function CreationResult({
   return (
     <div className="flex flex-col gap-6">
       <Section plain title={copy.create.resultTitle}>
-        <p className="text-muted-foreground">{copy.create.resultHintStaged(creation.outputs.length)}</p>
+        <p className="text-muted-foreground">
+          {copy.create.resultHintStaged(creation.outputs.length)}
+          {creation.trialExports && ` ${copy.create.resultHintSampled(creation.trialExports.tried, creation.trialExports.total)}`}
+        </p>
         <OutputGrid>
           {creation.outputs.map((o) => (
             <OutputCard key={o.id} output={o} />

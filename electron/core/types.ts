@@ -1003,6 +1003,12 @@ export interface RoutineUsage {
   changes: ContractChange[];
 }
 
+/** A trial made only some of a routine's exports, to save time; the routine still makes them all. */
+export interface ExportSample {
+  tried: number;
+  total: number;
+}
+
 export interface Creation {
   id: string;
   mode: "create" | "repair" | "refine";
@@ -1025,6 +1031,8 @@ export interface Creation {
   activity?: string[];
   /** Trial run on one sample item: progress per item. */
   trial?: NodeProgress;
+  /** The last trial made only some of the exports. */
+  trialExports?: ExportSample;
   /** Something the designer can fix right away for creation to go on (status "waiting"). */
   needs?: {
     kind: "samples";
