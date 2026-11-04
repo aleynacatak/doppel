@@ -222,7 +222,7 @@ It works in turns, each one AI call. The Worker forwards structured JSON output 
 
 At most 15 AI calls per routine (the Worker's limit). The creation screen shows the live count and what the AI tried. Saving never calls AI.
 
-After two failed trials of one routine, Muse Wonder writes its code for the rest of that creation (`escalation` in `electron/ai/roles.json`); Muse Spark keeps planning. Wonder costs more per token, so it stays out of normal creations and can't be picked in Settings. If it can't answer (no access to it, an outage), Spark carries on. A model picked by hand for writing code stays, and the routine's Details show which models served each role.
+After two failed trials of one routine, Muse Wonder writes its code for the rest of that creation (`escalation` in `electron/ai/roles.json`); Muse Spark keeps planning. You can't pick Wonder in Settings because it's only a backup (`backupOnly` in `electron/ai/models.json`). It costs more per token ($4 in and $20 out per million tokens, against Spark's $1.25 and $4.25), and most routines never need it. On the list, a single choice could raise the cost of every creation, on your own key or against the demo's spending cap, so Doppl calls it only when Spark keeps failing. If it can't answer (no access to it, an outage), Spark carries on. A model picked by hand for writing code stays, and the routine's Details show which models served each role.
 
 ## Checks
 
