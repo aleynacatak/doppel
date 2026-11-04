@@ -40,6 +40,10 @@ interface Pending {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+  /** Starts the time limit again. It covers one step, not the whole request: Figma is still working when steps go by. */
+  restartTimer: () => void;
+  /** What the plugin last said it was doing. */
+  step?: string;
   onProgress?: (text: string) => void;
   started: number;
   label: string;
@@ -164,7 +168,11 @@ export class FigmaPluginBridge {
       } catch {
         return;
       }
-      if (!msg) return;
+      if (!msg) {
+        // Part of a long answer: its exports are still on their way.
+        if (session) for (const p of session.pending.values()) p.restartTimer();
+        return;
+      }
       if (!session) {
         if (msg.type !== "hello") return;
         if (typeof msg.code !== "string" || !sameCode(msg.code, this.pairingCode())) {
@@ -226,6 +234,8 @@ export class FigmaPluginBridge {
       const p = session.pending.get(msg.id);
       if (p && typeof msg.text === "string") {
         session.info.activity = msg.text;
+        p.step = msg.text;
+        p.restartTimer();
         p.onProgress?.(msg.text);
       }
     } else if (msg.type === "response" && typeof msg.id === "string") {
@@ -256,12 +266,26 @@ export class FigmaPluginBridge {
     const id = randomUUID();
     const label = options.label ?? String(payload.type ?? "request");
     const done = new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const expire = () => {
         session.pending.delete(id);
         this.cancel(sessionId, id);
-        reject(new Error(`Figma didn't finish within ${Math.round(options.timeoutMs / 1000)} seconds. You can raise the limit in Settings.`));
-      }, options.timeoutMs);
-      session.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer, onProgress: options.onProgress, started: Date.now(), label });
+        const seconds = Math.round(options.timeoutMs / 1000);
+        const where = pending.step ? ` of starting ${pending.step}` : "";
+        reject(new Error(`Figma didn't finish within ${seconds} seconds${where}. You can raise the limit in Settings.`));
+      };
+      const pending: Pending = {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        timer: setTimeout(expire, options.timeoutMs),
+        restartTimer: () => {
+          clearTimeout(pending.timer);
+          pending.timer = setTimeout(expire, options.timeoutMs);
+        },
+        onProgress: options.onProgress,
+        started: Date.now(),
+        label,
+      };
+      session.pending.set(id, pending);
     });
     const frames = toFrames({ type: "request", id, payload });
     for (const frame of frames) session.ws.send(frame);
