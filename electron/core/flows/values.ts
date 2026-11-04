@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { DataFileError, type ReadAs, listFolderFiles, readDataFile } from "../helpers/dataFiles";
 import { unreadableImages } from "../helpers/imageInfo";
@@ -41,6 +42,14 @@ export interface ItemProblem {
 
 /** A problem with an input value as a whole (a missing file, a data file without the needed columns). */
 export class InputValueError extends Error {}
+
+/** Picked paths that aren't there now (moved, renamed): running with the same files finds these. */
+async function goneFrom(paths: string[]) {
+  const there = await Promise.all(paths.map((p) => fs.access(p).then(() => true, () => false)));
+  return paths.filter((_, i) => !there[i]);
+}
+
+const goneText = (file: string) => `${path.basename(file)} isn't there anymore: it may have been moved or renamed.`;
 
 const LABEL_FIELDS = ["name", "title", "product", "sku", "id", "label", "code"];
 
@@ -114,8 +123,13 @@ export async function resolveInput(
       const wrong = files.filter((f) => !fileAllowed(f, port.extensions));
       if (wrong.length) throw new InputValueError(`${port.label} takes ${port.extensions!.join(", ")} files; ${path.basename(wrong[0])} isn't one.`);
       // An image that holds no picture fails here, on its own, as the file's problem; the others run.
+      const gone = await goneFrom(files);
+      if (gone.length === files.length && gone.length > 0) {
+        throw new InputValueError(gone.length === 1 ? goneText(gone[0]) : `${port.label}: none of the ${gone.length} picked files are there anymore. They may have been moved or renamed.`);
+      }
       const list = fileList(files) as Extract<PortValue, { kind: "list" }>;
-      const unreadable = await unreadableImages(files);
+      const unreadable = await unreadableImages(files.filter((f) => !gone.includes(f)));
+      for (const f of gone) unreadable.set(f, goneText(f));
       if (!unreadable.size) return { value: list, problems: [] };
       const bad = (i: ListItem) => unreadable.has(String(i.value));
       return {
@@ -126,11 +140,14 @@ export async function resolveInput(
     case "file": {
       if (typeof raw !== "string") throw new InputValueError(`${port.label}: pick a file.`);
       if (!fileAllowed(raw, port.extensions)) throw new InputValueError(`${port.label} takes ${port.extensions!.join(", ")} files; ${path.basename(raw)} isn't one.`);
+      if ((await goneFrom([raw])).length) throw new InputValueError(goneText(raw));
       const unreadable = (await unreadableImages([raw])).get(raw);
       if (unreadable) throw new InputValueError(unreadable);
       return { value: { kind: "value", type: "file", value: raw }, problems: [] };
     }
     case "folder":
+      if ((await goneFrom([String(raw)])).length) throw new InputValueError(goneText(String(raw)));
+      return { value: { kind: "value", type: port.type, value: String(raw) }, problems: [] };
     case "document":
     case "text":
       return { value: { kind: "value", type: port.type, value: String(raw) }, problems: [] };

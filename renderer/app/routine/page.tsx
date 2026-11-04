@@ -59,6 +59,8 @@ function RoutineScreen() {
     }
   };
 
+  // Its own latest run: one that ran inside a flow has that flow's inputs.
+  const lastOwnRun = latest.runs.find((r) => !r.inFlow);
   const app = apps.find((a) => a.id === routine.appId);
   const starter = !!routine.starter;
   const legacy = !!app && (app.id === "figma" ? routine.kind !== "actions" : routine.kind !== "script");
@@ -101,6 +103,7 @@ function RoutineScreen() {
                 <>
                   {starter && <Button variant="outline" onClick={duplicate}>{copy.routine.duplicate}</Button>}
                   <ButtonLink href={`/refine?routine=${routine.id}`}>{starter ? copy.refine.duplicateAndRefine : copy.refine.button}</ButtonLink>
+                  {lastOwnRun && <ButtonLink href={`/run?routine=${routine.id}&from=${lastOwnRun.id}`}>{copy.run.sameFilesButton}</ButtonLink>}
                   <ButtonLink href={`/run?routine=${routine.id}`} variant="default">
                     {copy.routine.run}
                   </ButtonLink>

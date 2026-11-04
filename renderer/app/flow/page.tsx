@@ -209,6 +209,11 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
     router.push(`/run?flow=${flow.id}${Object.keys(picked).length ? "&picked=1" : ""}`);
   };
 
+  const runSameFiles = async () => {
+    if (!lastRun || (dirty && !(await save()))) return;
+    router.push(`/run?flow=${flow.id}&from=${lastRun.id}`);
+  };
+
   const makeCompatible = async (edgeId: string, side: "source" | "target") => {
     if (dirty && !(await save())) return;
     try {
@@ -285,6 +290,11 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
             </Button>
           ) : (
             ctx && <span className="text-sm text-muted-foreground">{copy.flow.ready}</span>
+          )}
+          {lastRun && !lastRun.mocked && (
+            <Button variant="outline" onClick={runSameFiles} disabled={!ctx || issues.length > 0 || saving}>
+              {copy.run.sameFilesButton}
+            </Button>
           )}
           <Button onClick={run} disabled={!ctx || issues.length > 0 || saving} title={issues.length ? issues.map((i) => i.message).join("\n") : undefined}>
             {copy.flow.run}

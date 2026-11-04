@@ -125,6 +125,7 @@ function ResultsScreen() {
   const isFlow = run.target.kind === "flow";
   const back = isFlow ? `/flow?id=${run.target.id}` : `/routine?id=${run.target.id}`;
   const again = `/run?${run.target.kind}=${run.target.id}`;
+  const sameFiles = run.mocked ? again : `${again}&from=${run.id}`;
   const failedOutputs = run.outputs.filter((o) => o.status === "failed");
   const failedCount = failedOutputs.length;
   // Items that failed on their own files or data fail the same way again: the next step is to change the files.
@@ -192,7 +193,16 @@ function ResultsScreen() {
         title={copy.results.title(run.name)}
         subtitle={`${formatDateTime(run.startedAt)} · ${copy.common.version(run.version)} · ${copy.run.qcModes[run.qcMode].label}`}
         tags={<Tag tone={run.status === "failed" ? "strong" : "default"}>{copy.runStatus[run.status]}</Tag>}
-        actions={<ButtonLink href={again}>{copy.results.runAgain}</ButtonLink>}
+        actions={
+          <>
+            {!run.mocked && (
+              <ButtonLink href={sameFiles} variant="default">
+                {copy.run.sameFilesButton}
+              </ButtonLink>
+            )}
+            <ButtonLink href={again}>{copy.run.newFilesButton}</ButtonLink>
+          </>
+        }
       />
       {run.mocked && <Notice>{copy.results.simulated}</Notice>}
       <p className="text-base font-semibold">{copy.results.itemsSummary(summary)}</p>
@@ -213,7 +223,7 @@ function ResultsScreen() {
           title={copy.results.partialTitle(failedCount)}
           actions={
             filesOnly ? (
-              <ButtonLink href={again} variant="default">
+              <ButtonLink href={sameFiles} variant="default">
                 {copy.results.runWithOtherFiles}
               </ButtonLink>
             ) : (
