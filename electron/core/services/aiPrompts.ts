@@ -81,14 +81,14 @@ const QUESTION_FIELD = {
 export const ROUTINE_TURN_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["ask_question", "decline", "inspect", "preview_routine", "propose_routine"] },
+    action: { type: "string", enum: ["ask_for_files", "ask_question", "decline", "inspect", "preview_routine", "propose_routine"] },
     app: { type: "string" },
     depth: { type: "number" },
     document: { type: "string" },
     nodes: { type: "array", items: { type: "string" }, description: "inspect: layers by name, path or id" },
     question: QUESTION_FIELD,
     reason: { type: "string", description: "One short sentence for the designer: what you are doing (decline: why)" },
-    routine: { type: "object", description: "preview_routine, propose_routine: the complete routine (see the format)" },
+    routine: { type: "object", description: "preview_routine, propose_routine: the complete routine (see the format); ask_for_files: only its \"inputs\"" },
     sampleItemIndex: { type: "number" },
   },
   required: ["action"],
@@ -130,7 +130,7 @@ export const LEGACY_TURN_FORMAT: TurnFormat = { codeFormat: "inline", planField:
 const PLAN_FIELD = {
   type: "string",
   description:
-    "Write this first, 2–4 short sentences: what the routine will do, which helpers it uses, and which edge cases it handles (inspect, ask_question: what you want to learn).",
+    "Write this first, 2–4 short sentences: what the routine will do, which helpers it uses, and which edge cases it handles (inspect, ask_for_files, ask_question: what you want to learn).",
 };
 
 /** The schema of a creation or refine turn in the given format (canonical field names; see orderFields). */
@@ -146,7 +146,7 @@ export function routineTurnSchema(revision: boolean, format: TurnFormat): Record
   if (format.codeFormat === "separate") {
     properties.routine = {
       type: "object",
-      description: `preview_routine, ${revision ? "propose_revision" : "propose_routine"}: the complete ${revision ? "revised " : ""}routine (see the format) with "@code:1" as its "script" (Figma: "actions"); Doppl asks for the code next`,
+      description: `preview_routine, ${revision ? "propose_revision" : "propose_routine"}: the complete ${revision ? "revised " : ""}routine (see the format) with "@code:1" as its "script" (Figma: "actions"); Doppl asks for the code next${revision ? "" : '; ask_for_files: only its "inputs"'}`,
     };
   }
   return { type: "object", properties, required: format.planField ? ["plan", ...base.required] : base.required };
@@ -156,12 +156,12 @@ export function routineTurnSchema(revision: boolean, format: TurnFormat): Record
 export const PLAN_TURN_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["ask_question", "decline", "inspect", "propose_plan"] },
+    action: { type: "string", enum: ["ask_for_files", "ask_question", "decline", "inspect", "propose_plan"] },
     app: { type: "string" },
     depth: { type: "number" },
     document: { type: "string" },
     nodes: { type: "array", items: { type: "string" }, description: "inspect: layers by name, path or id" },
-    plan: { type: "object", description: "propose_plan: the complete plan (see the format)" },
+    plan: { type: "object", description: "propose_plan: the complete plan (see the format); ask_for_files: only \"inputs\"" },
     question: QUESTION_FIELD,
     reason: { type: "string", description: "One short sentence for the designer: what you are doing (decline: why)" },
   },
@@ -321,7 +321,16 @@ const HELPER_TOOLS = `- "search_helpers": finds building blocks by what they sho
   blocks by id ("ids"). The guide lists every block in one line; use them instead of writing that code yourself.
 `;
 
+/** The first thing the AI decides, for a routine and for a flow's plan. */
+const ASK_FOR_FILES = (field: string) => `"ask_for_files": read the request first. When the work may need files you haven't got (a template, data, images,
+  a document to work from: nothing about them under "Sample data", "Inside", "Folder" or "Open documents"), make this your
+  FIRST answer, before you plan anything. "${field}" holds only "inputs": each with key, label, type (file, fileList, rows
+  or folder) and extensions. Doppl asks the designer, who can go on without them, and shows you what they hold (a data
+  file's columns and first rows, an InDesign template's text). Once only. Not when you already have what you need, or
+  when the work makes everything itself.`;
+
 const CREATE_ACTIONS = (maxTurns: number, planKey?: string, tools = false) => `"action" is one of:${tools ? `\n${HELPER_TOOLS.trimEnd()}` : ""}
+- ${ASK_FOR_FILES("routine")}
 - "inspect": a deeper look at the document: app, document (its id below), nodes (layers by name, path or id, several
   at once) and depth. At most 3 inspections in total; the document below already includes its structure.
 - "preview_routine": runs your draft "routine" once on one sample item (sampleItemIndex, 0-based) in a scratch copy
@@ -337,6 +346,7 @@ const CREATE_ACTIONS = (maxTurns: number, planKey?: string, tools = false) => `"
 - "decline": only as your first answer, when the request isn't design work to automate in the app (a greeting, a
   question, small talk, nothing to make or change). In "reason", say so in one plain sentence. Never invent a task.
 Examples of answers:
+{${planKey ? `"${planKey}":"The request needs the card template and the contact list, and I have neither.",` : ""}"action":"ask_for_files","reason":"Ask for the template and the data","routine":{"inputs":[{"key":"template","label":"Card template","type":"file","extensions":["indd"]},{"key":"contacts","label":"Contact list","type":"rows"}]}}
 {${planKey ? `"${planKey}":"See which layers the card has.",` : ""}"action":"inspect","app":"<app>","depth":3,"document":"<document id>","nodes":["Card"],"reason":"Look at the card template"}
 {${planKey ? `"${planKey}":"Duplicates the card per row, fills title and photo with the helpers, exports PNG; rows without a photo fail with a clear error.",` : ""}"action":"propose_routine","reason":"Propose the routine","routine":{…}}
 You have at most ${maxTurns} answers; every reply from Doppl starts with how many are left. Propose a complete routine
@@ -474,10 +484,13 @@ The plan:
   spaces, dashes, accents). Follow the pairing in "Inputs Doppl checked" when there is one.
 
 ${answerFormat(["action", "app", "depth", "document", "nodes", "plan", "question", "reason"])}
-"action" is "inspect" (a deeper look at a document: app, document, nodes, depth; at most 3), "propose_plan" (with the
+"action" is one of:
+- ${ASK_FOR_FILES("plan")}
+- "inspect" (a deeper look at a document: app, document, nodes, depth; at most 3), "propose_plan" (with the
 complete "plan"; Doppl checks that it connects and sends problems back), "ask_question" (one "question" with 2–4
 options, only as your first answer) or "decline" (only as your first answer, when the request isn't design work to
 automate: a greeting, a question, small talk; say so in "reason", never invent a task). Example answers:
+{"action":"ask_for_files","plan":{"inputs":[{"key":"contacts","label":"Contact list","type":"rows"}]},"reason":"Ask for the data"}
 {"action":"inspect","app":"figma","depth":3,"document":"<document id>","nodes":["Label"],"reason":"Look at the label template"}
 {"action":"propose_plan","plan":{…},"reason":"Plan the flow"}
 You have at most ${maxTurns} answers. Propose the plan early.
@@ -532,6 +545,8 @@ export interface TaskFacts {
   folders: { path: string; files: string[] }[];
   samples: { file: string; columns: string[]; rows: Record<string, unknown>[]; totalRows: number; errors: string[] }[];
   documents: { appId: string; id: string; name: string; inspection: unknown }[];
+  /** What's inside attached files an app can read (a template's text). From folders, only names are shared. */
+  files?: { appId: string; file: string; contents: unknown }[];
   /** The input check: what was attached, how it pairs and what the designer decided (see inputs/inputCheck). */
   inputs?: string[];
 }
@@ -541,14 +556,19 @@ const clip = (value: unknown, max: number) => {
   return text.length > max ? `${text.slice(0, max)}… (truncated)` : text;
 };
 
+const sampleLine = (s: TaskFacts["samples"][number]) =>
+  `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")})${s.rows.length ? `. First rows: ${clip(s.rows, 3000)}` : " (in a folder: only its columns are shared)"}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`;
+
+const fileLine = (x: NonNullable<TaskFacts["files"]>[number]) => `Inside ${x.file} (Doppl read it on this Mac; the file stays as it is): ${clip(x.contents, 6000)}`;
+
+/** The lines for sample files the model hears about after its task message. */
+export const attachedLines = (samples: TaskFacts["samples"], files: NonNullable<TaskFacts["files"]>) => [...samples.map(sampleLine), ...files.map(fileLine)];
+
 function factLines(f: TaskFacts, inspectionChars: number) {
   return [
     `Request: "${f.request}"`,
     `Reference files (names only): ${f.references.length ? f.references.map((r) => r.split("/").pop()).join(", ") : "none"}`,
-    ...f.samples.map(
-      (s) =>
-        `Sample data ${s.file} (${s.totalRows} rows; columns: ${s.columns.join(", ")})${s.rows.length ? `. First rows: ${clip(s.rows, 3000)}` : " (in a folder: only its columns are shared)"}${s.errors.length ? `. Row problems: ${s.errors.slice(0, 5).join(" | ")}` : ""}`,
-    ),
+    ...attachedLines(f.samples, f.files ?? []),
     ...f.folders.map((d) => `Folder ${d.path.split("/").pop()} (file names only): ${d.files.slice(0, 40).join(", ") || "empty"}`),
     ...(f.inputs?.length ? ["Inputs Doppl checked (follow these; the designer confirmed the choices marked so):", ...f.inputs.map((l) => `- ${l}`)] : []),
     "Open documents:",

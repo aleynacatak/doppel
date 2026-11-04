@@ -285,6 +285,27 @@ describe("creating with the AI", () => {
     expect(seen[4]).toContain("Don't decline now: propose the routine.");
   });
 
+  it("lets the AI ask for files before it plans a flow, and shows it what they hold", async () => {
+    await fs.writeFile(path.join(dir, "products.csv"), "title,photo\nPlum,plum.jpg\n");
+    let turn = 0;
+    const seen: string[] = [];
+    answers = (messages) => {
+      seen.push(String(messages.at(-1)!.content));
+      turn++;
+      if (turn === 1) return { action: "ask_for_files", reason: "Ask for the product list", plan: { inputs: [{ key: "products", label: "Product list", type: "rows" }] } };
+      return { action: "propose_plan", plan: JSON.parse(JSON.stringify(PLAN_FORMAT_EXAMPLE)), reason: "Plan the flow" };
+    };
+    const c = await service.create({ request: "Cut out photos and make labels", references: [], appId: "photoshop", apps: [{ appId: "photoshop", noDocument: true }, { appId: "figma" }] });
+    const waiting = await until(c.id, (x) => x.status === "waiting" && x.needs?.kind === "samples");
+    expect(waiting.needs).toMatchObject({ optional: true, inputs: [{ key: "products", label: "Product list", type: "rows" }] });
+    expect(waiting.plan).toBeUndefined();
+    await service.addSamples(c.id, { files: [path.join(dir, "products.csv")], folders: [] });
+    await service.confirmSamples(c.id);
+    await until(c.id, (x) => !!x.plan);
+    expect(seen[1]).toContain("columns: title, photo");
+    expect(seen[1]).toContain("Plum");
+  });
+
   it("asks for missing sample files instead of failing, then goes on without asking the AI again", async () => {
     const c = await service.create({
       request: "Cut out the product photos in a folder",
@@ -298,7 +319,7 @@ describe("creating with the AI", () => {
       message: "Doppl needs sample “Photos” to try this routine. Attach them to go on; the AI's work so far is kept.",
       inputs: [{ key: "photos", label: "Photos", type: "fileList", extensions: ["jpg"] }],
     });
-    expect(waiting.stages.find((s) => s.key === "run")).toMatchObject({ status: "active", detail: "Waiting for sample files" });
+    expect(waiting.stages.find((s) => s.key === "write")).toMatchObject({ status: "active", detail: "Waiting for sample files" });
     // From two places: a folder of notes (fills nothing) and the photos; the designer removes the first and goes on.
     const notes = path.join(dir, "notes");
     await fs.mkdir(notes);

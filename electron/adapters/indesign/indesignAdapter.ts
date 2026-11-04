@@ -21,11 +21,15 @@ import {
   PDF_PRESETS,
   PREPARE_COPY,
   PROBE,
+  READ_TEXT,
   RULE_CHECKS,
   SAVE_DOCUMENT,
   wrapRoutine,
 } from "./jsx/scripts";
 
+
+/** How much of a document's text the model sees. */
+const TEXT_LIMITS = { maxFrames: 40, maxChars: 300 };
 
 interface Options {
   /** Seconds before a script is abandoned (Settings → script timeout). */
@@ -243,7 +247,14 @@ export class InDesignAdapter implements DesignAppAdapter {
   }
 
   async inspectForModel(docId: string) {
-    return this.inspectDocument(docId);
+    const summary = await this.inspectDocument(docId);
+    const text = await this.call<unknown>(READ_TEXT, { docId, ...TEXT_LIMITS }, 60).catch(() => null);
+    return text ? { ...summary, text } : summary;
+  }
+
+  async readFileForModel(file: string) {
+    if (!/\.(indd|indt|idml)$/i.test(file) || !(await indesignBridge.isRunning())) return null;
+    return this.call<unknown>(READ_TEXT, { path: file, ...TEXT_LIMITS }, 60);
   }
 
   /** Makes the copy once per stage (like a single-script run); every item then runs on it. */

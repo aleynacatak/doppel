@@ -220,4 +220,6 @@ export interface DesignAppAdapter {
   capabilityManifest(options?: ManifestOptions): string;
   /** Deeper look for the model ("inspect_<app>" tool), e.g. one Figma node with its children. */
   inspectForModel(docId: string, args: Record<string, unknown>): Promise<unknown>;
+  /** What's inside a file a routine would open (an InDesign template's text), read without changing it. Null: not a file this app reads. */
+  readFileForModel?(file: string): Promise<unknown>;
 }

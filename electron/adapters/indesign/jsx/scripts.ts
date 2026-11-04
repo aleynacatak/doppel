@@ -111,6 +111,55 @@ export const INSPECT = String.raw`function (input) {
 }`;
 
 /** Saves a copy of the document (next to the original, or in Doppl's folder) and opens it. */
+/**
+ * The text of a document (input.docId) or of a file a routine will open (input.path, a template), for the model: every
+ * text frame on its pages and parent pages. A file opens hidden and closes without saving; a document the designer has
+ * open stays open and is only read.
+ */
+export const READ_TEXT = String.raw`function (input) {
+  var doc = null;
+  var file = null;
+  if (input.docId) {
+    doc = DopplLib.findDocument(input.docId);
+  } else {
+    file = new File(input.path);
+    if (!file.exists) { throw new Error("The file couldn't be found: " + file.displayName); }
+    var docs = DopplLib.all(app.documents);
+    for (var i = 0; i < docs.length; i++) {
+      try { if (docs[i].saved && docs[i].fullName.fsName === file.fsName) { doc = docs[i]; } } catch (e) {}
+    }
+  }
+  var mine = !doc;
+  if (mine) {
+    doc = app.open(file, false);
+    if (doc instanceof Array) { doc = doc[0]; }
+  }
+  var frames = [];
+  var more = 0;
+  function read(items, parent) {
+    for (var j = 0; j < items.length; j++) {
+      try {
+        if (items[j].constructor.name !== "TextFrame") { continue; }
+        if (frames.length >= input.maxFrames) { more++; continue; }
+        var page = parent;
+        if (!page) { try { page = items[j].parentPage ? "page " + items[j].parentPage.name : "off the page"; } catch (e2) { page = "off the page"; } }
+        var frame = { where: page, text: String(items[j].contents).slice(0, input.maxChars) };
+        if (items[j].name) { frame.name = items[j].name; }
+        frames.push(frame);
+      } catch (e3) {}
+    }
+  }
+  try {
+    var spreads = DopplLib.all(doc.spreads);
+    for (var s = 0; s < spreads.length; s++) { read(spreads[s].allPageItems, null); }
+    var parents = DopplLib.all(doc.masterSpreads);
+    for (var m = 0; m < parents.length; m++) { read(parents[m].allPageItems, "parent page " + parents[m].name); }
+    return { pageCount: doc.pages.length, textFrames: frames, framesNotShown: more };
+  } finally {
+    if (mine) { doc.close(SaveOptions.NO); }
+  }
+}`;
+
 export const PREPARE_COPY = String.raw`function (input) {
   var doc = DopplLib.findDocument(input.docId);
   var base = DopplLib.baseName(doc.name);

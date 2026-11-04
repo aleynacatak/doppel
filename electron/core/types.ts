@@ -1039,6 +1039,8 @@ export interface Creation {
     message: string;
     /** The inputs that have no sample yet. */
     inputs: { key: string; label: string; type: PortType; extensions?: string[] }[];
+    /** The AI asked for these before planning: its guess, so the designer can go on without them. */
+    optional?: boolean;
     /** What the designer added so far (from as many places as needed), and which inputs each fills; nothing goes on until they confirm. */
     added?: { path: string; isFolder: boolean; fills: { key: string; label: string; count: number }[] }[];
   };

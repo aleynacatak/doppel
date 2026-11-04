@@ -22,7 +22,10 @@ In scope:
   ctx.marginBounds(page) -> [top, left, bottom, right] live area
   ctx.savePrefs(prefsObject, [propertyNames]) -> saved; ctx.restorePrefs(prefsObject, saved)  (always restore app-wide prefs in finally)
   ctx.preflight({minPpi}) -> findings     overset text, missing links/fonts, low-res images
-  ctx.open(path, {showWindow?}) -> Document   opens a file the routine works on (a template…), hidden by default
+  ctx.open(path, {showWindow?}) -> Document   opens a file the routine works on (a template…), hidden by default.
+                                       Doppl shows you a template's text once it has the file: write for that text.
+                                       A template usually holds plain sample text ("Name Surname"), not {{marks}}.
+                                       A value you can't place is an Error: a result never keeps the sample text
   ctx.close(d)                         checks d (overset text, fonts, links, images), then closes it without saving;
                                        every document the routine opens or makes closes this way (never doc)
   ctx.exportPdf(d, path, {preset?, cropMarks?, bleedMarks?, registrationMarks?, useDocumentBleed?, pages?}) -> File

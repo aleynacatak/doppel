@@ -11,7 +11,7 @@ const DATA_EXTENSIONS = ["csv", "tsv", "txt", "json", "xlsx"];
 
 /**
  * Creation is waiting for sample files: the designer adds files or folders from as many places as needed, sees what
- * each fills, removes mistakes, and goes on with them (no new AI call).
+ * each fills, removes mistakes, and goes on with them. Files the AI asked for before planning can also be left out.
  */
 export function NeedsSamples({ creation, onChange }: { creation: Creation; onChange: (c: Creation) => void }) {
   const needs = creation.needs!;
@@ -38,7 +38,7 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
   };
   const added = needs.added ?? [];
   const filled = new Set(added.flatMap((a) => a.fills.map((f) => f.key)));
-  const ready = added.length > 0 && needs.inputs.every((i) => filled.has(i.key));
+  const ready = added.length > 0 && (needs.optional || needs.inputs.every((i) => filled.has(i.key)));
   const act = async (call: () => Promise<Creation>) => {
     setError(null);
     setBusy(true);
@@ -53,12 +53,14 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
   return (
     <Notice
       tone="warning"
-      title={copy.create.needsSamplesTitle}
+      title={needs.optional ? copy.create.askFilesTitle : copy.create.needsSamplesTitle}
       actions={
         <>
-          <Button disabled={busy || !ready} onClick={() => act(() => doppel().confirmSamples(creation.id))}>
-            {copy.create.useSamples}
-          </Button>
+          {(!needs.optional || added.length > 0) && (
+            <Button disabled={busy || !ready} onClick={() => act(() => doppel().confirmSamples(creation.id))}>
+              {copy.create.useSamples}
+            </Button>
+          )}
           {canPickFiles && (
             <Button
               variant="outline"
@@ -82,6 +84,11 @@ export function NeedsSamples({ creation, onChange }: { creation: Creation; onCha
               }
             >
               {copy.create.attachFolder}
+            </Button>
+          )}
+          {needs.optional && added.length === 0 && (
+            <Button variant="outline" disabled={busy} onClick={() => act(() => doppel().confirmSamples(creation.id))}>
+              {copy.create.goOnWithoutFiles}
             </Button>
           )}
         </>

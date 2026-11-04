@@ -87,6 +87,7 @@ import {
   planTaskMessage,
   refineTaskMessage,
   routineSystemPrompt,
+  attachedLines,
   routineTaskMessage,
 } from "./aiPrompts";
 import { contractChanges, diffSteps } from "../../shared/routineDiff";
@@ -121,14 +122,16 @@ const MAX_NODES_PER_INSPECT = 8;
 const REVIEW_RESERVE = 3;
 const RESULT_CHARS = 9000;
 const DATA_EXTENSIONS = ["csv", "tsv", "txt", "json", "xlsx"];
-const ROUTINE_ACTIONS = ["ask_question", "decline", "inspect", "preview_routine", "propose_routine"];
+const ROUTINE_ACTIONS = ["ask_for_files", "ask_question", "decline", "inspect", "preview_routine", "propose_routine"];
 const REVISION_ACTIONS = ["ask_question", "decline", "inspect", "preview_routine", "propose_revision"];
 /** Refine: images shown to the AI, and test items to try a change on. */
 const MAX_REFINE_IMAGES = 3;
 const MAX_TEST_ITEMS = 3;
-const PLAN_ACTIONS = ["ask_question", "decline", "inspect", "propose_plan"];
+const PLAN_ACTIONS = ["ask_for_files", "ask_question", "decline", "inspect", "propose_plan"];
 /** The AI may ask a question in its first answers: one, and a follow-up when the answer left it open. */
 const MAX_AI_QUESTIONS = 2;
+/** The inputs the AI can ask the designer's files for. */
+const FILE_INPUTS: string[] = ["file", "fileList", "rows", "folder"];
 /** The input check asks at most this many questions; past them, Doppl's best guesses stand (and are told to the AI). */
 const MAX_INPUT_QUESTIONS = 3;
 
@@ -169,6 +172,10 @@ interface LoopProgress {
   asked: number;
   inspections: number;
   lastProblem: string;
+  /** Sample files the model has been told about. */
+  told: string[];
+  /** The AI asked for files (once). */
+  filesAsked?: boolean;
 }
 
 /** What Doppl read for the task: documents, sample data, folders. */
@@ -896,11 +903,12 @@ export class RoutineService {
     return state.creation;
   }
 
-  /** The designer is done adding samples: the creation goes on with them (the same trial, no new AI call). */
+  /** The designer is done adding samples, or goes on without the files the AI asked for: the creation goes on. */
   async confirmSamples(id: string): Promise<Creation> {
     const state = this.requireState(id);
-    const added = state.creation.needs?.added ?? [];
-    if (!added.length) return state.creation;
+    const needs = state.creation.needs;
+    const added = needs?.added ?? [];
+    if (!added.length && !needs?.optional) return state.creation;
     state.attach?.({ files: added.filter((a) => !a.isFolder).map((a) => a.path), folders: added.filter((a) => a.isFolder).map((a) => a.path) });
     return state.creation;
   }
@@ -1321,10 +1329,11 @@ export class RoutineService {
     c.task.apps = apps;
 
     const read = await this.readSamples(c.task);
+    const files = await this.readAttached(c.task);
     const versions: Record<string, string> = {};
     for (const a of apps) versions[a.appId] = (await registry.get(a.appId).getAppVersion().catch(() => null)) ?? "";
     return {
-      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents },
+      facts: { request: c.task.request, references: c.task.references, folders: read.folders, samples: read.samples, documents, files },
       samples: { values: read.values, allowed: documents.flatMap((d) => [...namesIn(d.inspection)]), dataColumns: read.dataColumns },
       dataFiles: read.dataFiles,
       versions,
@@ -1372,17 +1381,101 @@ export class RoutineService {
     return { samples, values, dataColumns, dataFiles, folders };
   }
 
+  /** What's inside the attached files an app can read (a template's text). From folders, only names are shared. */
+  private async readAttached(task: Task, known: NonNullable<TaskFacts["files"]> = []) {
+    const files = [...known];
+    for (const ref of task.references) {
+      const file = path.basename(ref);
+      if (files.some((f) => f.file === file)) continue;
+      for (const { appId } of taskApps(task)) {
+        const contents = await this.deps.registry.get(appId).readFileForModel?.(ref).catch(() => null);
+        if (contents) files.push({ appId, file, contents });
+      }
+    }
+    return files;
+  }
+
+  /** Which of these inputs have no sample yet. Samples that don't fit are the trial's to report. */
+  private async missingSamples(state: CreationState, inputs: PortDef[], planned?: PlannedRoutine) {
+    const missing: PortDef[] = [];
+    for (const port of inputs) {
+      if (port.type === "document" || planned?.upstream[port.key]) continue;
+      if (!(await this.sampleFor(state, port).then(Boolean, () => true))) missing.push(port);
+    }
+    return missing;
+  }
+
+  /** What the AI hasn't seen of the sample files (a template's text, a data file's columns and first rows). Null: nothing new. */
+  private showNewSamples(state: CreationState, progress: LoopProgress, appId?: AppId): string | null {
+    const { samples, files = [] } = state.gathered!.facts;
+    const newSamples = samples.filter((s) => !progress.told.includes(s.file));
+    const newFiles = files.filter((f) => (!appId || f.appId === appId) && !progress.told.includes(f.file));
+    if (!newSamples.length && !newFiles.length) return null;
+    const names = [...newSamples.map((s) => s.file), ...newFiles.map((f) => f.file)];
+    progress.told.push(...names);
+    this.note(state.creation, `Showed the AI ${names.join(", ")}`);
+    return `Here is what the sample files hold:\n${attachedLines(newSamples, newFiles).join("\n")}\nWork from what's really in them: the data's own column names and the template's own text.`;
+  }
+
   /**
-   * The trial is missing sample files: ask the designer to attach them, and wait. What they attach is added to the
-   * task (as if attached in New task) and the same trial goes on, without asking the AI again. Null: cancelled.
+   * ask_for_files: the AI read the request and the work may need files it hasn't got. Doppl asks the designer, before
+   * anything is planned, and shows the AI what they hold. It's the AI's guess, so the designer can go on without them.
    */
-  private async waitForSamples(state: CreationState, ports: PortDef[]): Promise<boolean> {
+  private async askForFiles(state: CreationState, progress: LoopProgress, raw: unknown, appId?: AppId): Promise<string> {
+    if (progress.filesAsked) return "You already asked for files. Go on with what you have.";
+    progress.filesAsked = true;
+    let wanted: PortDef[] = [];
+    try {
+      wanted = toRoutineDraft(raw as Record<string, any> | undefined, appId ?? state.creation.task.appId, "script", "").inputs.filter((port) => FILE_INPUTS.includes(port.type));
+    } catch {
+      // An unreadable list isn't worth an answer: the AI goes on, and Doppl asks when its routine names the files.
+    }
+    const missing = await this.missingSamples(state, wanted);
+    const answer = missing.length ? await this.waitForSamples(state, missing, true) : "added";
+    if (!answer) throw new CancelledError();
+    this.setStage(state, "write", "active", "");
+    if (answer === "skipped") return "The designer went on without these files. Don't ask again: work from the request. If the routine still needs a file, make it an input, and Doppl asks for a sample before it runs.";
+    const shown = this.showNewSamples(state, progress, appId);
+    if (shown) return shown;
+    const { references, folders } = state.gathered!.facts;
+    const names = [...references.map((r) => path.basename(r)), ...folders.flatMap((f) => f.files.slice(0, 40))];
+    return `Nothing more to show: Doppl has these files, by name only: ${names.join(", ") || "none"}. Go on.`;
+  }
+
+  /**
+   * A routine names the files it works on. Those still missing are asked for before its code is written, and what the AI
+   * hasn't seen of them goes to it, so the routine is written for what's really there. What to send it; null: nothing.
+   */
+  private async showSamples(state: CreationState, progress: LoopProgress, raw: Record<string, any>, spec: { appId: AppId; planned?: PlannedRoutine }): Promise<string | null> {
+    let inputs: PortDef[];
+    try {
+      inputs = toRoutineDraft(raw, spec.appId, this.deps.registry.get(spec.appId).stageKind, "").inputs;
+    } catch {
+      return null; // An unreadable routine is sent back further on.
+    }
+    const missing = await this.missingSamples(state, inputs.filter((port) => port.required), spec.planned);
+    if (missing.length) {
+      if (!(await this.waitForSamples(state, missing))) throw new CancelledError();
+      this.setStage(state, "write", "active", "");
+    }
+    const shown = this.showNewSamples(state, progress, spec.appId);
+    return shown && `${shown} Propose the complete routine again.`;
+  }
+
+  /**
+   * Sample files are missing: ask the designer to attach them, and wait. What they attach is added to the task (as if
+   * attached in New task) and the routine goes on. False: cancelled.
+   */
+  private async waitForSamples(state: CreationState, ports: PortDef[], optional = false): Promise<"added" | "skipped" | false> {
     const c = state.creation;
     const labels = ports.map((p) => `“${p.label}”`).join(", ");
     c.needs = {
       kind: "samples",
-      message: `Doppl needs sample ${labels} to try this routine. Attach them to go on; the AI's work so far is kept.`,
+      message: optional
+        ? `The AI asks for ${labels} before it plans anything, so it can see what's in them. Attach them, or go on without them.`
+        : `Doppl needs sample ${labels} to try this routine. Attach them to go on; the AI's work so far is kept.`,
       inputs: ports.map((p) => ({ key: p.key, label: p.label, type: p.type, ...(p.extensions?.length ? { extensions: p.extensions } : {}) })),
+      ...(optional ? { optional: true } : {}),
     };
     c.status = "waiting";
     this.setStage(state, state.stage, "active", "Waiting for sample files");
@@ -1391,10 +1484,15 @@ export class RoutineService {
     c.needs = undefined;
     if (!added || state.cancelled) return false;
     c.status = "running";
+    if (!added.files.length && !added.folders.length) {
+      this.note(c, "Went on without the files");
+      return "skipped";
+    }
     const task = c.task;
     task.references = [...new Set([...task.references, ...added.files])];
     task.folders = [...new Set([...(task.folders ?? []), ...added.folders])];
     const read = await this.readSamples(task);
+    const files = await this.readAttached(task, state.gathered!.facts.files);
     if (state.inputs) {
       // The input check reads the new files too; what was decided stays, new pairs take Doppl's best guess.
       const analysis = analyzeInputs(await readInputSources(task));
@@ -1409,12 +1507,12 @@ export class RoutineService {
     const g = state.gathered!;
     state.gathered = {
       ...g,
-      facts: { ...g.facts, references: task.references, folders: read.folders, samples: read.samples },
+      facts: { ...g.facts, references: task.references, folders: read.folders, samples: read.samples, files },
       samples: { ...g.samples, values: read.values, dataColumns: read.dataColumns },
       dataFiles: read.dataFiles,
     };
     this.note(c, `Added ${[...added.files.map((f) => path.basename(f)), ...added.folders.map((f) => `${path.basename(f)} (folder)`)].join(", ")}`);
-    return true;
+    return "added";
   }
 
   private async looksTabular(file: string) {
@@ -1837,7 +1935,7 @@ export class RoutineService {
     let p = state.loop;
     if (!p || p.key !== key || !spec.resume) {
       if (p && p.key !== key) state.pastMessages.push(...p.messages);
-      const facts = { ...g.facts, documents: g.facts.documents.filter((d) => d.appId === spec.appId) };
+      const facts = { ...g.facts, documents: g.facts.documents.filter((d) => d.appId === spec.appId), files: g.facts.files?.filter((f) => f.appId === spec.appId) };
       const current = state.repair ? { routine: routineForModel(state.repair.routine), problems: state.repair.problems } : undefined;
       const refine = spec.revision && state.refine && state.repair ? this.refineMessage(state, facts) : null;
       p = state.loop = {
@@ -1871,6 +1969,7 @@ export class RoutineService {
         asked: 0,
         inspections: 0,
         lastProblem: "",
+        told: [...facts.samples.map((s) => s.file), ...(facts.files ?? []).map((f) => f.file)],
       };
       spec.resume = false;
     }
@@ -1942,6 +2041,10 @@ export class RoutineService {
         const said = saidWhy(t.reason);
         if (said) this.note(c, said);
 
+        if (t.action === "ask_for_files") {
+          reply(spec.planned ? "Don't ask for files in a flow's routine: propose it, and Doppl asks the designer for any sample it's missing." : await this.askForFiles(state, progress, t.routine, spec.appId));
+          continue;
+        }
         if (t.action === "ask_question") {
           const answer = await this.askQuestion(state, progress, t, turn, !!spec.planned);
           reply(answer !== null ? `Answer: ${answer}. Continue.` : "Don't ask now. Decide yourself and continue (propose_routine).");
@@ -1981,6 +2084,15 @@ export class RoutineService {
           );
         }
 
+        // A new routine: its sample files first, and the AI sees them before any code is written.
+        if (!spec.revision && !state.repair && t.routine && typeof t.routine === "object") {
+          const shown = await this.showSamples(state, progress, t.routine, spec);
+          if (shown) {
+            reply(shown);
+            continue;
+          }
+        }
+
         // preview_routine and propose_routine (propose_revision) carry a routine; with separate code, the coder writes
         // its code now (a model that wrote it inline anyway saves the call).
         if (separate && t.routine && typeof t.routine === "object" && needsCode(t.routine, codeKind)) {
@@ -2014,7 +2126,8 @@ export class RoutineService {
         }
         this.prepareDraft(draft, spec.appId, spec.revision ? state.repair?.routine : undefined);
         const proposal = t.action === "propose_routine" || t.action === "propose_revision";
-        const check = this.validate(draft, proposal ? g.samples : undefined, spec.appId, fed);
+        // Fresh: sample files may have been added during this loop.
+        const check = this.validate(draft, proposal ? state.gathered!.samples : undefined, spec.appId, fed);
         const errors = errorsForModel(check.errors, draft).map((e) => `${e.path}: ${e.message}`);
         if (spec.planned) errors.push(...plannedProblems(draft, spec.planned.routine));
         if (errors.length) {
@@ -2376,6 +2489,7 @@ export class RoutineService {
         asked: 0,
         inspections: 0,
         lastProblem: "",
+        told: [...g.facts.samples.map((s) => s.file), ...(g.facts.files ?? []).map((f) => f.file)],
       };
       resume = false;
     }
@@ -2409,6 +2523,10 @@ export class RoutineService {
       this.record(state, messages);
       const said = saidWhy(t.reason);
       if (said) this.note(c, said);
+      if (t.action === "ask_for_files") {
+        reply(await this.askForFiles(state, progress, t.plan));
+        continue;
+      }
       if (t.action === "ask_question") {
         const answer = await this.askQuestion(state, progress, t, turn, false);
         reply(answer !== null ? `Answer: ${answer}. Continue.` : "Don't ask now. Decide yourself and propose the plan.");
