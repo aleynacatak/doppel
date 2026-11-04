@@ -10,3 +10,4 @@ worker/.dev.vars
 worker/.env
 worker/.wrangler/
 figma-plugin/dist/
+qa/

@@ -82,3 +82,16 @@ export function layoutLeftToRight(
   }
   return out;
 }
+
+/**
+ * The AI calls behind a flow: what making it took, or its routines' own calls when it was wired by hand. A routine used
+ * twice counts once.
+ */
+export function flowAiCalls(
+  flow: { createdWithAiCalls?: number; nodes: { kind: string; routineId?: string }[] },
+  routines: { id: string; createdWithAiCalls: number }[],
+): number {
+  const used = new Set(flow.nodes.flatMap((n) => (n.kind === "routine" && n.routineId ? [n.routineId] : [])));
+  const total = routines.filter((r) => used.has(r.id)).reduce((sum, r) => sum + r.createdWithAiCalls, 0);
+  return Math.max(flow.createdWithAiCalls ?? 0, total);
+}

@@ -21,17 +21,19 @@ export default function ConnectPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={copy.connect.title} subtitle={copy.connect.subtitle} />
+      <PageHeader
+        title={copy.connect.title}
+        subtitle={copy.connect.subtitle}
+        actions={
+          <Button onClick={finish} disabled={!anyConnected && !onboarded}>
+            {onboarded ? copy.connect.done : copy.connect.continue}
+          </Button>
+        }
+      />
       <div className="grid grid-cols-1 gap-6 @3xl:grid-cols-2">
         {apps.map((app) => (
           <AppConnectCard key={app.id} app={app} />
         ))}
-      </div>
-      <div className="flex items-center gap-3">
-        <Button onClick={finish} disabled={!anyConnected && !onboarded}>
-          {onboarded ? copy.connect.done : copy.connect.continue}
-        </Button>
-        {!anyConnected && !onboarded && <span className="text-muted-foreground">{copy.connect.continueHint}</span>}
       </div>
     </div>
   );

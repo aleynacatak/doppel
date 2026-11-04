@@ -29,6 +29,8 @@ const NAV = [
 export function AppSidebar() {
   const pathname = usePathname();
   const apps = useShell((s) => s.apps);
+  // First launch stays on Connect apps until one is connected, so the links wait too.
+  const locked = useShell((s) => !!s.settings && !s.settings.onboarded);
   return (
     <Sidebar collapsible="none" className="border-r">
       <SidebarHeader>
@@ -43,7 +45,7 @@ export function AppSidebar() {
                   const active = item.match.includes(pathname);
                   return (
                     <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton isActive={active} render={<Link href={item.href} aria-current={active ? "page" : undefined} />}>
+                      <SidebarMenuButton isActive={active} aria-disabled={locked || undefined} tabIndex={locked ? -1 : undefined} render={<Link href={item.href} aria-current={active ? "page" : undefined} />}>
                         <item.icon />
                         <span>{item.label}</span>
                       </SidebarMenuButton>

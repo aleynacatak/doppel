@@ -1,7 +1,7 @@
 "use client";
 
 import type { Flow, FlowContext, FlowNode, InputValue, PortDef, PortType, Routine, Run } from "@core/types";
-import { wouldCreateCycle } from "@shared/flowGraph";
+import { flowAiCalls, wouldCreateCycle } from "@shared/flowGraph";
 import { type Compatibility, acceptedByOutput, compatible, describeSpec, inputSpec, isListType, outputSpec } from "@shared/ports";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -396,7 +396,7 @@ function FlowEditor({ initial, routines }: { initial: Flow; routines: { mine: Ro
             onRemove={remove}
           />
           <p className="text-sm text-muted-foreground pt-4">
-            {copy.library.flowNodes(routineCount)} · {copy.routine.cost(flow.createdWithAiCalls)}
+            {copy.library.flowNodes(routineCount)} · {copy.routine.cost(flowAiCalls(flow, all))}
           </p>
         </aside>
       </div>

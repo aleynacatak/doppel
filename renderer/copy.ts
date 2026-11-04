@@ -54,7 +54,6 @@ export const copy = {
     title: "Connect your apps",
     subtitle: "Doppl runs your routines inside the design apps on this Mac. Connect at least one to continue.",
     continue: "Continue",
-    continueHint: "Connect at least one app to continue.",
     done: "Done",
     scriptBridge: "Connects directly, nothing to install",
     linksAndPlugin: "The Doppl plugin runs routines in your open files",

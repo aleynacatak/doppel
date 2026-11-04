@@ -29,7 +29,7 @@ export function PortEdge(props: EdgeProps) {
         markerEnd={props.markerEnd}
         interactionWidth={16}
         style={{
-          stroke: props.selected ? "var(--ui-strong)" : incompatible || lost || needsMatch ? "var(--ui-border-strong)" : "var(--ui-text-muted)",
+          stroke: props.selected ? "var(--primary)" : incompatible || lost || needsMatch ? "var(--ring)" : "var(--muted-foreground)",
           strokeWidth: props.selected ? 2 : 1.5,
           strokeDasharray: incompatible || lost ? "6 4" : undefined,
         }}

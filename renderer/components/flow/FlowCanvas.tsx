@@ -15,10 +15,11 @@ import {
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
+  useNodesInitialized,
   useReactFlow,
 } from "@xyflow/react";
 import { wouldCreateCycle } from "@shared/flowGraph";
-import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PortEdge } from "./FlowEdgeView";
 import { InputNodeView, OutputNodeView, RoutineNodeView } from "./FlowNodes";
 import { type Connecting, FlowViewContext, type FlowViewState, type PortView, nodePorts, routineAt } from "./flowView";
@@ -52,6 +53,21 @@ function Canvas(props: Props) {
   const rf = useReactFlow();
   const [connecting, setConnecting] = useState<Connecting | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
+  const measured = useNodesInitialized();
+  const fitted = useRef(false);
+
+  // Nodes arrive after the first paint and grow once their routines load, so the `fitView` prop alone leaves a flow
+  // cut off: fit once, after they've been measured at their full size.
+  const hasNodes = nodes.length > 0;
+  const loaded = !!ctx;
+  useEffect(() => {
+    if (!measured || !loaded || !hasNodes || fitted.current) return;
+    const timer = window.setTimeout(() => {
+      fitted.current = true;
+      void rf.fitView({ padding: 0.2, maxZoom: 1 });
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [measured, loaded, hasNodes, rf]);
 
   // Once the new node is drawn (and measured), fit the flow in view.
   useEffect(() => {
@@ -166,10 +182,10 @@ function Canvas(props: Props) {
         snapGrid={[16, 16]}
         fitView
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-        minZoom={0.25}
+        minZoom={0.1}
         maxZoom={1.5}
       >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--ui-border)" />
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--border)" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </FlowViewContext.Provider>
