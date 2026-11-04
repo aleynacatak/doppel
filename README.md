@@ -24,7 +24,19 @@ There is no mock data and there are no sample routines: every app connection, AI
 You need a Mac with Apple Silicon, at least one of InDesign, Photoshop or the Figma desktop app, and an access code or your own Meta API key.
 
 1. Download `Doppl-<version>-arm64.dmg` from [Releases](https://github.com/aleynacatak/doppel/releases/latest) and drag Doppl to Applications.
-2. The first time, right-click Doppl → **Open** (the app isn't notarized). If macOS only offers "Move to Trash", go to System Settings → Privacy & Security and click **Open Anyway**.
+2. Open Doppl. The first time, macOS stops it because the app isn't notarized:
+   1. Click **Done**, not Move to Trash.
+
+      <img src="https://github.com/aleynacatak/doppel/releases/download/v0.1.0/install-1-not-opened.png" width="302" alt="The &quot;Doppl&quot; Not Opened dialog, with Move to Trash and Done buttons">
+
+   2. Go to System Settings → **Privacy & Security** and scroll down to **Security**. Next to "Doppl was blocked to protect your Mac", click **Open Anyway**.
+
+      <img src="https://github.com/aleynacatak/doppel/releases/download/v0.1.0/install-2-open-anyway.png" width="600" alt="Privacy &amp; Security settings showing Doppl was blocked, with an Open Anyway button">
+
+   3. In the dialog that appears, click **Open Anyway** and confirm with your password or Touch ID. After that, Doppl opens normally.
+
+      <img src="https://github.com/aleynacatak/doppel/releases/download/v0.1.0/install-3-confirm.png" width="243" alt="The Open &quot;Doppl&quot;? dialog, with Move to Trash, Open Anyway and Done buttons">
+
 3. If macOS asks for your password so Doppl can use "Doppl Safe Storage", type your Mac password and click **Always Allow**. This can happen after you install a new version, the first time Doppl needs a saved code, key or token.
 4. **Connect your apps.** Doppl starts on this page; later, click **View** in the Apps card at the bottom of the sidebar.
    - **InDesign, Photoshop:** open them; Doppl connects on its own. The first time, macOS asks whether Doppl may control each app; click **OK**.
