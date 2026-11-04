@@ -167,7 +167,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Point the app at it with `DOPPEL_API_BASE_URL=http://127.0.0.1:8787` (see the main README).
+Point the app at it with `DOPPL_API_BASE_URL=http://127.0.0.1:8787` (see the main README).
 
 ## Open questions about Meta's API
 
