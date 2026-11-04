@@ -21,9 +21,9 @@ There is no mock data and there are no sample routines: every app connection, AI
 
 ## Try it
 
-You need a Mac with Apple Silicon, at least one of InDesign, Photoshop or the Figma desktop app, and an access code or your own Meta API key.
+You need a Mac with Apple Silicon or Intel (macOS 13 or later), at least one of InDesign, Photoshop or the Figma desktop app, and an access code or your own Meta API key.
 
-1. Download `Doppl-<version>-arm64.dmg` from [Releases](https://github.com/aleynacatak/doppel/releases/latest) and drag Doppl to Applications.
+1. Download the DMG for your Mac from [Releases](https://github.com/aleynacatak/doppel/releases/latest): `Doppl-<version>-arm64.dmg` for Apple Silicon, `Doppl-<version>-intel.dmg` for Intel. Apple menu → **About This Mac** shows which you have. Open it and drag Doppl to Applications.
 2. Open Doppl. The first time, macOS stops it because the app isn't notarized:
    1. Click **Done**, not Move to Trash.
 
@@ -243,7 +243,7 @@ With **Automatic check + AI review** (own Meta key), the model also looks at eac
 - **Figma routines have no loop over frames.** They iterate over rows or files. Without those, a routine that exports many frames names each one, often by node id, so it's tied to that file and won't pick up frames you add later.
 - **The first full run can find what a trial didn't,** since a trial covers a sample.
 - **The script check reads the script's text.** It guards against mistakes; it isn't a sandbox, and scripts run with your rights in InDesign and Photoshop.
-- **macOS on Apple Silicon only,** and the app isn't notarized.
+- **macOS only,** and the app isn't notarized. The Intel version has only been opened under Rosetta, not tried on a real Intel Mac.
 
 See [ROADMAP.md](ROADMAP.md) for what may come later.
 
@@ -262,6 +262,7 @@ npm test           # vitest: action schemas and interpreter (fake Figma), placeh
                    # partial failure, creation with a scripted AI, data files, barcodes, the Adobe bridge, the plugin bundle
 npm run typecheck  # main process, renderer and plugin
 npm run dist       # unsigned .dmg and .app in release/
+npx electron-builder --mac dmg:x64  # the same for Intel, after npm run build
 npm start          # production build, run without packaging
 npm run eval       # real creations with real AI and apps; spends AI access (see evals/README.md)
 ```
