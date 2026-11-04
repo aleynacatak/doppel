@@ -341,3 +341,7 @@ The UI uses [shadcn/ui](https://ui.shadcn.com) with the theme preset `b7BrAOFkW`
 - `renderer/components/common/` holds Doppl's small wrappers around them, such as notices, tags, fields and page headers.
 - The theme is CSS variables in `renderer/app/globals.css`, which also holds the flow canvas's own `.ui-flow*` styles. Everything else uses Tailwind.
 - Strings are in `renderer/copy.ts`.
+
+## License
+
+Copyright (C) 2026 Aleyna Catak. Doppl is licensed under the [GNU Affero General Public License v3.0](LICENSE).
