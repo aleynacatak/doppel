@@ -4,6 +4,8 @@
 
 Doppl learns your design routines and runs them in your own apps. Describe a task once; Meta's models turn it into a reusable routine you can rerun with no AI calls. A routine works in one app. A flow connects routines across apps: for example, labels made in Figma from a spreadsheet, then put on mockups in Photoshop.
 
+**[Watch the 3-minute demo video](https://www.youtube.com/watch?v=qmbX_xrCovY)**
+
 This repo holds:
 - the desktop app (shadcn/ui, on the theme preset `b7BrAOFkW`);
 - the Doppl Figma plugin ([`figma-plugin/`](figma-plugin/));
