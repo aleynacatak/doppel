@@ -1,5 +1,7 @@
 # Doppl
 
+> **Judges:** access codes for trying Doppl are in the project submission, under "Project Description" and "Describe your use of Meta products". Everyone else can use their own Meta API key (Settings → AI access).
+
 Doppl learns your design routines and runs them in your own apps. Describe a task once; Meta's models turn it into a reusable routine you can rerun with no AI calls. A routine works in one app. A flow connects routines across apps: for example, labels made in Figma from a spreadsheet, then put on mockups in Photoshop.
 
 This repo holds:
